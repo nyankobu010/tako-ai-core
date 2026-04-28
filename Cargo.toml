@@ -21,7 +21,7 @@ repository   = "https://github.com/TODO(<org>)/tako-ai-core"
 authors      = ["The tako contributors"]
 
 [workspace.lints.rust]
-unsafe_code      = "forbid"
+unsafe_code      = "deny"
 missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
