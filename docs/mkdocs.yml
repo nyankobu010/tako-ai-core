@@ -1,0 +1,29 @@
+site_name: tako
+site_description: Rust-core, Python-facade framework for enterprise agentic systems.
+site_url: https://TODO(<org>).github.io/tako-ai-core
+repo_url: https://github.com/TODO(<org>)/tako-ai-core
+repo_name: TODO(<org>)/tako-ai-core
+edit_uri: edit/main/docs/
+docs_dir: .
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Architecture: architecture.md
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - content.code.copy
+    - search.suggest
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc:
+      permalink: true
