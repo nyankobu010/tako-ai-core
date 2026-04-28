@@ -25,7 +25,10 @@ fn transient_classification() {
     let p503 = TakoError::provider("p", "m", "boom").with_status(503);
     assert!(p503.is_transient());
     let p429 = TakoError::provider("p", "m", "boom").with_status(429);
-    assert!(!p429.is_transient(), "429 is rate-limited; provider must surface RateLimited not Provider");
+    assert!(
+        !p429.is_transient(),
+        "429 is rate-limited; provider must surface RateLimited not Provider"
+    );
     assert!(!TakoError::Invalid("nope".into()).is_transient());
     assert!(!TakoError::PolicyDenied("no".into()).is_transient());
     assert!(!TakoError::BudgetExhausted("over".into()).is_transient());
@@ -35,5 +38,9 @@ fn transient_classification() {
 fn display_format() {
     assert_eq!(TakoError::CircuitOpen.to_string(), "circuit open");
     assert_eq!(TakoError::Cancelled.to_string(), "cancelled");
-    assert!(TakoError::Timeout(Duration::from_millis(500)).to_string().contains("500"));
+    assert!(
+        TakoError::Timeout(Duration::from_millis(500))
+            .to_string()
+            .contains("500")
+    );
 }

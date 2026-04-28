@@ -66,7 +66,11 @@ pub enum TakoError {
 
 impl TakoError {
     /// Construct a `Provider` error preserving the vendor context.
-    pub fn provider(provider_id: impl Into<String>, model: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn provider(
+        provider_id: impl Into<String>,
+        model: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self::Provider {
             message: message.into(),
             source: None,

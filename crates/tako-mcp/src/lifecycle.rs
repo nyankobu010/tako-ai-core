@@ -26,7 +26,10 @@ impl ClientInfo {
 
 /// Run the `initialize` → `initialized` handshake. Returns the server's
 /// `serverInfo + capabilities` JSON.
-pub async fn handshake(transport: Arc<dyn McpTransport>, client: ClientInfo) -> Result<Value, TakoError> {
+pub async fn handshake(
+    transport: Arc<dyn McpTransport>,
+    client: ClientInfo,
+) -> Result<Value, TakoError> {
     let init_params = json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {
@@ -39,6 +42,8 @@ pub async fn handshake(transport: Arc<dyn McpTransport>, client: ClientInfo) -> 
         }
     });
     let server = transport.request("initialize", init_params).await?;
-    transport.notify("notifications/initialized", Value::Null).await?;
+    transport
+        .notify("notifications/initialized", Value::Null)
+        .await?;
     Ok(server)
 }

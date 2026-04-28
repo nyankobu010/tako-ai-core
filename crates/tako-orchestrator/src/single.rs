@@ -95,7 +95,9 @@ impl SingleAgentBuilder {
 
     pub fn build(self) -> Result<SingleAgent, TakoError> {
         Ok(SingleAgent {
-            provider: self.provider.ok_or_else(|| TakoError::Invalid("SingleAgentBuilder: provider is required".into()))?,
+            provider: self.provider.ok_or_else(|| {
+                TakoError::Invalid("SingleAgentBuilder: provider is required".into())
+            })?,
             tools: self.tools.unwrap_or_else(|| Arc::new(ToolRegistry::new())),
             max_steps: self.max_steps.unwrap_or(DEFAULT_MAX_STEPS),
             defaults: self.defaults,
@@ -104,7 +106,12 @@ impl SingleAgentBuilder {
 }
 
 impl SingleAgent {
-    fn build_request(&self, model: &str, messages: Vec<Message>, tool_schemas: Vec<tako_core::ToolSchema>) -> ChatRequest {
+    fn build_request(
+        &self,
+        model: &str,
+        messages: Vec<Message>,
+        tool_schemas: Vec<tako_core::ToolSchema>,
+    ) -> ChatRequest {
         ChatRequest {
             model: model.to_string(),
             messages,
@@ -138,7 +145,13 @@ impl Orchestrator for SingleAgent {
             }
             messages.extend(input.messages);
 
-            let model = self.provider.id().split(':').nth(1).unwrap_or("").to_string();
+            let model = self
+                .provider
+                .id()
+                .split(':')
+                .nth(1)
+                .unwrap_or("")
+                .to_string();
             let mut total_usage = Usage::default();
             let mut steps = 0_u32;
             let mut final_message: Option<Message> = None;
@@ -156,8 +169,12 @@ impl Orchestrator for SingleAgent {
                     self.provider.chat(principal, req).instrument(span).await?
                 };
                 steps += 1;
-                total_usage.input_tokens = total_usage.input_tokens.saturating_add(resp.usage.input_tokens);
-                total_usage.output_tokens = total_usage.output_tokens.saturating_add(resp.usage.output_tokens);
+                total_usage.input_tokens = total_usage
+                    .input_tokens
+                    .saturating_add(resp.usage.input_tokens);
+                total_usage.output_tokens = total_usage
+                    .output_tokens
+                    .saturating_add(resp.usage.output_tokens);
 
                 let assistant = resp.message.clone();
                 messages.push(assistant.clone());
@@ -166,12 +183,19 @@ impl Orchestrator for SingleAgent {
                     .content
                     .iter()
                     .filter_map(|c| match c {
-                        ContentPart::ToolCall { id, name, args } => Some((id.clone(), name.clone(), args.clone())),
+                        ContentPart::ToolCall { id, name, args } => {
+                            Some((id.clone(), name.clone(), args.clone()))
+                        }
                         _ => None,
                     })
                     .collect();
 
-                if tool_calls.is_empty() || matches!(resp.finish_reason, FinishReason::Stop | FinishReason::Length) && tool_calls.is_empty() {
+                if tool_calls.is_empty()
+                    || matches!(
+                        resp.finish_reason,
+                        FinishReason::Stop | FinishReason::Length
+                    ) && tool_calls.is_empty()
+                {
                     final_message = Some(assistant);
                     break;
                 }
@@ -181,7 +205,11 @@ impl Orchestrator for SingleAgent {
                 let mut tool_results: Vec<ContentPart> = Vec::with_capacity(tool_calls.len());
                 for (id, name, args) in tool_calls {
                     let result = match self.tools.invoke(principal, &name, args).await {
-                        Ok(v) => ContentPart::ToolResult { id, result: v, is_error: false },
+                        Ok(v) => ContentPart::ToolResult {
+                            id,
+                            result: v,
+                            is_error: false,
+                        },
                         Err(e) => ContentPart::ToolResult {
                             id,
                             result: serde_json::json!({ "error": e.to_string() }),
@@ -227,7 +255,9 @@ impl Orchestrator for SingleAgent {
         // Streaming events are Phase 2; for now `run` is sufficient and
         // python/tako wraps it.
         Box::pin(futures::stream::once(async {
-            Err(TakoError::Invalid("SingleAgent streaming is Phase 2".into()))
+            Err(TakoError::Invalid(
+                "SingleAgent streaming is Phase 2".into(),
+            ))
         }))
     }
 }

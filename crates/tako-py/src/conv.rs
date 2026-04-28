@@ -57,7 +57,9 @@ pub fn py_to_json(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
         return Ok(Value::Number(i.into()));
     }
     if let Ok(f) = obj.extract::<f64>() {
-        return Ok(serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null));
+        return Ok(serde_json::Number::from_f64(f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null));
     }
     if let Ok(s) = obj.extract::<String>() {
         return Ok(Value::String(s));

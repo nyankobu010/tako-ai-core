@@ -26,7 +26,10 @@ impl PyBudget {
             max_usd_per_request,
             max_usd_per_day,
             max_tokens_per_request,
-            max_usd_per_tenant_per_day: max_usd_per_tenant_per_day.unwrap_or_default().into_iter().collect(),
+            max_usd_per_tenant_per_day: max_usd_per_tenant_per_day
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
         };
         Self { inner }
     }

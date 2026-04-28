@@ -81,7 +81,10 @@ impl StdioTransport {
                 if let Some(id) = parsed.id {
                     if let Some(tx) = inner_reader.pending.lock().await.remove(&id) {
                         let result = if let Some(err) = parsed.error {
-                            Err(TakoError::Transport(format!("rpc error {}: {}", err.code, err.message)))
+                            Err(TakoError::Transport(format!(
+                                "rpc error {}: {}",
+                                err.code, err.message
+                            )))
                         } else {
                             Ok(parsed.result.unwrap_or(Value::Null))
                         };

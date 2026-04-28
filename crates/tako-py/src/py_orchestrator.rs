@@ -2,15 +2,15 @@
 
 use std::sync::Arc;
 
+use pyo3::Py;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::Py;
 use pyo3::types::PyAny;
 
 type PyObject = Py<PyAny>;
-use tako_mcp::ToolRegistry;
-use tako_orchestrator::{Orchestrator, OrchInput, SingleAgent};
 use pyo3_async_runtimes::tokio::future_into_py;
+use tako_mcp::ToolRegistry;
+use tako_orchestrator::{OrchInput, Orchestrator, SingleAgent};
 
 use crate::py_provider::ProviderHandle;
 
@@ -33,17 +33,18 @@ impl PyOrchestrator {
     #[new]
     #[pyo3(signature = (provider, max_steps=8))]
     fn new(provider: PyObject, max_steps: u32, py: Python<'_>) -> PyResult<Self> {
-        let handle: ProviderHandle = if let Ok(p) = provider.extract::<crate::py_provider::PyOpenAI>(py) {
-            p.handle
-        } else if let Ok(p) = provider.extract::<crate::py_provider::PyAnthropic>(py) {
-            p.handle
-        } else if let Ok(p) = provider.extract::<crate::py_provider::PyFakeProvider>(py) {
-            p.handle
-        } else {
-            return Err(PyValueError::new_err(
-                "provider must be a tako._native.OpenAI, Anthropic, or FakeProvider",
-            ));
-        };
+        let handle: ProviderHandle =
+            if let Ok(p) = provider.extract::<crate::py_provider::PyOpenAI>(py) {
+                p.handle
+            } else if let Ok(p) = provider.extract::<crate::py_provider::PyAnthropic>(py) {
+                p.handle
+            } else if let Ok(p) = provider.extract::<crate::py_provider::PyFakeProvider>(py) {
+                p.handle
+            } else {
+                return Err(PyValueError::new_err(
+                    "provider must be a tako._native.OpenAI, Anthropic, or FakeProvider",
+                ));
+            };
 
         let agent = SingleAgent::builder()
             .provider(handle.inner)
@@ -51,7 +52,9 @@ impl PyOrchestrator {
             .max_steps(max_steps)
             .build()
             .map_err(crate::py_provider::map_err)?;
-        Ok(Self { inner: Arc::new(agent) })
+        Ok(Self {
+            inner: Arc::new(agent),
+        })
     }
 
     /// Async run; returns a Python coroutine that resolves to a string.
@@ -77,7 +80,13 @@ impl PyOrchestrator {
     /// Synchronous run. Releases the GIL while blocking on the runtime so
     /// concurrent threads can hold it.
     #[pyo3(signature = (prompt, tenant_id=None, user_id=None))]
-    fn run_sync(&self, py: Python<'_>, prompt: String, tenant_id: Option<String>, user_id: Option<String>) -> PyResult<String> {
+    fn run_sync(
+        &self,
+        py: Python<'_>,
+        prompt: String,
+        tenant_id: Option<String>,
+        user_id: Option<String>,
+    ) -> PyResult<String> {
         let agent = Arc::clone(&self.inner);
         let principal = crate::conv::principal_from(tenant_id.as_deref(), user_id.as_deref());
         let rt = pyo3_async_runtimes::tokio::get_runtime();

@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use tako_core::{Budget, Principal, TakoError, Usage};
 use tako_runtime::{
-    BreakerConfig, BudgetTracker, CircuitBreaker, InMemoryBudgetBackend, ProviderLimiter, RetryConfig, current_principal,
-    with_principal, with_retry,
+    BreakerConfig, BudgetTracker, CircuitBreaker, InMemoryBudgetBackend, ProviderLimiter,
+    RetryConfig, current_principal, with_principal, with_retry,
 };
 
 #[tokio::test]
@@ -46,9 +46,16 @@ async fn budget_per_day_accumulates() {
     let backend = Arc::new(InMemoryBudgetBackend::new());
     let t = BudgetTracker::new(backend.clone(), budget);
     let p = Principal::new("acme", "alice");
-    t.record(&p, 0.80, Usage { input_tokens: 0, output_tokens: 0 })
-        .await
-        .unwrap();
+    t.record(
+        &p,
+        0.80,
+        Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+        },
+    )
+    .await
+    .unwrap();
     // 0.80 already + 0.30 estimate = 1.10 > 1.00 cap
     let err = t.pre_check(&p, 0.30, 0).await.unwrap_err();
     assert!(matches!(err, TakoError::BudgetExhausted(_)));
@@ -114,7 +121,11 @@ async fn retry_does_not_retry_non_transient() {
     })
     .await;
     assert!(matches!(r.unwrap_err(), TakoError::Invalid(_)));
-    assert_eq!(attempts.load(Ordering::SeqCst), 1, "non-transient error must NOT retry");
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "non-transient error must NOT retry"
+    );
 }
 
 #[tokio::test]

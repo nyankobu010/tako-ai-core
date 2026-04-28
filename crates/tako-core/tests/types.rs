@@ -2,7 +2,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use tako_core::{
-    ChatChunk, ChatRequest, ContentPart, FinishReason, Message, Principal, Role, ToolCallDelta, ToolSchema, Usage,
+    ChatChunk, ChatRequest, ContentPart, FinishReason, Message, Principal, Role, ToolCallDelta,
+    ToolSchema, Usage,
 };
 
 #[test]

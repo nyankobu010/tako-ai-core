@@ -96,11 +96,13 @@ impl AnthropicBuilder {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-api-key",
-            HeaderValue::from_str(&api_key).map_err(|e| TakoError::Invalid(format!("invalid api key: {e}")))?,
+            HeaderValue::from_str(&api_key)
+                .map_err(|e| TakoError::Invalid(format!("invalid api key: {e}")))?,
         );
         headers.insert(
             "anthropic-version",
-            HeaderValue::from_str(&version).map_err(|e| TakoError::Invalid(format!("invalid version: {e}")))?,
+            HeaderValue::from_str(&version)
+                .map_err(|e| TakoError::Invalid(format!("invalid version: {e}")))?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -162,9 +164,13 @@ impl AnthropicProvider {
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return TakoError::RateLimited(Duration::from_secs(1));
         }
-        TakoError::provider(self.inner.id.clone(), self.inner.model.clone(), format!("HTTP {status}"))
-            .with_status(status.as_u16())
-            .with_raw_body(body)
+        TakoError::provider(
+            self.inner.id.clone(),
+            self.inner.model.clone(),
+            format!("HTTP {status}"),
+        )
+        .with_status(status.as_u16())
+        .with_raw_body(body)
     }
 }
 
@@ -178,12 +184,19 @@ impl LlmProvider for AnthropicProvider {
         &self.inner.capabilities
     }
 
-    async fn chat(&self, _principal: &Principal, mut req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        _principal: &Principal,
+        mut req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         if req.model.is_empty() {
             req.model.clone_from(&self.inner.model);
         }
         req.stream = false;
-        let body = serde_json::to_value(convert::to_anthropic_request(&req, self.inner.default_max_tokens))?;
+        let body = serde_json::to_value(convert::to_anthropic_request(
+            &req,
+            self.inner.default_max_tokens,
+        ))?;
         let resp = self
             .inner
             .http
@@ -213,7 +226,10 @@ impl LlmProvider for AnthropicProvider {
             req.model.clone_from(&self.inner.model);
         }
         req.stream = true;
-        let body = serde_json::to_value(convert::to_anthropic_request(&req, self.inner.default_max_tokens))?;
+        let body = serde_json::to_value(convert::to_anthropic_request(
+            &req,
+            self.inner.default_max_tokens,
+        ))?;
         let resp = self
             .inner
             .http

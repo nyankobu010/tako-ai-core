@@ -37,3 +37,7 @@ site/
 
 # OS
 Thumbs.db
+
+# Local agent state
+.claude/
+prompt.md

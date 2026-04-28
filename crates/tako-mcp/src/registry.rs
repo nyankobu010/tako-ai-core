@@ -39,7 +39,10 @@ impl ToolRegistry {
     /// Register a native Rust tool.
     pub async fn register_native(&self, tool: Arc<dyn Tool>) {
         let name = tool.name().to_string();
-        self.inner.write().await.insert(name, ToolEntry::Native(tool));
+        self.inner
+            .write()
+            .await
+            .insert(name, ToolEntry::Native(tool));
     }
 
     /// Register tools discovered from an MCP server's `tools/list`. The
@@ -72,8 +75,15 @@ impl ToolRegistry {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| TakoError::Invalid("MCP tools/list entry missing `name`".into()))?
                 .to_string();
-            let description = t.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let input_schema = t.get("inputSchema").cloned().unwrap_or(Value::Object(Default::default()));
+            let description = t
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let input_schema = t
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
             schemas.push(ToolSchema {
                 name,
                 description,
@@ -102,7 +112,12 @@ impl ToolRegistry {
 
     /// Invoke a tool by name. Errors with [`TakoError::NotFound`] if the
     /// name is unknown.
-    pub async fn invoke(&self, principal: &Principal, name: &str, args: Value) -> Result<Value, TakoError> {
+    pub async fn invoke(
+        &self,
+        principal: &Principal,
+        name: &str,
+        args: Value,
+    ) -> Result<Value, TakoError> {
         let g = self.inner.read().await;
         match g.get(name) {
             None => Err(TakoError::NotFound(format!("tool `{name}`"))),

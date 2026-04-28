@@ -125,7 +125,11 @@ impl BudgetTracker {
                 )));
             }
         }
-        if let Some(max) = self.budget.max_usd_per_tenant_per_day.get(&principal.tenant_id) {
+        if let Some(max) = self
+            .budget
+            .max_usd_per_tenant_per_day
+            .get(&principal.tenant_id)
+        {
             if cur.usd_today + estimated_usd > *max {
                 return Err(TakoError::BudgetExhausted(format!(
                     "tenant `{}` would exceed tenant-specific daily cap ${max:.2}",

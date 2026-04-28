@@ -21,7 +21,10 @@ enum AnEvent {
     #[serde(rename = "message_start")]
     MessageStart { message: AnMessageStart },
     #[serde(rename = "content_block_start")]
-    ContentBlockStart { index: u32, content_block: AnBlockStart },
+    ContentBlockStart {
+        index: u32,
+        content_block: AnBlockStart,
+    },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: u32, delta: AnBlockDelta },
     #[serde(rename = "content_block_stop")]
@@ -30,7 +33,11 @@ enum AnEvent {
         index: u32,
     },
     #[serde(rename = "message_delta")]
-    MessageDelta { delta: AnMessageDelta, #[serde(default)] usage: AnUsage },
+    MessageDelta {
+        delta: AnMessageDelta,
+        #[serde(default)]
+        usage: AnUsage,
+    },
     #[serde(rename = "message_stop")]
     MessageStop {},
     #[serde(rename = "ping")]
@@ -86,7 +93,9 @@ struct AnErrorBody {
     message: String,
 }
 
-pub fn into_chat_stream(resp: reqwest::Response) -> BoxStream<'static, Result<ChatChunk, TakoError>> {
+pub fn into_chat_stream(
+    resp: reqwest::Response,
+) -> BoxStream<'static, Result<ChatChunk, TakoError>> {
     let bytes = resp.bytes_stream();
     let events = bytes
         .map(|res| res.map_err(|e| std::io::Error::other(e.to_string())))
@@ -96,7 +105,8 @@ pub fn into_chat_stream(resp: reqwest::Response) -> BoxStream<'static, Result<Ch
     let mut last_usage = Usage::default();
     // Index → (id, name) for active tool_use blocks; we emit name on each
     // delta so the consumer doesn't need to track this itself.
-    let mut tool_blocks: std::collections::HashMap<u32, (String, String)> = std::collections::HashMap::new();
+    let mut tool_blocks: std::collections::HashMap<u32, (String, String)> =
+        std::collections::HashMap::new();
 
     let stream = async_stream::stream! {
         let mut events = Box::pin(events);

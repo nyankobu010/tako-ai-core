@@ -7,7 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 use tako_core::{
-    ChatRequest, ChatResponse, ContentPart, FinishReason, Message, Role, TakoError, ToolSchema, Usage,
+    ChatRequest, ChatResponse, ContentPart, FinishReason, Message, Role, TakoError, ToolSchema,
+    Usage,
 };
 
 #[derive(Serialize, Debug)]
@@ -72,8 +73,14 @@ pub struct AnResponse {
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AnResponseBlock {
-    Text { text: String },
-    ToolUse { id: String, name: String, input: serde_json::Value },
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -90,7 +97,12 @@ pub fn to_anthropic_request<'a>(req: &'a ChatRequest, default_max_tokens: u32) -
     for m in &req.messages {
         match m.role {
             Role::System => {
-                let text = m.content.iter().filter_map(ContentPart::as_text).collect::<Vec<_>>().join("");
+                let text = m
+                    .content
+                    .iter()
+                    .filter_map(ContentPart::as_text)
+                    .collect::<Vec<_>>()
+                    .join("");
                 if !text.is_empty() {
                     system = Some(text);
                 }
@@ -103,7 +115,10 @@ pub fn to_anthropic_request<'a>(req: &'a ChatRequest, default_max_tokens: u32) -
                 };
                 let blocks = content_to_blocks(&m.content);
                 if !blocks.is_empty() {
-                    messages.push(AnMessage { role, content: blocks });
+                    messages.push(AnMessage {
+                        role,
+                        content: blocks,
+                    });
                 }
             }
         }
@@ -135,14 +150,20 @@ fn content_to_blocks(parts: &[ContentPart]) -> Vec<AnBlock> {
     parts
         .iter()
         .filter_map(|p| match p {
-            ContentPart::Text { text } if !text.is_empty() => Some(AnBlock::Text { text: text.clone() }),
+            ContentPart::Text { text } if !text.is_empty() => {
+                Some(AnBlock::Text { text: text.clone() })
+            }
             ContentPart::Text { .. } => None,
             ContentPart::ToolCall { id, name, args } => Some(AnBlock::ToolUse {
                 id: id.clone(),
                 name: name.clone(),
                 input: args.clone(),
             }),
-            ContentPart::ToolResult { id, result, is_error } => Some(AnBlock::ToolResult {
+            ContentPart::ToolResult {
+                id,
+                result,
+                is_error,
+            } => Some(AnBlock::ToolResult {
                 tool_use_id: id.clone(),
                 content: result.to_string(),
                 is_error: *is_error,
@@ -161,7 +182,11 @@ pub fn from_anthropic_response(resp: AnResponse) -> Result<ChatResponse, TakoErr
             }
             AnResponseBlock::Text { .. } => {}
             AnResponseBlock::ToolUse { id, name, input } => {
-                content.push(ContentPart::ToolCall { id, name, args: input });
+                content.push(ContentPart::ToolCall {
+                    id,
+                    name,
+                    args: input,
+                });
             }
         }
     }
