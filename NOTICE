@@ -1,0 +1,78 @@
+tako
+Copyright 2026 The tako contributors
+
+This product is licensed under the Apache License, Version 2.0
+(see LICENSE for the full text).
+
+================================================================================
+Inspiration & Credit
+================================================================================
+
+`tako` is an independent, community open-source project. It is not affiliated
+with, endorsed by, or sponsored by Sakana AI, Anthropic, OpenAI, Amazon Web
+Services, Google, Microsoft, or any other vendor.
+
+`tako` is a generalisation of three patterns published by Sakana AI plus
+AB-MCTS tree search. The implementation is the work of the `tako`
+contributors; the cited works are credited as inspiration only.
+
+  1. Trinity-style learned routing
+     Xu et al., "TRINITY: An Evolved LLM Coordinator"
+     https://arxiv.org/abs/2512.04695
+
+  2. Conductor-style natural-language orchestration
+     Nielsen et al., "Learning to Orchestrate Agents in Natural Language
+     with the Conductor"
+     https://arxiv.org/abs/2512.04388
+
+  3. Self-recursive test-time scaling
+     Sakana AI, "Fugu Beta"
+     https://sakana.ai/fugu-beta/
+
+  4. AB-MCTS — Adaptive Branching Monte Carlo Tree Search
+     Inoue et al., arXiv:2503.04412
+     https://arxiv.org/abs/2503.04412
+     Reference implementation open-sourced by Sakana AI as `TreeQuest`
+     (Apache-2.0): https://github.com/SakanaAI/treequest
+
+The name `tako` (Japanese for "octopus") complements Sakana AI's "Fugu"
+(pufferfish): both are sea creatures, both are about distributed
+intelligence. The choice of name is a tribute, not a claim of affiliation.
+
+================================================================================
+Third-party software
+================================================================================
+
+This project depends on the following third-party crates and packages, each
+distributed under their own licenses. The list below is non-exhaustive; for
+the full transitive dependency tree see `cargo tree` and `pip show`.
+
+  Rust crates (Apache-2.0 OR MIT unless noted):
+    - tokio, futures, async-trait, pin-project-lite
+    - serde, serde_json, schemars
+    - thiserror, anyhow, tracing, tracing-subscriber
+    - reqwest, eventsource-stream, axum, tower, tower-http, hyper, url, bytes
+    - governor, failsafe, backoff
+    - opentelemetry, opentelemetry_sdk, opentelemetry-otlp,
+      opentelemetry-semantic-conventions, tracing-opentelemetry
+    - regorus (Apache-2.0; Microsoft)
+    - regex
+    - sigstore (Apache-2.0; the sigstore-rs authors)
+    - rmcp (MIT; the Model Context Protocol authors)
+    - tokio-tungstenite, tonic, prost
+    - ort (MIT; pyke), ndarray
+    - aws-config, aws-sdk-bedrockruntime (Apache-2.0; Amazon)
+    - gcp_auth (MIT/Apache-2.0)
+    - pyo3, pyo3-async-runtimes (Apache-2.0/MIT; the PyO3 authors)
+
+  Python packages:
+    - pydantic (MIT)
+    - typing-extensions (PSF)
+    - opentelemetry-api, opentelemetry-sdk (Apache-2.0)
+    - uvicorn (BSD)
+    - pytest, pytest-asyncio, hypothesis (MIT)
+    - ruff, mypy (MIT)
+    - mkdocs-material, mkdocstrings (MIT)
+
+Each upstream license is reproduced or referenced in the relevant package's
+distribution. No upstream code is vendored into this repository.
