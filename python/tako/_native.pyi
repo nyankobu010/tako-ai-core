@@ -41,8 +41,24 @@ class FakeProvider:
     def id(self) -> str: ...
     def call_count(self) -> int: ...
 
+class Stdio:
+    def __init__(self, command: str, args: list[str] | None = ...) -> None: ...
+
+class StreamableHttp:
+    def __init__(
+        self,
+        url: str,
+        headers: list[tuple[str, str]] | None = ...,
+        timeout_secs: int | None = ...,
+    ) -> None: ...
+
 class Orchestrator:
-    def __init__(self, provider: Any, max_steps: int = ...) -> None: ...
+    def __init__(
+        self,
+        provider: Any,
+        max_steps: int = ...,
+        mcp_servers: list[Any] | None = ...,
+    ) -> None: ...
     def run(
         self,
         prompt: str,

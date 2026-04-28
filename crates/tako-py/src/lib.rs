@@ -14,6 +14,7 @@
 
 mod conv;
 mod py_governance;
+mod py_mcp;
 mod py_orchestrator;
 mod py_provider;
 
@@ -25,6 +26,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_provider::PyAnthropic>()?;
     m.add_class::<py_provider::PyFakeProvider>()?;
     m.add_class::<py_orchestrator::PyOrchestrator>()?;
+    m.add_class::<py_mcp::PyStdio>()?;
+    m.add_class::<py_mcp::PyStreamableHttp>()?;
     m.add_class::<py_governance::PyBudget>()?;
     m.add_function(wrap_pyfunction!(py_governance::init_tracing_py, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

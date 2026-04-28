@@ -24,14 +24,35 @@ class _Result:
 
 
 class SingleAgent:
-    """One-provider, max-step tool-call loop."""
+    """One-provider, max-step tool-call loop.
 
-    def __init__(self, provider: _ProviderBase, *, max_steps: int = 8) -> None:
+    ``mcp_servers`` accepts ``tako.mcp.Stdio`` / ``tako.mcp.Http`` instances;
+    their tools are discovered via MCP's ``tools/list`` at construction time
+    and merged into the orchestrator's tool registry.
+    """
+
+    def __init__(
+        self,
+        provider: _ProviderBase,
+        *,
+        max_steps: int = 8,
+        mcp_servers: list[Any] | None = None,
+    ) -> None:
         if not hasattr(provider, "_handle"):
             raise TypeError(
                 "provider must be a tako.providers.* instance (OpenAI, Anthropic, Fake)"
             )
-        self._inner = _native.Orchestrator(provider._handle, max_steps)
+        native_servers: list[Any] = []
+        if mcp_servers:
+            for s in mcp_servers:
+                if not hasattr(s, "_native"):
+                    raise TypeError(
+                        "mcp_servers entries must be tako.mcp.Stdio or tako.mcp.Http instances"
+                    )
+                native_servers.append(s._native)
+        self._inner = _native.Orchestrator(
+            provider._handle, max_steps, mcp_servers=native_servers or None
+        )
 
     async def run(
         self,
