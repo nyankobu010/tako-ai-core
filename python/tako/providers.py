@@ -83,6 +83,33 @@ class Fake(_ProviderBase):
         return int(self._handle.call_count())
 
 
+class Bedrock(_ProviderBase):
+    """Amazon Bedrock provider via the Converse API.
+
+    Credentials come from the AWS default credential chain (env, profile,
+    IRSA, IMDS) — pass ``profile_name`` to pin a specific named profile,
+    or ``endpoint_url`` to talk to a VPC-private endpoint or local mock.
+
+    Streaming (``ConverseStream``) is documented as a Phase 2.5 follow-up;
+    today only single-shot ``run()`` is supported.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        region: str | None = None,
+        endpoint_url: str | None = None,
+        profile_name: str | None = None,
+    ) -> None:
+        self._handle = _native.Bedrock(
+            model,
+            region=region,
+            endpoint_url=endpoint_url,
+            profile_name=profile_name,
+        )
+
+
 # `chat` callables receive a request dict (model, messages, tools, ...) and
 # return either a string (assistant text) or a dict
 # {"text": str, "input_tokens"?: int, "output_tokens"?: int}.

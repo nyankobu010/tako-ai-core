@@ -48,13 +48,15 @@ impl PyOrchestrator {
                 p.handle
             } else if let Ok(p) = provider.extract::<crate::py_provider::PyFakeProvider>(py) {
                 p.handle
+            } else if let Ok(p) = provider.extract::<crate::py_bedrock::PyBedrock>(py) {
+                p.handle
             } else if let Ok(p) =
                 provider.extract::<crate::py_python_provider::PyPythonProvider>(py)
             {
                 p.handle
             } else {
                 return Err(PyValueError::new_err(
-                    "provider must be a tako._native.OpenAI, Anthropic, FakeProvider, or PythonProvider",
+                    "provider must be a tako._native.OpenAI, Anthropic, FakeProvider, Bedrock, or PythonProvider",
                 ));
             };
 

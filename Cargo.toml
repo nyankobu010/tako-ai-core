@@ -6,6 +6,7 @@ members = [
   "crates/tako-providers/anthropic",
   "crates/tako-providers/openai",
   "crates/tako-providers/http-generic",
+  "crates/tako-providers/bedrock",
   "crates/tako-mcp",
   "crates/tako-orchestrator",
   "crates/tako-governance",
@@ -78,6 +79,10 @@ rmcp               = { version = "1.5", features = ["client", "transport-child-p
 pyo3               = { version = "0.28", features = ["extension-module", "abi3-py310"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 
+# AWS (Phase 2 Bedrock provider)
+aws-config             = { version = "1.8", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
+aws-sdk-bedrockruntime = { version = "1.130", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
+
 # Test-time only (dev-deps in member crates)
 tokio-test         = "0.4"
 wiremock           = "0.6"
@@ -92,6 +97,7 @@ tako-governance   = { path = "crates/tako-governance",             version = "0.
 tako-providers-anthropic    = { path = "crates/tako-providers/anthropic",    version = "0.1.0" }
 tako-providers-openai       = { path = "crates/tako-providers/openai",       version = "0.1.0" }
 tako-providers-http-generic = { path = "crates/tako-providers/http-generic", version = "0.1.0" }
+tako-providers-bedrock      = { path = "crates/tako-providers/bedrock",      version = "0.1.0" }
 
 [profile.release]
 lto           = "thin"

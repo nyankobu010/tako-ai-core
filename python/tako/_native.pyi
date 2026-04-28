@@ -50,6 +50,16 @@ class PythonProvider:
     ) -> None: ...
     def id(self) -> str: ...
 
+class Bedrock:
+    def __init__(
+        self,
+        model: str,
+        region: str | None = ...,
+        endpoint_url: str | None = ...,
+        profile_name: str | None = ...,
+    ) -> None: ...
+    def id(self) -> str: ...
+
 class Stdio:
     def __init__(self, command: str, args: list[str] | None = ...) -> None: ...
 
