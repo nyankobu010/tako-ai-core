@@ -72,33 +72,42 @@ must be fully ticked.
 
 ## Status
 
-| # | Commit | Status |
-|---|--------|--------|
-| 1 | License & governance docs | done |
-| 2 | README + ARCHITECTURE + CLAUDE.md + PLAN.md | in progress |
-| 3 | Workspace `Cargo.toml` + `rust-toolchain.toml` | pending |
-| 4 | `tako-core` types + errors | pending |
-| 5 | `tako-core` traits | pending |
-| 6 | `tako-core` tests | pending |
-| 7 | `tako-runtime` impl | pending |
-| 8 | `tako-runtime` tests | pending |
-| 9 | `tako-providers/openai` impl | pending |
-| 10 | `tako-providers/openai` tests | pending |
-| 11 | `tako-providers/anthropic` impl | pending |
-| 12 | `tako-providers/anthropic` tests | pending |
-| 13 | `tako-providers/http-generic` | pending |
-| 14 | `tako-mcp` trait + stdio | pending |
-| 15 | `tako-mcp` Streamable HTTP + registry | pending |
-| 16 | `tako-mcp` tests | pending |
-| 17 | `tako-orchestrator` `SingleAgent` + tests | pending |
-| 18 | `tako-governance` OTel + PII + EnvResolver | pending |
-| 19 | `pyproject.toml` + `tako-py` skeleton | pending |
-| 20 | `tako-py` PyClient + PyOrchestrator | pending |
-| 21 | `tako-py` provider bindings | pending |
-| 22 | `tako-py` MCP / OTel / Budget bindings | pending |
-| 23 | `python/tako/` facade + stubs | pending |
-| 24 | examples 01, 06, 08 | pending |
-| 25 | `tests/python/` smoke + concurrency | pending |
-| 26 | `.github/` CI + dependabot + ISSUE_TEMPLATE | pending |
-| 27 | `.github/workflows/wheels.yml` | pending |
-| 28 | `docs/` mkdocs skeleton | pending |
+Phase 1 has landed. As of 2026-04-28:
+
+- `cargo fmt --all -- --check` — green
+- `cargo clippy --workspace --all-targets -- -D warnings` — green
+- `cargo test --workspace` — 53 tests + 4 doctests, all green
+
+The Rust workspace ships nine crates (tako-core, tako-runtime, three
+providers, tako-mcp, tako-orchestrator, tako-governance, tako-py).
+The Python facade exposes `tako.providers.{OpenAI, Anthropic, Fake}`,
+`tako.SingleAgent` (sync + async), `tako.Budget`, `tako.tracing.init`.
+Tests live in `tests/python/` (smoke + async-concurrency).
+CI on Linux/macOS/Windows + multi-target wheel build are configured.
+
+### Phase 1.5 follow-ups (deferred from spec §13/§17)
+
+These were documented in commits but did not land in Phase 1:
+
+- PyO3 bindings for MCP transports (`tako.mcp.Stdio` / `tako.mcp.Http`)
+  — Rust today, Python facade wraps them next.
+- `PyPythonProvider` shim so users can implement custom providers
+  in pure Python.
+- OTLP exporter wiring (Phase 2 per spec, but the skeleton is here).
+- mkdocs full nav (concepts/, recipes/, API reference) — Phase 2.
+
+### Final Phase 1 verification (manual, requires Python 3.10+)
+
+```bash
+uv venv .venv && source .venv/bin/activate
+uv pip install maturin pytest pytest-asyncio ruff mypy
+maturin develop --release
+pytest -q tests/python
+ruff check python/ tests/python/ examples/
+mypy python/tako
+maturin build --release
+pip install target/wheels/tako-*.whl
+python -c "import tako; print(tako.__version__)"   # → 0.1.0
+```
+
+CI replicates this on Linux + macOS + Windows × Python 3.10–3.13.
