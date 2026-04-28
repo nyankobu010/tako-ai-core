@@ -1,0 +1,33 @@
+[package]
+name         = "tako-governance"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Enterprise plumbing for tako: OTel tracing, PII redaction, secret resolvers."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry      = { workspace = true }
+opentelemetry_sdk  = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-semantic-conventions = { workspace = true }
+thiserror          = { workspace = true }
+anyhow             = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+regex              = { workspace = true }
+sha2               = "0.10"
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["full"] }
