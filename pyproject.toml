@@ -1,0 +1,66 @@
+[build-system]
+requires      = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "tako"
+version = "0.1.0"
+description = "Rust-core, Python-facade framework for enterprise agentic systems."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "The tako contributors" }]
+requires-python = ">=3.10"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+dependencies = [
+  "pydantic>=2.7",
+  "typing-extensions>=4.10",
+]
+
+[project.optional-dependencies]
+otel    = ["opentelemetry-api>=1.25", "opentelemetry-sdk>=1.25"]
+server  = ["uvicorn>=0.30"]
+dev     = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.10", "hypothesis>=6"]
+docs    = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.25"]
+
+[project.urls]
+Homepage      = "https://github.com/TODO(<org>)/tako-ai-core"
+Documentation = "https://TODO(<org>).github.io/tako-ai-core"
+Repository    = "https://github.com/TODO(<org>)/tako-ai-core"
+Issues        = "https://github.com/TODO(<org>)/tako-ai-core/issues"
+
+[tool.maturin]
+manifest-path  = "crates/tako-py/Cargo.toml"
+module-name    = "tako._native"
+python-source  = "python"
+features       = ["pyo3/extension-module"]
+strip          = true
+
+[tool.ruff]
+line-length    = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode    = "auto"
+addopts         = "-ra --strict-markers"
+testpaths       = ["tests/python"]
+
+[tool.mypy]
+python_version = "3.10"
+strict         = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+files          = ["python/tako"]
