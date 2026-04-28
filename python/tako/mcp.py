@@ -1,30 +1,40 @@
-"""MCP transport wrappers (Phase 1.5).
-
-The Rust crate `tako-mcp` ships StdioTransport and StreamableHttpTransport
-today; the Python bindings for them land in Phase 1.5. The placeholder
-classes below preserve the eventual API so user code written against
-``tako.mcp.Stdio(...)`` will keep working when the bindings arrive.
-"""
+"""MCP transport wrappers."""
 
 from __future__ import annotations
 
+from typing import Any
 
-class _Placeholder:
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        msg = (
-            "tako.mcp transports are exposed via Rust today; the Python "
-            "bindings arrive in Phase 1.5. Use the Rust API or wait for the "
-            "next minor release."
-        )
-        raise NotImplementedError(msg)
+from tako import _native
 
 
-class Stdio(_Placeholder):
-    """MCP stdio transport. Spawns a subprocess and exchanges newline-delimited JSON-RPC."""
+class _TransportBase:
+    _native: Any
+
+    def __repr__(self) -> str:
+        return repr(self._native)
 
 
-class Http(_Placeholder):
-    """MCP Streamable HTTP transport (single endpoint POST/GET)."""
+class Stdio(_TransportBase):
+    """MCP stdio transport. Spawns a subprocess and exchanges newline-delimited
+    JSON-RPC. The ``initialize`` → ``initialized`` handshake runs at
+    construction time and blocks until it completes."""
+
+    def __init__(self, command: str, args: list[str] | None = None) -> None:
+        self._native = _native.Stdio(command, args)
+
+
+class Http(_TransportBase):
+    """MCP Streamable HTTP transport. Single-endpoint POST/GET; SSE upgrade
+    arrives in Phase 2."""
+
+    def __init__(
+        self,
+        url: str,
+        *,
+        headers: list[tuple[str, str]] | None = None,
+        timeout_secs: int | None = None,
+    ) -> None:
+        self._native = _native.StreamableHttp(url, headers=headers, timeout_secs=timeout_secs)
 
 
 __all__ = ["Http", "Stdio"]

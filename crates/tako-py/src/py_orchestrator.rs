@@ -30,9 +30,17 @@ impl PyOrchestrator {
     /// Build a single-agent orchestrator wrapping a provider.
     ///
     /// `provider` may be a `PyOpenAI`, `PyAnthropic`, or `PyFakeProvider`.
+    /// `mcp_servers` is an optional list of `PyStdio` / `PyStreamableHttp`
+    /// transports; their tools are discovered at construction time and
+    /// merged into the orchestrator's tool registry.
     #[new]
-    #[pyo3(signature = (provider, max_steps=8))]
-    fn new(provider: PyObject, max_steps: u32, py: Python<'_>) -> PyResult<Self> {
+    #[pyo3(signature = (provider, max_steps=8, mcp_servers=None))]
+    fn new(
+        provider: PyObject,
+        max_steps: u32,
+        mcp_servers: Option<Vec<PyObject>>,
+        py: Python<'_>,
+    ) -> PyResult<Self> {
         let handle: ProviderHandle =
             if let Ok(p) = provider.extract::<crate::py_provider::PyOpenAI>(py) {
                 p.handle
@@ -46,9 +54,30 @@ impl PyOrchestrator {
                 ));
             };
 
+        let registry = Arc::new(ToolRegistry::new());
+
+        if let Some(servers) = mcp_servers {
+            let rt = pyo3_async_runtimes::tokio::get_runtime();
+            let handles: Result<Vec<_>, PyErr> = servers
+                .iter()
+                .map(|s| crate::py_mcp::extract_transport_handle(py, s))
+                .collect();
+            let handles = handles?;
+            let registry_clone = Arc::clone(&registry);
+            let result: Result<(), tako_core::TakoError> = py.detach(move || {
+                rt.block_on(async move {
+                    for h in handles {
+                        registry_clone.discover(h.inner).await?;
+                    }
+                    Ok(())
+                })
+            });
+            result.map_err(crate::py_provider::map_err)?;
+        }
+
         let agent = SingleAgent::builder()
             .provider(handle.inner)
-            .tools(Arc::new(ToolRegistry::new()))
+            .tools(registry)
             .max_steps(max_steps)
             .build()
             .map_err(crate::py_provider::map_err)?;
