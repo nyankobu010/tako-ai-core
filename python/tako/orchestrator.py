@@ -29,8 +29,7 @@ class SingleAgent:
     def __init__(self, provider: _ProviderBase, *, max_steps: int = 8) -> None:
         if not hasattr(provider, "_handle"):
             raise TypeError(
-                "provider must be a tako.providers.* instance "
-                "(OpenAI, Anthropic, Fake)"
+                "provider must be a tako.providers.* instance (OpenAI, Anthropic, Fake)"
             )
         self._inner = _native.Orchestrator(provider._handle, max_steps)
 
