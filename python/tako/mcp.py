@@ -27,4 +27,4 @@ class Http(_Placeholder):
     """MCP Streamable HTTP transport (single endpoint POST/GET)."""
 
 
-__all__ = ["Stdio", "Http"]
+__all__ = ["Http", "Stdio"]

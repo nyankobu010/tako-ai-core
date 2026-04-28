@@ -72,7 +72,7 @@ class Fake(_ProviderBase):
         self,
         canned_text: str = "ok",
         *,
-        id: str = "fake:test",  # noqa: A002 - deliberate alias for an attribute name
+        id: str = "fake:test",
         delay_ms: int = 0,
     ) -> None:
         self._handle = _native.FakeProvider(canned_text, id, delay_ms)

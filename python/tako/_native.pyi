@@ -4,7 +4,8 @@ Hand-written; keep in sync with `crates/tako-py/src/lib.rs` and the
 `#[pyclass]` definitions in the surrounding modules.
 """
 
-from typing import Any, Awaitable
+from collections.abc import Awaitable
+from typing import Any
 
 __version__: str
 

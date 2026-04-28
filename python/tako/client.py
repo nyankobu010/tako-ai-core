@@ -20,9 +20,9 @@ class Client:
     def __init__(
         self,
         *,
-        providers: list["_ProviderBase"] | None = None,
+        providers: list[_ProviderBase] | None = None,
         mcp_servers: list[object] | None = None,
-        budget: "Budget | None" = None,
+        budget: Budget | None = None,
         tracing: object | None = None,
     ) -> None:
         self.providers = list(providers or [])

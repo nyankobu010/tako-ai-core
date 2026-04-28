@@ -5,7 +5,7 @@ from __future__ import annotations
 from tako import _native
 
 
-def init(*, filter: str | None = None, json: bool = False) -> None:  # noqa: A002
+def init(*, filter: str | None = None, json: bool = False) -> None:
     """Initialise process-wide tracing. Idempotent."""
     _native.init_tracing_py(filter, json)
 
