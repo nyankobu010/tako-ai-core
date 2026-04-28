@@ -1,7 +1,14 @@
-# PLAN — Phase 1: Foundation
+# PLAN — rolling project plan
 
 > Per spec §19 rule 1: this is the rolling project plan that future Claude
 > Code sessions read on entry. Update it as phases land or scope shifts.
+>
+> **Active phase**: Phase 2 + bundled Phase 1.5 — see
+> [PLAN_PHASE2.md](PLAN_PHASE2.md).
+>
+> **Done**: Phase 1 (foundation). Status table below records what shipped.
+
+## Phase 1: Foundation
 
 ## Goal
 
