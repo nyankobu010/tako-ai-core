@@ -7,3 +7,15 @@
 //!
 //! [README]: https://github.com/TODO(<org>)/tako-ai-core#readme
 //! [ARCHITECTURE]: https://github.com/TODO(<org>)/tako-ai-core/blob/main/ARCHITECTURE.md
+
+pub mod error;
+pub mod traits;
+pub mod types;
+
+pub use error::{ProviderErrorDetails, TakoError};
+pub use traits::{LlmProvider, McpTransport, PolicyEngine, Router, Tool};
+pub use types::{
+    Budget, BudgetUsage, Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, Message,
+    PolicyContext, PolicyDecision, PolicyStage, Principal, RetryAfter, Role, RoutingDecision, ToolAnnotations, ToolCallDelta,
+    ToolSchema, Usage,
+};
