@@ -49,7 +49,10 @@ pub fn init_tracing(config: &TracingConfig) -> Result<(), TakoError> {
 /// code can be written against the eventual API now.
 pub fn init_otlp_tracing(config: &TracingConfig) -> Result<(), TakoError> {
     if let Some(endpoint) = &config.otlp_endpoint {
-        tracing::warn!(endpoint, "OTLP exporter is Phase 2; falling back to local subscriber");
+        tracing::warn!(
+            endpoint,
+            "OTLP exporter is Phase 2; falling back to local subscriber"
+        );
     }
     init_tracing(config)
 }

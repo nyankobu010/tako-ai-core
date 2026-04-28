@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use tako_core::{Capabilities, ChatChunk, ChatRequest, ChatResponse, LlmProvider, Principal, TakoError};
+use tako_core::{
+    Capabilities, ChatChunk, ChatRequest, ChatResponse, LlmProvider, Principal, TakoError,
+};
 
 /// Wraps a primary [`LlmProvider`] with an ordered list of fallbacks. On a
 /// transient error from the primary, the call cascades through the fallback
@@ -21,7 +23,10 @@ impl std::fmt::Debug for FallbackProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FallbackProvider")
             .field("primary", &self.primary.id())
-            .field("fallbacks", &self.fallbacks.iter().map(|p| p.id()).collect::<Vec<_>>())
+            .field(
+                "fallbacks",
+                &self.fallbacks.iter().map(|p| p.id()).collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -42,7 +47,11 @@ impl LlmProvider for FallbackProvider {
         self.primary.capabilities()
     }
 
-    async fn chat(&self, principal: &Principal, req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        principal: &Principal,
+        req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         let mut last_err = match self.primary.chat(principal, req.clone()).await {
             Ok(r) => return Ok(r),
             Err(e) if !e.is_transient() => return Err(e),

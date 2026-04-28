@@ -2,7 +2,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use futures::StreamExt;
-use tako_core::{ChatChunk, ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal};
+use tako_core::{
+    ChatChunk, ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal,
+};
 use tako_providers_anthropic::AnthropicProvider;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -72,7 +74,13 @@ async fn tool_use_response() {
         .await
         .unwrap();
     assert_eq!(resp.finish_reason, FinishReason::ToolCalls);
-    let ContentPart::ToolCall { id, name, args } = resp.message.content.iter().find(|c| matches!(c, ContentPart::ToolCall { .. })).unwrap() else {
+    let ContentPart::ToolCall { id, name, args } = resp
+        .message
+        .content
+        .iter()
+        .find(|c| matches!(c, ContentPart::ToolCall { .. }))
+        .unwrap()
+    else {
         unreachable!()
     };
     assert_eq!(id, "toolu_01");
@@ -129,7 +137,10 @@ async fn stream_terminates_with_end() {
     while let Some(item) = stream.next().await {
         match item.unwrap() {
             ChatChunk::Delta { text: Some(t), .. } => text.push_str(&t),
-            ChatChunk::End { finish_reason, usage } => {
+            ChatChunk::End {
+                finish_reason,
+                usage,
+            } => {
                 assert_eq!(finish_reason, FinishReason::Stop);
                 assert_eq!(usage.input_tokens, 5);
                 assert_eq!(usage.output_tokens, 2);

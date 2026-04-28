@@ -73,7 +73,8 @@ fn compiled_rules() -> &'static [CompiledRule] {
             },
             CompiledRule {
                 kind: PiiKind::Jwt,
-                re: Regex::new(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b").expect("valid regex"),
+                re: Regex::new(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
+                    .expect("valid regex"),
                 validate: None,
             },
             CompiledRule {
@@ -88,7 +89,8 @@ fn compiled_rules() -> &'static [CompiledRule] {
             },
             CompiledRule {
                 kind: PiiKind::Phone,
-                re: Regex::new(r"\b\+?\d{1,3}[ -]?\(?\d{1,4}\)?[ -]?\d{3,4}[ -]?\d{4}\b").expect("valid regex"),
+                re: Regex::new(r"\b\+?\d{1,3}[ -]?\(?\d{1,4}\)?[ -]?\d{3,4}[ -]?\d{4}\b")
+                    .expect("valid regex"),
                 validate: None,
             },
             CompiledRule {
@@ -141,7 +143,11 @@ pub fn detect(input: &str) -> Vec<PiiHit> {
                     continue;
                 }
             }
-            hits.push(PiiHit { kind: rule.kind, start: m.start(), end: m.end() });
+            hits.push(PiiHit {
+                kind: rule.kind,
+                start: m.start(),
+                end: m.end(),
+            });
         }
     }
     // Resolve overlaps: keep the earliest, then break ties by longer.
@@ -241,7 +247,8 @@ mod tests {
 
     #[test]
     fn jwt_is_redacted() {
-        let s = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123";
+        let s =
+            "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123";
         let out = apply(s, ContentTransform::Redact);
         assert!(out.contains("[REDACTED:JWT]"));
     }

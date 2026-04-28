@@ -40,9 +40,25 @@ pub struct OrchOutput {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OrchEvent {
-    StepStart { step: u32 },
-    AssistantText { step: u32, delta: String },
-    ToolCallStart { step: u32, name: String, id: String },
-    ToolCallResult { step: u32, id: String, result: serde_json::Value, is_error: bool },
-    Final { output: Box<OrchOutput> },
+    StepStart {
+        step: u32,
+    },
+    AssistantText {
+        step: u32,
+        delta: String,
+    },
+    ToolCallStart {
+        step: u32,
+        name: String,
+        id: String,
+    },
+    ToolCallResult {
+        step: u32,
+        id: String,
+        result: serde_json::Value,
+        is_error: bool,
+    },
+    Final {
+        output: Box<OrchOutput>,
+    },
 }

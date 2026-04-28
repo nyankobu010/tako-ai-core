@@ -56,7 +56,9 @@ struct OaStreamUsage {
 
 /// Wrap a `reqwest::Response` body in an SSE parser and emit `ChatChunk`s.
 /// Always terminates with exactly one `ChatChunk::End`.
-pub fn into_chat_stream(resp: reqwest::Response) -> BoxStream<'static, Result<ChatChunk, TakoError>> {
+pub fn into_chat_stream(
+    resp: reqwest::Response,
+) -> BoxStream<'static, Result<ChatChunk, TakoError>> {
     let bytes = resp.bytes_stream();
     let events = bytes
         .map(|res| res.map_err(|e| std::io::Error::other(e.to_string())))

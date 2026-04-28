@@ -38,8 +38,8 @@ use futures::stream::BoxStream;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use tako_core::{
-    Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, LlmProvider, Message, Principal, Role,
-    TakoError, Usage,
+    Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, LlmProvider,
+    Message, Principal, Role, TakoError, Usage,
 };
 
 /// Configuration for an [`HttpGenericProvider`].
@@ -96,7 +96,9 @@ struct Inner {
 impl HttpGenericProvider {
     pub fn new(config: HttpGenericConfig) -> Result<Self, TakoError> {
         if config.id.is_empty() || config.model.is_empty() || config.url.is_empty() {
-            return Err(TakoError::Invalid("HttpGenericConfig: id, model, url are required".into()));
+            return Err(TakoError::Invalid(
+                "HttpGenericConfig: id, model, url are required".into(),
+            ));
         }
 
         let mut headers = HeaderMap::new();
@@ -109,7 +111,10 @@ impl HttpGenericProvider {
             headers.insert(name, value);
         }
         if !headers.contains_key(reqwest::header::CONTENT_TYPE) {
-            headers.insert(reqwest::header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            headers.insert(
+                reqwest::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
         }
 
         let http = reqwest::Client::builder()
@@ -129,7 +134,11 @@ impl HttpGenericProvider {
         });
 
         Ok(Self {
-            inner: Arc::new(Inner { config, capabilities, http }),
+            inner: Arc::new(Inner {
+                config,
+                capabilities,
+                http,
+            }),
         })
     }
 }
@@ -138,16 +147,18 @@ fn resolve_env(value: &str) -> Result<String, TakoError> {
     if let Some(rest) = value.strip_prefix("$") {
         // Allow `$VAR` or `Bearer $VAR` patterns.
         if rest.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
-            return std::env::var(rest)
-                .map_err(|_| TakoError::Invalid(format!("environment variable `{rest}` is not set")));
+            return std::env::var(rest).map_err(|_| {
+                TakoError::Invalid(format!("environment variable `{rest}` is not set"))
+            });
         }
     }
     if let Some(idx) = value.find('$') {
         let (prefix, suffix) = value.split_at(idx);
         let var = &suffix[1..];
         if var.chars().all(|c| c.is_ascii_uppercase() || c == '_') && !var.is_empty() {
-            let resolved = std::env::var(var)
-                .map_err(|_| TakoError::Invalid(format!("environment variable `{var}` is not set")))?;
+            let resolved = std::env::var(var).map_err(|_| {
+                TakoError::Invalid(format!("environment variable `{var}` is not set"))
+            })?;
             return Ok(format!("{prefix}{resolved}"));
         }
     }
@@ -185,7 +196,11 @@ impl LlmProvider for HttpGenericProvider {
         &self.inner.capabilities
     }
 
-    async fn chat(&self, _principal: &Principal, mut req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        _principal: &Principal,
+        mut req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         if req.model.is_empty() {
             req.model.clone_from(&self.inner.config.model);
         }
@@ -201,13 +216,18 @@ impl LlmProvider for HttpGenericProvider {
         let status = resp.status();
         if !status.is_success() {
             let raw = resp.text().await.unwrap_or_default();
-            return Err(
-                TakoError::provider(self.inner.config.id.clone(), self.inner.config.model.clone(), format!("HTTP {status}"))
-                    .with_status(status.as_u16())
-                    .with_raw_body(raw),
-            );
+            return Err(TakoError::provider(
+                self.inner.config.id.clone(),
+                self.inner.config.model.clone(),
+                format!("HTTP {status}"),
+            )
+            .with_status(status.as_u16())
+            .with_raw_body(raw));
         }
-        let json: serde_json::Value = resp.json().await.map_err(|e| TakoError::Transport(e.to_string()))?;
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| TakoError::Transport(e.to_string()))?;
         let text = json
             .pointer(&self.inner.config.response_text_pointer)
             .and_then(|v| v.as_str())

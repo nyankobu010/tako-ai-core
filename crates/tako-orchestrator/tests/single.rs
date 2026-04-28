@@ -9,11 +9,11 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde_json::json;
 use tako_core::{
-    Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, LlmProvider, Message, Principal,
-    Role, TakoError, Tool, ToolSchema, Usage,
+    Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, LlmProvider,
+    Message, Principal, Role, TakoError, Tool, ToolSchema, Usage,
 };
 use tako_mcp::ToolRegistry;
-use tako_orchestrator::{Orchestrator, OrchInput, SingleAgent};
+use tako_orchestrator::{OrchInput, Orchestrator, SingleAgent};
 
 #[derive(Debug)]
 struct FakeProvider {
@@ -43,7 +43,11 @@ impl LlmProvider for FakeProvider {
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
-    async fn chat(&self, _principal: &Principal, _req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        _principal: &Principal,
+        _req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.responses
             .lock()
@@ -51,7 +55,11 @@ impl LlmProvider for FakeProvider {
             .pop_front()
             .ok_or_else(|| TakoError::Invalid("FakeProvider: no scripted response left".into()))
     }
-    async fn stream(&self, _p: &Principal, _r: ChatRequest) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
+    async fn stream(
+        &self,
+        _p: &Principal,
+        _r: ChatRequest,
+    ) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
         Err(TakoError::Invalid("not implemented".into()))
     }
 }
@@ -86,7 +94,11 @@ impl Tool for EchoTool {
     fn schema(&self) -> &ToolSchema {
         &self.schema
     }
-    async fn invoke(&self, _principal: &Principal, args: serde_json::Value) -> Result<serde_json::Value, TakoError> {
+    async fn invoke(
+        &self,
+        _principal: &Principal,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, TakoError> {
         Ok(args)
     }
 }
@@ -95,7 +107,10 @@ fn assistant_text(text: &str) -> ChatResponse {
     ChatResponse {
         message: Message::assistant(text),
         finish_reason: FinishReason::Stop,
-        usage: Usage { input_tokens: 5, output_tokens: 3 },
+        usage: Usage {
+            input_tokens: 5,
+            output_tokens: 3,
+        },
         raw: Default::default(),
     }
 }
@@ -111,14 +126,20 @@ fn assistant_tool_call(id: &str, name: &str, args: serde_json::Value) -> ChatRes
             }],
         },
         finish_reason: FinishReason::ToolCalls,
-        usage: Usage { input_tokens: 4, output_tokens: 8 },
+        usage: Usage {
+            input_tokens: 4,
+            output_tokens: 8,
+        },
         raw: Default::default(),
     }
 }
 
 #[tokio::test]
 async fn single_agent_no_tools_returns_text() {
-    let provider = Arc::new(FakeProvider::new("fake:m1", vec![assistant_text("hello, world")]));
+    let provider = Arc::new(FakeProvider::new(
+        "fake:m1",
+        vec![assistant_text("hello, world")],
+    ));
     let agent = SingleAgent::builder()
         .provider(provider.clone())
         .max_steps(3)

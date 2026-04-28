@@ -8,7 +8,10 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use tako_core::{Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message, Principal, Role, TakoError, Usage};
+use tako_core::{
+    Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message,
+    Principal, Role, TakoError, Usage,
+};
 use tako_providers_anthropic::AnthropicProvider;
 use tako_providers_openai::OpenAiProvider;
 
@@ -21,7 +24,9 @@ pub struct ProviderHandle {
 
 impl std::fmt::Debug for ProviderHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProviderHandle").field("id", &self.inner.id()).finish()
+        f.debug_struct("ProviderHandle")
+            .field("id", &self.inner.id())
+            .finish()
     }
 }
 
@@ -39,7 +44,13 @@ impl PyOpenAI {
     /// like `"$ENV:OPENAI_API_KEY"` to read from the environment.
     #[new]
     #[pyo3(signature = (model, api_key, base_url=None, timeout_secs=None, organization=None))]
-    fn new(model: &str, api_key: &str, base_url: Option<&str>, timeout_secs: Option<u64>, organization: Option<&str>) -> PyResult<Self> {
+    fn new(
+        model: &str,
+        api_key: &str,
+        base_url: Option<&str>,
+        timeout_secs: Option<u64>,
+        organization: Option<&str>,
+    ) -> PyResult<Self> {
         let mut b = OpenAiProvider::builder().api_key(api_key).model(model);
         if let Some(u) = base_url {
             b = b.base_url(u);
@@ -71,7 +82,13 @@ pub struct PyAnthropic {
 impl PyAnthropic {
     #[new]
     #[pyo3(signature = (model, api_key, base_url=None, timeout_secs=None, default_max_tokens=None))]
-    fn new(model: &str, api_key: &str, base_url: Option<&str>, timeout_secs: Option<u64>, default_max_tokens: Option<u32>) -> PyResult<Self> {
+    fn new(
+        model: &str,
+        api_key: &str,
+        base_url: Option<&str>,
+        timeout_secs: Option<u64>,
+        default_max_tokens: Option<u32>,
+    ) -> PyResult<Self> {
         let mut b = AnthropicProvider::builder().api_key(api_key).model(model);
         if let Some(u) = base_url {
             b = b.base_url(u);
@@ -106,7 +123,10 @@ impl std::fmt::Debug for FakeInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FakeInner")
             .field("id", &self.id)
-            .field("calls", &self.calls.load(std::sync::atomic::Ordering::Relaxed))
+            .field(
+                "calls",
+                &self.calls.load(std::sync::atomic::Ordering::Relaxed),
+            )
             .finish()
     }
 }
@@ -127,7 +147,11 @@ impl LlmProvider for FakeInner {
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
-    async fn chat(&self, _principal: &Principal, _req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        _principal: &Principal,
+        _req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.delay_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
@@ -135,15 +159,26 @@ impl LlmProvider for FakeInner {
         Ok(ChatResponse {
             message: Message {
                 role: Role::Assistant,
-                content: vec![tako_core::ContentPart::Text { text: self.canned_text.clone() }],
+                content: vec![tako_core::ContentPart::Text {
+                    text: self.canned_text.clone(),
+                }],
             },
             finish_reason: FinishReason::Stop,
-            usage: Usage { input_tokens: 1, output_tokens: 1 },
+            usage: Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+            },
             raw: Default::default(),
         })
     }
-    async fn stream(&self, _p: &Principal, _r: ChatRequest) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
-        Err(TakoError::Invalid("FakeProvider streaming not supported".into()))
+    async fn stream(
+        &self,
+        _p: &Principal,
+        _r: ChatRequest,
+    ) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
+        Err(TakoError::Invalid(
+            "FakeProvider streaming not supported".into(),
+        ))
     }
 }
 
@@ -160,7 +195,9 @@ impl PyFakeProvider {
             capabilities: Capabilities::default(),
         });
         Self {
-            handle: ProviderHandle { inner: inner.clone() as Arc<dyn LlmProvider> },
+            handle: ProviderHandle {
+                inner: inner.clone() as Arc<dyn LlmProvider>,
+            },
             inner,
         }
     }

@@ -145,13 +145,20 @@ impl OpenAiProvider {
     }
 
     fn endpoint(&self) -> String {
-        format!("{}/v1/chat/completions", self.inner.base_url.trim_end_matches('/'))
+        format!(
+            "{}/v1/chat/completions",
+            self.inner.base_url.trim_end_matches('/')
+        )
     }
 
     async fn map_error(&self, status: reqwest::StatusCode, body: String) -> TakoError {
-        let mut err = TakoError::provider(self.inner.id.clone(), self.inner.model.clone(), format!("HTTP {status}"))
-            .with_status(status.as_u16())
-            .with_raw_body(body);
+        let mut err = TakoError::provider(
+            self.inner.id.clone(),
+            self.inner.model.clone(),
+            format!("HTTP {status}"),
+        )
+        .with_status(status.as_u16())
+        .with_raw_body(body);
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             err = TakoError::RateLimited(Duration::from_secs(1));
         }
@@ -169,7 +176,11 @@ impl LlmProvider for OpenAiProvider {
         &self.inner.capabilities
     }
 
-    async fn chat(&self, _principal: &Principal, mut req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        _principal: &Principal,
+        mut req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         if req.model.is_empty() {
             req.model.clone_from(&self.inner.model);
         }

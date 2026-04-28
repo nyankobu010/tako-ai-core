@@ -29,5 +29,9 @@ pub trait Orchestrator: Send + Sync + 'static {
 
     async fn run(&self, principal: &Principal, input: OrchInput) -> Result<OrchOutput, TakoError>;
 
-    async fn stream(&self, principal: &Principal, input: OrchInput) -> BoxStream<'static, Result<OrchEvent, TakoError>>;
+    async fn stream(
+        &self,
+        principal: &Principal,
+        input: OrchInput,
+    ) -> BoxStream<'static, Result<OrchEvent, TakoError>>;
 }

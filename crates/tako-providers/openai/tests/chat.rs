@@ -2,7 +2,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use futures::StreamExt;
-use tako_core::{ChatChunk, ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal};
+use tako_core::{
+    ChatChunk, ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal,
+};
 use tako_providers_openai::OpenAiProvider;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -122,7 +124,10 @@ async fn stream_terminates_with_end() {
     while let Some(item) = stream.next().await {
         match item.unwrap() {
             ChatChunk::Delta { text: Some(t), .. } => text.push_str(&t),
-            ChatChunk::End { finish_reason, usage } => {
+            ChatChunk::End {
+                finish_reason,
+                usage,
+            } => {
                 assert_eq!(finish_reason, FinishReason::Stop);
                 assert_eq!(usage.input_tokens, 3);
                 assert_eq!(usage.output_tokens, 2);

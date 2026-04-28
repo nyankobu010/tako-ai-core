@@ -63,7 +63,10 @@ impl StreamableHttpBuilder {
             .url
             .ok_or_else(|| TakoError::Invalid("StreamableHttpBuilder: url is required".into()))?;
         let mut headers = HeaderMap::new();
-        headers.insert(reqwest::header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
         for (k, v) in self.headers {
             let name = HeaderName::from_bytes(k.as_bytes())
                 .map_err(|e| TakoError::Invalid(format!("invalid header name `{k}`: {e}")))?;
@@ -104,7 +107,11 @@ impl McpTransport for StreamableHttpTransport {
             .await
             .map_err(|e| TakoError::Transport(format!("post: {e}")))?;
 
-        if let Some(sid) = resp.headers().get("Mcp-Session-Id").and_then(|v| v.to_str().ok()) {
+        if let Some(sid) = resp
+            .headers()
+            .get("Mcp-Session-Id")
+            .and_then(|v| v.to_str().ok())
+        {
             *self.inner.session_id.lock().await = Some(sid.to_string());
         }
 
@@ -118,7 +125,10 @@ impl McpTransport for StreamableHttpTransport {
             .await
             .map_err(|e| TakoError::Transport(format!("response parse: {e}")))?;
         if let Some(err) = parsed.error {
-            return Err(TakoError::Transport(format!("rpc error {}: {}", err.code, err.message)));
+            return Err(TakoError::Transport(format!(
+                "rpc error {}: {}",
+                err.code, err.message
+            )));
         }
         Ok(parsed.result.unwrap_or(Value::Null))
     }

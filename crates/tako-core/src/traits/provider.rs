@@ -32,7 +32,11 @@ pub trait LlmProvider: Send + Sync + 'static {
     fn capabilities(&self) -> &Capabilities;
 
     /// Single-shot chat completion.
-    async fn chat(&self, principal: &Principal, req: ChatRequest) -> Result<ChatResponse, TakoError>;
+    async fn chat(
+        &self,
+        principal: &Principal,
+        req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError>;
 
     /// Streaming variant. Implementations MUST yield `ChatChunk::End`
     /// exactly once (including on error after partial output).

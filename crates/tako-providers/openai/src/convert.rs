@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use tako_core::{
-    ChatRequest, ChatResponse, ContentPart, FinishReason, Message, Role, TakoError, ToolSchema, Usage,
+    ChatRequest, ChatResponse, ContentPart, FinishReason, Message, Role, TakoError, ToolSchema,
+    Usage,
 };
 
 #[derive(Serialize, Debug)]
@@ -119,7 +120,9 @@ pub fn to_openai_request(req: &ChatRequest) -> OaRequest<'_> {
         max_tokens: req.max_tokens,
         stop: req.stop.clone(),
         stream: req.stream,
-        stream_options: req.stream.then_some(OaStreamOptions { include_usage: true }),
+        stream_options: req.stream.then_some(OaStreamOptions {
+            include_usage: true,
+        }),
     }
 }
 
@@ -201,9 +204,8 @@ pub fn from_openai_response(resp: OaResponse) -> Result<ChatResponse, TakoError>
         let args: serde_json::Value = if tc.function.arguments.is_empty() {
             serde_json::json!({})
         } else {
-            serde_json::from_str(&tc.function.arguments).unwrap_or_else(|_| {
-                serde_json::Value::String(tc.function.arguments.clone())
-            })
+            serde_json::from_str(&tc.function.arguments)
+                .unwrap_or_else(|_| serde_json::Value::String(tc.function.arguments.clone()))
         };
         content.push(ContentPart::ToolCall {
             id: tc.id,

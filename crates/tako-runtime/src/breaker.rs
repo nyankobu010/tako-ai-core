@@ -31,8 +31,7 @@ impl Default for BreakerConfig {
     }
 }
 
-type BreakerInner =
-    failsafe::StateMachine<ConsecutiveFailures<EqualJittered>, ()>;
+type BreakerInner = failsafe::StateMachine<ConsecutiveFailures<EqualJittered>, ()>;
 
 /// Async circuit breaker. Cheaply cloneable.
 #[derive(Clone)]
@@ -54,9 +53,12 @@ impl CircuitBreaker {
         let min = config.min_cooldown.max(one_sec);
         let max = config.max_cooldown.max(min);
         let backoff = failsafe::backoff::equal_jittered(min, max);
-        let policy = failsafe::failure_policy::consecutive_failures(config.consecutive_failures, backoff);
+        let policy =
+            failsafe::failure_policy::consecutive_failures(config.consecutive_failures, backoff);
         let inner = Config::new().failure_policy(policy).build();
-        Self { inner: Arc::new(inner) }
+        Self {
+            inner: Arc::new(inner),
+        }
     }
 
     /// Run an async operation through the breaker. If the breaker is open
