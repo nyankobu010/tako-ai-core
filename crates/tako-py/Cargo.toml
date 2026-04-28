@@ -1,0 +1,35 @@
+[package]
+name         = "tako-py"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "PyO3 bindings for tako; built as the `tako._native` extension module."
+
+[lints]
+workspace = true
+
+[lib]
+name       = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3                = { workspace = true }
+pyo3-async-runtimes = { workspace = true }
+tokio               = { workspace = true }
+futures             = { workspace = true }
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+async-trait         = { workspace = true }
+tracing             = { workspace = true }
+anyhow              = { workspace = true }
+
+tako-core                   = { workspace = true }
+tako-runtime                = { workspace = true }
+tako-mcp                    = { workspace = true }
+tako-orchestrator           = { workspace = true }
+tako-governance             = { workspace = true }
+tako-providers-anthropic    = { workspace = true }
+tako-providers-openai       = { workspace = true }
+tako-providers-http-generic = { workspace = true }

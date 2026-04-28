@@ -1,0 +1,25 @@
+[package]
+name         = "tako-orchestrator"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Orchestrators for tako: SingleAgent (Phase 1), Conductor/Trinity/AbMcts/SelfCaller (later phases)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+tako-runtime       = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["full"] }

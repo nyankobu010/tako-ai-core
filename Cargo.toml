@@ -1,0 +1,99 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/tako-core",
+  "crates/tako-runtime",
+  "crates/tako-providers/anthropic",
+  "crates/tako-providers/openai",
+  "crates/tako-providers/http-generic",
+  "crates/tako-mcp",
+  "crates/tako-orchestrator",
+  "crates/tako-governance",
+  "crates/tako-py",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.85"
+license      = "Apache-2.0"
+repository   = "https://github.com/TODO(<org>)/tako-ai-core"
+authors      = ["The tako contributors"]
+
+[workspace.lints.rust]
+unsafe_code      = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic       = "deny"
+todo        = "deny"
+dbg_macro   = "deny"
+
+[workspace.dependencies]
+# async core
+tokio              = { version = "1.52", features = ["full"] }
+tokio-util         = "0.7"
+futures            = "0.3"
+async-trait        = "0.1"
+pin-project-lite   = "0.2"
+
+# serde
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+schemars           = "1.2"
+
+# errors / logging
+thiserror          = "2"
+anyhow             = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# http
+reqwest            = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "webpki-roots", "http2", "charset"] }
+eventsource-stream = "0.2"
+url                = "2"
+bytes              = "1"
+
+# reliability
+governor           = "0.10"
+failsafe           = "1.3"
+backoff            = { version = "0.4", features = ["tokio"] }
+
+# observability
+opentelemetry      = "0.31"
+opentelemetry_sdk  = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client"] }
+opentelemetry-semantic-conventions = "0.31"
+tracing-opentelemetry = "0.32"
+
+# governance / utilities
+regex              = "1"
+
+# MCP (Model Context Protocol — official Rust SDK)
+rmcp               = { version = "1.5", features = ["client", "transport-child-process", "transport-streamable-http-client"] }
+
+# PyO3 (Phase 1 wheel target)
+pyo3               = { version = "0.28", features = ["extension-module", "abi3-py310"] }
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
+
+# Test-time only (dev-deps in member crates)
+tokio-test         = "0.4"
+wiremock           = "0.6"
+proptest           = "1"
+
+# crates internal
+tako-core          = { path = "crates/tako-core",                   version = "0.1.0" }
+tako-runtime       = { path = "crates/tako-runtime",                version = "0.1.0" }
+tako-mcp          = { path = "crates/tako-mcp",                    version = "0.1.0" }
+tako-orchestrator = { path = "crates/tako-orchestrator",           version = "0.1.0" }
+tako-governance   = { path = "crates/tako-governance",             version = "0.1.0" }
+tako-providers-anthropic    = { path = "crates/tako-providers/anthropic",    version = "0.1.0" }
+tako-providers-openai       = { path = "crates/tako-providers/openai",       version = "0.1.0" }
+tako-providers-http-generic = { path = "crates/tako-providers/http-generic", version = "0.1.0" }
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
