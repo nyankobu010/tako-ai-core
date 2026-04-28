@@ -17,6 +17,7 @@ mod py_governance;
 mod py_mcp;
 mod py_orchestrator;
 mod py_provider;
+mod py_python_provider;
 
 use pyo3::prelude::*;
 
@@ -25,6 +26,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_provider::PyOpenAI>()?;
     m.add_class::<py_provider::PyAnthropic>()?;
     m.add_class::<py_provider::PyFakeProvider>()?;
+    m.add_class::<py_python_provider::PyPythonProvider>()?;
     m.add_class::<py_orchestrator::PyOrchestrator>()?;
     m.add_class::<py_mcp::PyStdio>()?;
     m.add_class::<py_mcp::PyStreamableHttp>()?;
