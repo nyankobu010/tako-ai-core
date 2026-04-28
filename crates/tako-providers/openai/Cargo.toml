@@ -23,6 +23,7 @@ reqwest            = { workspace = true }
 eventsource-stream = { workspace = true }
 url                = { workspace = true }
 bytes              = { workspace = true }
+async-stream       = "0.3"
 
 [dev-dependencies]
 wiremock           = { workspace = true }
