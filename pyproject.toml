@@ -32,7 +32,7 @@ otel    = ["opentelemetry-api>=1.25", "opentelemetry-sdk>=1.25"]
 server  = ["uvicorn>=0.30"]
 training = ["numpy>=1.26", "onnx>=1.16"]
 eval    = ["datasets>=2.20", "huggingface_hub>=0.24"]
-dev     = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.10", "hypothesis>=6", "cryptography>=43"]
+dev     = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.10", "hypothesis>=6", "cryptography>=47.0.0"]
 docs    = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.25"]
 
 [project.urls]
