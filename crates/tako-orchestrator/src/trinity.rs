@@ -23,6 +23,7 @@ use tako_core::{
     Usage,
 };
 use tako_mcp::ToolRegistry;
+use tako_runtime::BudgetTracker;
 use tracing::{Instrument, info_span};
 
 use crate::single::{ChatDefaults, assemble_tool_calls_pub, hash_messages_pub, hash_value_pub};
@@ -42,6 +43,11 @@ pub struct Trinity {
     max_steps: u32,
     defaults: ChatDefaults,
     policy: Option<Arc<dyn PolicyEngine>>,
+    /// Optional budget tracker consulted before each provider call
+    /// (`pre_check`) and after each call (`record`). When `None`, no
+    /// budget enforcement runs and the orchestrator behaves exactly as
+    /// in v0.6.0.
+    budget: Option<Arc<BudgetTracker>>,
 }
 
 impl std::fmt::Debug for Trinity {
@@ -68,6 +74,7 @@ pub struct TrinityBuilder {
     max_steps: Option<u32>,
     defaults: ChatDefaults,
     policy: Option<Arc<dyn PolicyEngine>>,
+    budget: Option<Arc<BudgetTracker>>,
 }
 
 impl std::fmt::Debug for TrinityBuilder {
@@ -119,6 +126,16 @@ impl TrinityBuilder {
         self
     }
 
+    /// Attach a [`BudgetTracker`]. When set, the orchestrator calls
+    /// `pre_check` before each provider invocation and `record` after,
+    /// using [`tako_core::LlmProvider::estimate_cost_usd`] for both the
+    /// pre-flight estimate and the post-call cost. `BudgetExhausted`
+    /// short-circuits the run.
+    pub fn budget(mut self, t: Arc<BudgetTracker>) -> Self {
+        self.budget = Some(t);
+        self
+    }
+
     pub fn build(self) -> Result<Trinity, TakoError> {
         if self.roles.is_empty() {
             return Err(TakoError::Invalid(
@@ -136,6 +153,7 @@ impl TrinityBuilder {
             max_steps: self.max_steps.unwrap_or(DEFAULT_MAX_STEPS),
             defaults: self.defaults,
             policy: self.policy,
+            budget: self.budget,
         })
     }
 }
@@ -229,6 +247,11 @@ impl Orchestrator for Trinity {
                     stream: false,
                     metadata: Default::default(),
                 };
+                let estimated_usd = provider.estimate_cost_usd(&req);
+                if let Some(b) = self.budget.as_ref() {
+                    let est_tokens = req.max_tokens.unwrap_or(0);
+                    b.pre_check(principal, estimated_usd, est_tokens).await?;
+                }
                 let resp = {
                     let span = info_span!(
                         "tako.provider.chat",
@@ -239,6 +262,9 @@ impl Orchestrator for Trinity {
                     );
                     provider.chat(principal, req).instrument(span).await?
                 };
+                if let Some(b) = self.budget.as_ref() {
+                    b.record(principal, estimated_usd, resp.usage).await?;
+                }
                 steps += 1;
                 total_usage.input_tokens = total_usage
                     .input_tokens
@@ -351,6 +377,7 @@ impl Orchestrator for Trinity {
         let defaults = self.defaults.clone();
         let max_steps = self.max_steps;
         let principal = principal.clone();
+        let budget = self.budget.clone();
 
         let s = async_stream::try_stream! {
             let mut messages: Vec<Message> = Vec::new();
@@ -395,6 +422,15 @@ impl Orchestrator for Trinity {
                     stream: provider.capabilities().supports_streaming,
                     metadata: Default::default(),
                 };
+
+                // Budget pre-check covers the streaming branch and both
+                // non-streaming fallback paths below; one record() runs
+                // after the branch picks a path.
+                let estimated_usd = provider.estimate_cost_usd(&req);
+                if let Some(b) = budget.as_ref() {
+                    let est_tokens = req.max_tokens.unwrap_or(0);
+                    b.pre_check(&principal, estimated_usd, est_tokens).await?;
+                }
 
                 let span = info_span!(
                     "tako.provider.chat",
@@ -509,6 +545,9 @@ impl Orchestrator for Trinity {
                     (resp.message, resp.finish_reason, resp.usage)
                 };
 
+                if let Some(b) = budget.as_ref() {
+                    b.record(&principal, estimated_usd, step_usage).await?;
+                }
                 steps += 1;
                 total_usage.input_tokens = total_usage
                     .input_tokens

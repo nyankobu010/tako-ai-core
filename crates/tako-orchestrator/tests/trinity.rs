@@ -297,3 +297,108 @@ async fn trinity_stream_falls_back_when_no_streaming() {
     assert_eq!(text_deltas, vec!["non-streamed"]);
     assert_eq!(code.calls.load(Ordering::SeqCst), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6.B — Budget wiring.
+// ---------------------------------------------------------------------------
+
+fn assistant_with_usage(text: &str, input: u32, output: u32) -> ChatResponse {
+    ChatResponse {
+        message: Message::assistant(text),
+        finish_reason: FinishReason::Stop,
+        usage: Usage {
+            input_tokens: input,
+            output_tokens: output,
+        },
+        raw: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn trinity_budget_records_usage_after_chat() {
+    use std::collections::BTreeMap;
+    use tako_core::Budget;
+    use tako_runtime::{BudgetBackend, BudgetTracker, InMemoryBudgetBackend};
+
+    let code = Arc::new(FakeProvider::new(
+        "fake:code",
+        vec![assistant_with_usage("CODE OUT", 9, 5)],
+    ));
+    let backend = Arc::new(InMemoryBudgetBackend::new());
+    let tracker = Arc::new(BudgetTracker::new(
+        Arc::clone(&backend) as Arc<dyn BudgetBackend>,
+        Budget::default(),
+    ));
+
+    let trinity = Trinity::builder()
+        .role("code", code.clone())
+        .role("fallback", code.clone())
+        .router(Arc::new(RegexRouter::default()))
+        .max_steps(1)
+        .budget(Arc::clone(&tracker))
+        .build()
+        .unwrap();
+
+    let principal = Principal {
+        tenant_id: "tenant-trinity".into(),
+        user_id: "u".into(),
+        roles: vec![],
+        trace_id: None,
+        metadata: BTreeMap::new(),
+    };
+    trinity
+        .run(
+            &principal,
+            OrchInput::from_user("Write a fn to compute fib"),
+        )
+        .await
+        .unwrap();
+
+    let usage = backend.current_usage("tenant-trinity").await.unwrap();
+    assert_eq!(usage.tokens_today, 14);
+}
+
+#[tokio::test]
+async fn trinity_budget_pre_check_short_circuits_on_daily_cap() {
+    use std::collections::BTreeMap;
+    use tako_core::Budget;
+    use tako_runtime::{BudgetBackend, BudgetTracker, InMemoryBudgetBackend};
+
+    let backend = Arc::new(InMemoryBudgetBackend::new());
+    backend.record("tenant-y", 5.0, 0).await.unwrap();
+    let tracker = Arc::new(BudgetTracker::new(
+        Arc::clone(&backend) as Arc<dyn BudgetBackend>,
+        Budget {
+            max_usd_per_request: None,
+            max_tokens_per_request: None,
+            max_usd_per_day: Some(1.0),
+            max_usd_per_tenant_per_day: BTreeMap::new(),
+        },
+    ));
+    let code = Arc::new(FakeProvider::new(
+        "fake:code",
+        vec![assistant("never-called")],
+    ));
+    let trinity = Trinity::builder()
+        .role("code", code.clone())
+        .role("fallback", code.clone())
+        .router(Arc::new(RegexRouter::default()))
+        .max_steps(2)
+        .budget(Arc::clone(&tracker))
+        .build()
+        .unwrap();
+
+    let principal = Principal {
+        tenant_id: "tenant-y".into(),
+        user_id: "u".into(),
+        roles: vec![],
+        trace_id: None,
+        metadata: BTreeMap::new(),
+    };
+    let err = trinity
+        .run(&principal, OrchInput::from_user("Write code"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, TakoError::BudgetExhausted(_)));
+    assert_eq!(code.calls.load(Ordering::SeqCst), 0);
+}
