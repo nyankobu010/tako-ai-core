@@ -6,12 +6,10 @@ emits a JSON report" — covered by ``test_synthetic_runs_10_tasks_and_emits_rep
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
-
 import tako
 from tako.eval import Eval, EvalReport, Task, load_synthetic
 
@@ -74,10 +72,68 @@ async def test_report_serialises_to_json(tmp_path: Path) -> None:
     assert "task_results" in parsed
 
 
-def test_external_dataset_loaders_raise() -> None:
+def test_unknown_dataset_raises() -> None:
     from tako.eval import load_dataset
 
-    with pytest.raises(NotImplementedError):
-        load_dataset("swe_bench_lite")
-    with pytest.raises(NotImplementedError):
-        load_dataset("gpqa_diamond")
+    with pytest.raises(ValueError):
+        load_dataset("does_not_exist")
+
+
+def test_external_loaders_require_datasets_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When ``datasets`` isn't installed, the external loaders raise a
+    helpful RuntimeError pointing at ``pip install tako[eval]``."""
+
+    import importlib
+    import sys
+
+    from tako.eval.datasets import external as ext_mod
+
+    # Hide the `datasets` package even if it happens to be installed.
+    monkeypatch.setitem(sys.modules, "datasets", None)
+    importlib.reload(ext_mod)
+    with pytest.raises(RuntimeError, match=r"tako\[eval\]"):
+        ext_mod.load_swe_bench_lite()
+    with pytest.raises(RuntimeError, match=r"tako\[eval\]"):
+        ext_mod.load_gpqa_diamond()
+
+
+def test_swe_bench_to_task_extracts_filename() -> None:
+    from tako.eval.datasets.external import _swe_bench_to_task
+
+    row = {
+        "instance_id": "django__django-12345",
+        "repo": "django/django",
+        "problem_statement": "Bug in queryset filtering",
+        "patch": (
+            "diff --git a/django/db/models/query.py b/django/db/models/query.py\n"
+            "--- a/django/db/models/query.py\n"
+            "+++ b/django/db/models/query.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n+new\n"
+        ),
+    }
+    task = _swe_bench_to_task(row)
+    assert task.id == "django__django-12345"
+    assert task.expected_substring == "query.py"
+    assert "django/django" in task.prompt
+    assert "Bug in queryset filtering" in task.prompt
+
+
+def test_gpqa_to_task_uses_letter_a_for_correct() -> None:
+    from tako.eval.datasets.external import _gpqa_to_task
+
+    row = {
+        "Record ID": "gpqa-001",
+        "Question": "What is 2+2?",
+        "Correct Answer": "4",
+        "Incorrect Answer 1": "3",
+        "Incorrect Answer 2": "5",
+        "Incorrect Answer 3": "22",
+    }
+    task = _gpqa_to_task(row)
+    assert task.id == "gpqa-001"
+    assert task.expected_regex == r"\bA\b"
+    # Correct answer is presented as choice A
+    assert "A. 4" in task.prompt
+    assert task.passes("The answer is A.")
+    assert not task.passes("The answer is B.")
