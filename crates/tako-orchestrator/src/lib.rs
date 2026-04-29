@@ -6,6 +6,7 @@
 pub mod conductor;
 pub mod features;
 pub mod router;
+pub mod self_caller;
 pub mod single;
 pub mod trinity;
 pub mod types;
@@ -19,6 +20,9 @@ pub use features::{FEATURE_DIM, featurise, featurise_text};
 #[cfg(feature = "onnx")]
 pub use router::OnnxRouter;
 pub use router::{RegexRouter, RegexRouterBuilder};
+pub use self_caller::{
+    ConfidenceGuard, LlmJudgeGuard, RuleBasedGuard, SelfCaller, SelfCallerBuilder,
+};
 pub use single::{ChatDefaults, SingleAgent, SingleAgentBuilder};
 pub use trinity::{Trinity, TrinityBuilder};
 pub use types::{OrchEvent, OrchInput, OrchOutput};
