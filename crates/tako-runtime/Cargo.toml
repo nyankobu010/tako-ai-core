@@ -25,5 +25,14 @@ failsafe           = { workspace = true }
 backoff            = { workspace = true }
 rand               = "0.8"
 
+# Phase 4 Redis-backed BudgetBackend (optional, behind `redis` feature).
+redis              = { workspace = true, optional = true }
+chrono             = { version = "0.4", default-features = false, features = ["clock"], optional = true }
+
+[features]
+default = []
+redis   = ["dep:redis", "dep:chrono"]
+
 [dev-dependencies]
 tokio-test         = { workspace = true }
+tokio              = { workspace = true, features = ["full"] }
