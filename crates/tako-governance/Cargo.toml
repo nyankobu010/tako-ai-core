@@ -38,6 +38,14 @@ base64                 = { workspace = true }
 aws-config             = { workspace = true }
 aws-sdk-secretsmanager = { workspace = true }
 
+# Phase 4 Sigstore tool-catalogue verification (optional, behind `sigstore`).
+sigstore               = { workspace = true, optional = true }
+
+[features]
+default  = []
+sigstore = ["dep:sigstore"]
+
 [dev-dependencies]
 tokio    = { workspace = true, features = ["full"] }
 wiremock = { workspace = true }
+sigstore = { workspace = true }

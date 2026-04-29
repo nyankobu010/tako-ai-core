@@ -37,11 +37,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixture is an in-process `tonic::transport::Server` bound to an
   ephemeral `127.0.0.1:0` port via `serve_with_incoming`.
 
+- **Sigstore tool-catalogue verification** (`tako_governance::CatalogueVerifier`,
+  Phase 4.E): an operator can pin the exact set of MCP tools a server is
+  permitted to expose by signing a JSON catalogue with `cosign sign-blob`
+  and shipping the catalogue + base64 signature alongside the server.
+  `CatalogueVerifier::from_pem(cosign.pub)` loads the pinned key;
+  `verifier.verify(manifest, signature) -> Catalogue` checks the cosign
+  signature (raw or base64, ECDSA P-256 / Ed25519 / RSA) and returns the
+  parsed `Catalogue { server, tools: Vec<ToolSchema> }`. The returned
+  schemas pass straight to `tako_mcp::ToolRegistry::register_mcp` — no
+  new coupling between `tako-governance` and `tako-mcp`.
+- Trust model for this landing is **keyed** (pinned public key, the
+  cosign default for `--key`); keyless verification (Fulcio cert + Rekor
+  offline bundle against the Sigstore public-good trust root) is
+  intentionally deferred — the same `verify` return shape will lift onto
+  a bundle-based variant in a follow-up.
+- Gated behind a new `sigstore` Cargo feature on `tako-governance` so
+  the `sigstore` crate (and its `aws-lc-rs` crypto backend) only land in
+  the dep tree when explicitly enabled.
+- Workspace `Cargo.toml` adds `sigstore = "0.13"` with `default-features
+  = false, features = ["cert"]` — the minimum for `CosignVerificationKey`
+  + `SigStoreSigner`.
+- Tests in `crates/tako-governance/tests/sigstore.rs` (6 cases, gated on
+  `sigstore`): generates an ECDSA-P256 keypair at test time using
+  `sigstore`'s own primitives so the fixtures are reproducible without
+  `cosign` installed. Covers raw + base64 signature acceptance, tampered
+  manifest detection, wrong-key rejection, malformed PEM rejection, and
+  non-JSON payload rejection (after a valid signature).
+
 ### Notes
 
-- PyO3 + Python facade for both `WebSocketTransport` and `GrpcTransport`
-  is intentionally deferred to a later sub-phase; both remain Rust-only
-  for now.
+- PyO3 + Python facade for `WebSocketTransport`, `GrpcTransport`, and
+  `CatalogueVerifier` is intentionally deferred to a later sub-phase;
+  all three remain Rust-only for now.
 
 ## [0.4.0] - 2026-04-29
 

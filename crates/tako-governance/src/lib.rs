@@ -14,6 +14,8 @@ pub mod otel;
 pub mod pii;
 pub mod policy;
 pub mod secrets;
+#[cfg(feature = "sigstore")]
+pub mod sigstore;
 
 pub use otel::{TracerGuard, TracingConfig, init_otlp_tracing, init_tracing};
 pub use pii::{ContentTransform, PiiHit, PiiKind, apply, detect};
@@ -22,3 +24,5 @@ pub use secrets::{
     AwsSecretsManagerResolver, AzureKeyVaultResolver, EnvResolver, GcpSecretManagerResolver,
     SecretResolver, SecretString, VaultResolver,
 };
+#[cfg(feature = "sigstore")]
+pub use sigstore::{Catalogue, CatalogueVerifier};

@@ -114,6 +114,9 @@ ndarray                 = "0.16"
 # RNG (Phase 4 AB-MCTS Thompson sampling)
 rand                    = { version = "0.9", default-features = false, features = ["std", "std_rng", "thread_rng"] }
 
+# Phase 4 Sigstore tool-catalogue verification
+sigstore                = { version = "0.13", default-features = false, features = ["cert"] }
+
 # Test-time only (dev-deps in member crates)
 tokio-test         = "0.4"
 wiremock           = "0.6"
