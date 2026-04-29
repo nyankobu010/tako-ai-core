@@ -34,3 +34,4 @@ tako-providers-anthropic    = { workspace = true }
 tako-providers-openai       = { workspace = true }
 tako-providers-http-generic = { workspace = true }
 tako-providers-bedrock      = { workspace = true }
+tako-compat                 = { workspace = true }

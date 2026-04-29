@@ -16,7 +16,15 @@ use crate::py_provider::ProviderHandle;
 
 #[pyclass(name = "Orchestrator", module = "tako._native", skip_from_py_object)]
 pub struct PyOrchestrator {
-    inner: Arc<SingleAgent>,
+    pub(crate) inner: Arc<SingleAgent>,
+}
+
+impl PyOrchestrator {
+    /// Return the orchestrator handle as `Arc<dyn Orchestrator>` for
+    /// downstream wiring (compat server, future routing).
+    pub(crate) fn inner_arc(&self) -> Arc<dyn Orchestrator> {
+        Arc::clone(&self.inner) as Arc<dyn Orchestrator>
+    }
 }
 
 impl std::fmt::Debug for PyOrchestrator {
