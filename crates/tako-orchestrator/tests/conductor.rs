@@ -10,8 +10,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde_json::json;
 use tako_core::{
-    Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, LlmProvider, Message, Principal,
-    Role, TakoError, Usage,
+    Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message, Principal, TakoError, Usage,
 };
 use tako_orchestrator::{Conductor, OrchInput, Orchestrator};
 

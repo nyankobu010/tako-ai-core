@@ -71,6 +71,7 @@ tracing-opentelemetry = "0.32"
 
 # governance / utilities
 regex              = "1"
+regorus            = "0.9"
 
 # MCP (Model Context Protocol — official Rust SDK)
 rmcp               = { version = "1.5", features = ["client", "transport-child-process", "transport-streamable-http-client"] }
