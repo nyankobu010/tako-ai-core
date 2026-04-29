@@ -11,6 +11,7 @@ use tako_core::{
 };
 
 use crate::convert;
+use crate::stream::into_chat_stream;
 
 #[derive(Debug, Default, Clone)]
 pub struct BedrockBuilder {
@@ -74,7 +75,7 @@ impl BedrockBuilder {
         let id = format!("bedrock:{model}");
         let capabilities = self.capabilities.unwrap_or(Capabilities {
             max_context_tokens: 200_000,
-            supports_streaming: false, // Phase 2.5 (ConverseStream)
+            supports_streaming: true,
             supports_tools: true,
             supports_vision: true,
             supports_json_mode: false,
@@ -158,11 +159,34 @@ impl LlmProvider for BedrockProvider {
     async fn stream(
         &self,
         _principal: &Principal,
-        _req: ChatRequest,
+        mut req: ChatRequest,
     ) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
-        Err(TakoError::Invalid(
-            "Bedrock streaming (ConverseStream) is Phase 2.5".into(),
-        ))
+        if req.model.is_empty() {
+            req.model.clone_from(&self.inner.model);
+        }
+        let inputs = convert::to_converse_inputs(&req)?;
+
+        let mut call = self
+            .inner
+            .client
+            .converse_stream()
+            .model_id(&self.inner.model)
+            .set_messages(Some(inputs.messages));
+        if !inputs.system.is_empty() {
+            call = call.set_system(Some(inputs.system));
+        }
+        if let Some(cfg) = inputs.inference_config {
+            call = call.inference_config(cfg);
+        }
+        if let Some(tc) = inputs.tool_config {
+            call = call.tool_config(tc);
+        }
+
+        let output = call
+            .send()
+            .await
+            .map_err(|e| map_sdk_error(&self.inner.id, &self.inner.model, e))?;
+        Ok(into_chat_stream(output))
     }
 }
 
