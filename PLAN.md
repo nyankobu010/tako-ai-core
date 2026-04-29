@@ -9,9 +9,12 @@
 >   [PLAN_PHASE2.md](PLAN_PHASE2.md) and `## [0.2.0]`
 > - Phase 2.5 (cloud breadth + carry-overs, v0.3.0) — see
 >   [PLAN_PHASE25.md](PLAN_PHASE25.md) and `## [0.3.0]`
+> - Phase 3 (learned coordination, v0.4.0) — see
+>   [PLAN_PHASE3.md](PLAN_PHASE3.md) and `## [0.4.0]`
 >
-> **Next**: Phase 3 — Trinity learned router (rule + ONNX), training
-> harness, SelfCaller bounded recursion, eval harness. Plan when starting.
+> **Next**: Phase 4 — AB-MCTS orchestrator, Mistral / Ollama providers,
+> WebSocket / gRPC MCP transports, Sigstore tool-catalogue verification,
+> Redis-backed BudgetBackend. Plan when starting.
 
 ## Phase 1: Foundation
 
