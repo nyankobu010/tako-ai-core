@@ -127,18 +127,16 @@ pub fn to_vertex_request(req: &ChatRequest) -> VxRequest {
         }]
     };
 
-    let generation_config = if req.temperature.is_some()
-        || req.max_tokens.is_some()
-        || !req.stop.is_empty()
-    {
-        Some(VxGenerationConfig {
-            temperature: req.temperature,
-            max_output_tokens: req.max_tokens,
-            stop_sequences: req.stop.clone(),
-        })
-    } else {
-        None
-    };
+    let generation_config =
+        if req.temperature.is_some() || req.max_tokens.is_some() || !req.stop.is_empty() {
+            Some(VxGenerationConfig {
+                temperature: req.temperature,
+                max_output_tokens: req.max_tokens,
+                stop_sequences: req.stop.clone(),
+            })
+        } else {
+            None
+        };
 
     VxRequest {
         contents,

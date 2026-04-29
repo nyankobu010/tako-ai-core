@@ -9,6 +9,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.3.0] - 2026-04-29
+
+Phase 2.5 — cloud breadth + carry-overs. Adds Azure OpenAI and Vertex AI
+(Gemini) providers; cloud secret resolvers for Vault, AWS Secrets
+Manager, Azure Key Vault, and GCP Secret Manager; Bedrock streaming
+(ConverseStream); OpenAI-compat SSE streaming; and a full mkdocs site
+with GitHub Pages deploy.
+
+### Added
+
+- **Azure OpenAI provider** (`tako-providers-azure-openai`): same
+  chat.completions wire format as OpenAI, but with the Azure URL shape
+  (`/openai/deployments/{d}/chat/completions?api-version=...`) and
+  `api-key` header auth. Provider id: `azure-openai:<deployment>`.
+  PyO3 binding `tako._native.AzureOpenAi` + facade
+  `tako.providers.AzureOpenAI`. 4 wiremock tests + 5 Python smoke tests.
+
+- **Vertex AI provider** (`tako-providers-vertex`): Gemini via the
+  `:generateContent` and `:streamGenerateContent?alt=sse` REST endpoints.
+  Auth deferred to caller (pre-resolved OAuth2 access token via
+  `.access_token()` / `.access_token_env()`); no `gcp_auth` dep added.
+  Tool-call name correlation via id lookup against prior assistant
+  messages. PyO3 binding `tako._native.Vertex` + facade
+  `tako.providers.Vertex`. 5 wiremock tests + 5 Python smoke tests.
+
+- **Cloud secret resolvers** in `tako-governance`:
+  - `VaultResolver` (KV-v2 REST via reqwest; `path#field` JSON-pointer
+    sub-key syntax).
+  - `AwsSecretsManagerResolver` (`aws-sdk-secretsmanager`; deferred
+    credential chain resolution; `name#version` syntax).
+  - `AzureKeyVaultResolver` (REST via reqwest; deferred bearer token;
+    `name#version` syntax).
+  - `GcpSecretManagerResolver` (REST via reqwest; deferred bearer
+    token; `name#version` syntax; base64-decodes payload).
+  PyO3 bindings `tako._native.{Vault,AzureKeyVault,GcpSecretManager,
+  AwsSecretsManager}Resolver` + new facade module `tako.secrets`.
+  Refactor: `secrets.rs` -> `secrets/` module (mod.rs + 4 impl files).
+  10 wiremock-backed Rust tests + 7 Python smoke tests.
+
+- **Bedrock streaming**: replaces v0.2.0's `Phase 2.5` 501 stub with a
+  real `ConverseStream` implementation. `stream::map_event` walks each
+  event variant (MessageStart, ContentBlockStart::ToolUse,
+  ContentBlockDelta::Text/ToolUse, MessageStop, Metadata) and emits
+  `ChatChunk::Delta` / `End` / `Error`. Capabilities flag
+  `supports_streaming` flips to `true`. 5 unit tests covering each
+  branch.
+
+- **tako-compat SSE streaming**: replaces v0.2.0's `stream=true` 501
+  with a real `axum::response::sse::Sse` stream. `sse::event_to_payloads`
+  reverse-maps `OrchEvent` -> OpenAI `chat.completion.chunk` JSON +
+  terminal `data: [DONE]` line, matching what the official `openai`
+  Python SDK consumes. When the underlying orchestrator's `stream()`
+  isn't implemented, falls back to running `run()` and emulating one
+  AssistantText chunk + Final — wire format is identical either way.
+  4 sse unit tests + replaces the obsolete `returns_501` server
+  integration test with one that asserts SSE chunks + DONE.
+  `tests/python/test_compat_streaming.py` includes both a raw-SSE
+  wire-format test and an `openai` SDK conformance test (skip-if-not-
+  installed).
+
+- **mkdocs site**: full nav under `docs/`:
+  - `concepts/`: providers, orchestrators, policy, secrets, budgets,
+    tracing, mcp.
+  - `recipes/`: azure_openai, vertex, bedrock, openai_compat_server,
+    conductor, opa_policy, secret_resolvers.
+  - `api/`: python (mkdocstrings), rust (docs.rs links).
+  Material theme with light+dark, navigation.sections, search.highlight.
+  `mkdocs.yml` moves to repo root (modern Material requirement).
+  `mkdocs build --strict` is clean.
+
+- **`.github/workflows/docs.yml`**: builds the mkdocs site on push to
+  main when `docs/` or `python/tako/` change, deploys to GitHub Pages
+  via `actions/deploy-pages@v4`. Repo Pages source must be set to
+  'GitHub Actions' once post-merge.
+
+- Examples: `09_azure_openai.py`, `10_vertex_gemini.py`,
+  `11_secrets_vault.py`, `12_bedrock_streaming.py`.
+
+### Changed
+
+- Workspace package version: `0.2.0` -> `0.3.0` across `Cargo.toml`,
+  `pyproject.toml`, `python/tako/__init__.py`, `tests/python/test_smoke.py`.
+- `Bedrock` `supports_streaming` capability flips to `true`.
+- `tako-providers-openai` exposes `convert` and `stream` modules as
+  `#[doc(hidden)] pub mod` so the Azure OpenAI crate can reuse them.
+- Workspace deps added: `aws-sdk-secretsmanager` 1.83, `base64` 0.22.
+  Bedrock crate adds `async-stream` 0.3 (already a dep of openai/anthropic
+  providers).
+- `tako-governance/Cargo.toml` adds `reqwest`, `base64`, `aws-config`,
+  `aws-sdk-secretsmanager` for cloud resolvers; `wiremock` as dev-dep.
+
+### Deprecated
+
+- (none)
+
+### Removed
+
+- The `Phase 2.5` 501 stubs in `BedrockProvider::stream()` and
+  `tako-compat`'s `chat_completions` for `stream=true`. Both replaced
+  with real streaming.
+
+### Fixed
+
+- Bedrock provider's `supports_streaming` capability incorrectly read
+  `false`; flipped to `true` now that streaming works.
+
+### Security
+
+- (none net new — cloud resolvers all use the same SecretString
+  redaction story as `EnvResolver`)
+
 ## [0.2.0] - 2026-04-29
 
 Phase 2 + bundled Phase 1.5 follow-ups. Adds Conductor, Bedrock,
@@ -137,6 +248,7 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TODO(<org>)/tako-ai-core/releases/tag/v0.1.0

@@ -89,7 +89,9 @@ pub fn event_to_payloads(event: &OrchEvent, id: &str, model: &str) -> Vec<String
             };
             vec![serde_json::to_string(&chunk).unwrap_or_default()]
         }
-        OrchEvent::ToolCallStart { name, id: tc_id, .. } => {
+        OrchEvent::ToolCallStart {
+            name, id: tc_id, ..
+        } => {
             let chunk = OaChunk {
                 id: id.to_string(),
                 object: "chat.completion.chunk",

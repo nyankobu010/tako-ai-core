@@ -171,10 +171,10 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use aws_sdk_bedrockruntime::types::ToolUseBlockDelta;
     use aws_sdk_bedrockruntime::types::builders::{
         ContentBlockDeltaEventBuilder, ContentBlockStartEventBuilder, MessageStopEventBuilder,
     };
-    use aws_sdk_bedrockruntime::types::ToolUseBlockDelta;
     use aws_sdk_bedrockruntime::types::{StopReason, TokenUsage};
 
     #[test]

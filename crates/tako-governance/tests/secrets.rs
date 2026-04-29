@@ -52,10 +52,7 @@ async fn vault_kv_v2_reads_sub_key_via_jsonpointer() {
         .await;
 
     let resolver = VaultResolver::new(server.uri(), "tok").unwrap();
-    let secret = resolver
-        .resolve("secret/data/myapp#api_key")
-        .await
-        .unwrap();
+    let secret = resolver.resolve("secret/data/myapp#api_key").await.unwrap();
     assert_eq!(secret.expose(), "sk-test-123");
 }
 
@@ -136,7 +133,9 @@ async fn gcp_secret_manager_reads_latest() {
         "payload": {"data": encoded},
     });
     Mock::given(method("GET"))
-        .and(path("/v1/projects/my-proj/secrets/api-key/versions/latest:access"))
+        .and(path(
+            "/v1/projects/my-proj/secrets/api-key/versions/latest:access",
+        ))
         .and(header("Authorization", "Bearer gcp-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .mount(&server)
