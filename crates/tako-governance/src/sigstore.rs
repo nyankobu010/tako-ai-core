@@ -226,12 +226,59 @@ pub struct RekorEntry {
     /// Optional Merkle inclusion proof against the Rekor tree head.
     /// When present and the verifier has been configured with a Rekor
     /// key (see [`KeylessVerifier::with_rekor_key`]), the audit path is
-    /// verified per RFC 6962 §2.1.1. The checkpoint signature
-    /// (`SignedNote` over the tree head) is **not** verified here —
-    /// that is a separate concern from the inclusion proof itself and
-    /// is tracked as a Phase 8 follow-up.
+    /// verified per RFC 6962 §2.1.1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inclusion_proof: Option<RekorInclusionProof>,
+    /// Optional Rekor checkpoint (`SignedNote` over the tree head).
+    /// When present and a Rekor key is pinned, the checkpoint
+    /// signature is verified against that key. If the entry also
+    /// carries an `inclusion_proof`, the checkpoint's `root_hash` must
+    /// agree with the inclusion proof's `root_hash_hex` — this anchors
+    /// the per-entry audit path to a tree head the operator can also
+    /// observe out-of-band. Added in v0.9.0; serde-default `None` so
+    /// pre-v0.9.0 bundles deserialize unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<RekorCheckpoint>,
+}
+
+/// Rekor checkpoint (`SignedNote`) over the transparency-log tree head.
+///
+/// The checkpoint is a small text artefact of the form:
+///
+/// ```text
+/// <origin>\n<tree_size>\n<base64 root_hash>\n
+/// \n
+/// — <key_id> <base64 signature>\n
+/// ```
+///
+/// where the signed message is the first three lines plus the empty
+/// separator (i.e. `format!("{origin}\n{tree_size}\n{root_hash_b64}\n\n")`).
+/// The signature is produced by the same Rekor public-good ECDSA-P256
+/// key already used to sign per-entry SETs.
+///
+/// See <https://github.com/transparency-dev/formats/blob/main/log/README.md>
+/// for the upstream `SignedNote` format.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RekorCheckpoint {
+    /// Free-form origin / log name (first line of the note body).
+    /// Must match the origin the Rekor instance writes (e.g.
+    /// `"rekor.sigstore.dev - 1193050959916656506"`).
+    pub origin: String,
+    /// Tree size at the moment the checkpoint was issued. Must match
+    /// `RekorInclusionProof::tree_size` when both are present.
+    pub tree_size: u64,
+    /// Base64-encoded SHA-256 root hash of the Rekor tree at
+    /// `tree_size`. Must round-trip to the same bytes as
+    /// `RekorInclusionProof::root_hash_hex` (modulo encoding) when
+    /// both are present.
+    pub root_hash_b64: String,
+    /// Short-form key identifier from the trailing `— <key_id>` line.
+    /// Carried verbatim into the audit log; not used for verification
+    /// (the operator pins the full Rekor key separately).
+    pub key_id: String,
+    /// Base64-encoded ECDSA-P256 signature over the canonical signed
+    /// message described in the type-level docs.
+    pub signature_b64: String,
 }
 
 /// Merkle inclusion proof against a Rekor tree head.
@@ -502,6 +549,18 @@ impl KeylessVerifier {
             // specific position in the public log.
             if let Some(proof) = entry.inclusion_proof.as_ref() {
                 verify_rekor_inclusion(entry, proof)?;
+            }
+            // 8.C: Rekor checkpoint (SignedNote) verification when the
+            // entry also carries one. The checkpoint anchors the tree
+            // head out-of-band — independent of the per-entry SET —
+            // and (when an inclusion proof is also present) must agree
+            // with the inclusion proof's pinned root hash.
+            if let Some(checkpoint) = entry.checkpoint.as_ref() {
+                let expected_root_hex = entry
+                    .inclusion_proof
+                    .as_ref()
+                    .map(|p| p.root_hash_hex.as_str());
+                verify_rekor_checkpoint(rekor_key, checkpoint, expected_root_hex)?;
             }
         }
 
@@ -820,6 +879,47 @@ fn verify_rekor_set(key: &CosignVerificationKey, entry: &RekorEntry) -> Result<(
     Ok(())
 }
 
+/// Verify a Rekor checkpoint (`SignedNote`) signature against the
+/// pinned Rekor key, and (when an `expected_root_hex` is supplied
+/// alongside an inclusion proof) assert that the checkpoint's
+/// `root_hash_b64` decodes to the same bytes as `expected_root_hex`.
+///
+/// The signed message is reconstructed as
+/// `format!("{origin}\n{tree_size}\n{root_hash_b64}\n\n")` per the
+/// `SignedNote` text format documented at
+/// <https://github.com/transparency-dev/formats/blob/main/log/README.md>.
+fn verify_rekor_checkpoint(
+    key: &CosignVerificationKey,
+    checkpoint: &RekorCheckpoint,
+    expected_root_hex: Option<&str>,
+) -> Result<(), TakoError> {
+    let signed_message = format!(
+        "{origin}\n{tree_size}\n{root_hash_b64}\n\n",
+        origin = checkpoint.origin,
+        tree_size = checkpoint.tree_size,
+        root_hash_b64 = checkpoint.root_hash_b64,
+    );
+    let sig_bytes = B64
+        .decode(checkpoint.signature_b64.trim())
+        .map_err(|e| TakoError::Invalid(format!("sigstore: rekor checkpoint base64: {e}")))?;
+    key.verify_signature(Signature::Raw(&sig_bytes), signed_message.as_bytes())
+        .map_err(|e| TakoError::Invalid(format!("sigstore: rekor checkpoint invalid: {e}")))?;
+
+    if let Some(expected_hex) = expected_root_hex {
+        let actual_bytes = B64.decode(checkpoint.root_hash_b64.trim()).map_err(|e| {
+            TakoError::Invalid(format!("sigstore: rekor checkpoint root base64: {e}"))
+        })?;
+        let expected_bytes = hex::decode(expected_hex.trim())
+            .map_err(|e| TakoError::Invalid(format!("sigstore: rekor checkpoint root hex: {e}")))?;
+        if actual_bytes != expected_bytes {
+            return Err(TakoError::Invalid(
+                "sigstore: rekor checkpoint root hash disagrees with inclusion proof root".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // cosign protobuf-bundle adapter (Phase 7.C).
 // ---------------------------------------------------------------------------
@@ -918,6 +1018,11 @@ impl KeylessBundle {
                     canonicalized_body: B64.encode(&t.canonicalized_body),
                     set_b64: B64.encode(&promise.signed_entry_timestamp),
                     inclusion_proof,
+                    // Cosign protobuf bundles do not (currently) carry
+                    // a SignedNote checkpoint inline; operators that
+                    // want checkpoint verification must populate the
+                    // field on the JSON-shaped KeylessBundle directly.
+                    checkpoint: None,
                 })
             }
             None => None,

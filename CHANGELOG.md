@@ -27,6 +27,38 @@ Plan: [PLAN_PHASE8.md](PLAN_PHASE8.md). In progress.
   `kind` accepts the two new strings; `step` returns `Some(_)`
   on `verifier_score`. Type stubs in `_native.pyi` updated.
 
+- **Rekor checkpoint (`SignedNote`) verification** (Phase 8.C):
+  the third leg of the transparency-log story alongside the
+  v0.7.0 SET check and v0.8.0 inclusion-proof check.
+  - New `tako_governance::sigstore::RekorCheckpoint
+    { origin, tree_size, root_hash_b64, key_id, signature_b64 }`
+    struct. `RekorEntry` gains an optional
+    `checkpoint: Option<RekorCheckpoint>` field (serde-default
+    `None`, so v0.8.0 bundles deserialize unchanged).
+  - New private `verify_rekor_checkpoint(rekor_key, checkpoint,
+    expected_root_hex)` runs after the inclusion-proof check
+    when both a Rekor key is pinned and the entry carries a
+    checkpoint. Reconstructs the canonical signed message
+    (`format!("{origin}\n{tree_size}\n{root_hash_b64}\n\n")`),
+    verifies the ECDSA-P256 signature against the pinned Rekor
+    key, and (when an inclusion proof is also present) asserts
+    the checkpoint's `root_hash_b64` decodes to the same bytes
+    as the inclusion proof's `root_hash_hex` — anchoring the
+    audit path to a tree head the operator can also observe
+    out-of-band.
+  - 3 new Rust integration tests in
+    `crates/tako-governance/tests/sigstore.rs::checkpoint`:
+    round-trip with all three Rekor checks (SET + inclusion +
+    checkpoint), tampered checkpoint signature rejected, and a
+    *clean* root-hash-mismatch case where the checkpoint's
+    signature is valid but the root disagrees with the
+    inclusion proof.
+  - **Implicit-on-when-present.** No new `KeylessVerifier`
+    builder method — the same `with_rekor_key` already gates
+    SET, inclusion-proof, and now checkpoint verification.
+  - No Python facade change required (the field is pure data
+    inside the bundle JSON; serde handles it transparently).
+
 ### Changed
 
 - **`OrchEvent` is now `#[non_exhaustive]`.** Pre-1.0 minor-bump
