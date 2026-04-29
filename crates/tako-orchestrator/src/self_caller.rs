@@ -198,12 +198,28 @@ impl Orchestrator for SelfCaller {
     /// [`ConfidenceGuard`] instead of being yielded. Only the final
     /// accepted (or max-depth) iteration's `Final` event is forwarded.
     ///
-    /// **Recursion signal on the wire**: the v0.8.0 [`OrchEvent`] enum
-    /// is intentionally unchanged, so the client-visible cue that a
-    /// recursion happened is "more [`OrchEvent::StepStart`]s arrive
-    /// after the inner stream's last event but before this stream's
-    /// own `Final`". A first-class `Recursion { depth, confidence }`
-    /// variant is tracked as a Phase 8 candidate.
+    /// ## Recursion signal on the wire (v0.9.0)
+    ///
+    /// At the end of each recursion iteration (or at early-abort), the
+    /// outer stream yields an [`OrchEvent::Recursion`] carrying the
+    /// current depth and the guard's confidence score. Consumers can
+    /// observe recursion progress without inferring it from
+    /// `StepStart` ordering as in v0.8.0.
+    ///
+    /// ## Streaming-aware early termination (v0.9.0)
+    ///
+    /// After each [`OrchEvent::AssistantText`] delta forwarded from
+    /// the inner stream, the guard's
+    /// [`ConfidenceGuard::evaluate_streaming`] hook is consulted with
+    /// the cumulative assistant text seen so far. If the hook returns
+    /// `Some(score)` with `score >= self.min_confidence`, the inner
+    /// stream is dropped, an [`OrchEvent::Recursion`] carrying the
+    /// score is emitted, and a synthesised [`OrchEvent::Final`] over
+    /// the accumulated text closes the stream — useful for cheap
+    /// rule-based guards that can decide early.
+    ///
+    /// The default `evaluate_streaming` returns `Ok(None)`, so guards
+    /// that don't override (incl. `LlmJudgeGuard`) are unaffected.
     async fn stream(
         &self,
         principal: &Principal,
@@ -236,6 +252,8 @@ impl Orchestrator for SelfCaller {
                     .instrument(span.clone())
                     .await;
                 let mut captured: Option<OrchOutput> = None;
+                let mut accumulated = String::new();
+                let mut early_score: Option<f32> = None;
                 while let Some(ev) = inner_stream.next().await {
                     match ev? {
                         OrchEvent::Final { output } => {
@@ -244,11 +262,43 @@ impl Orchestrator for SelfCaller {
                             // the outer stream emits exactly one Final
                             // (the accepted iteration's) at the end.
                         }
+                        OrchEvent::AssistantText { step, delta } => {
+                            accumulated.push_str(&delta);
+                            yield OrchEvent::AssistantText { step, delta };
+                            // Phase 8.D: streaming-aware early-abort.
+                            // Guards that override `evaluate_streaming`
+                            // (e.g. `RuleBasedGuard`) can short-circuit
+                            // before the inner orchestrator finishes.
+                            // The default impl returns Ok(None), so
+                            // guards that don't override are unaffected.
+                            if let Some(score) =
+                                confidence.evaluate_streaming(&p, &accumulated).await?
+                            {
+                                if score >= min_confidence {
+                                    early_score = Some(score);
+                                    break;
+                                }
+                            }
+                        }
                         other => {
                             yield other;
                         }
                     }
                 }
+
+                if let Some(score) = early_score {
+                    span.record("tako.recursion.confidence", score);
+                    yield OrchEvent::Recursion { depth: depth as u32, confidence: score };
+                    let out = OrchOutput {
+                        text: accumulated.clone(),
+                        message: Message::assistant(accumulated),
+                        usage: tako_core::Usage::default(),
+                        steps: 1,
+                    };
+                    yield OrchEvent::Final { output: Box::new(out) };
+                    return;
+                }
+
                 let out = captured.ok_or_else(|| {
                     TakoError::Invalid(
                         "SelfCaller: inner stream ended without Final event".into(),
@@ -257,6 +307,8 @@ impl Orchestrator for SelfCaller {
 
                 let conf = confidence.evaluate(&p, &out.text).await?;
                 span.record("tako.recursion.confidence", conf);
+
+                yield OrchEvent::Recursion { depth: depth as u32, confidence: conf };
 
                 if conf >= min_confidence || offset >= max_depth {
                     yield OrchEvent::Final { output: Box::new(out) };
@@ -322,6 +374,27 @@ impl ConfidenceGuard for RuleBasedGuard {
             return Ok(if re.is_match(text) { 1.0 } else { 0.0 });
         }
         Ok(1.0)
+    }
+
+    /// Streaming-aware variant (Phase 8.D): if the accumulated partial
+    /// already passes both the length check and (when configured) the
+    /// regex, return `Some(1.0)` — the partial output is sufficient and
+    /// `SelfCaller::stream` should early-abort. Otherwise return `None`
+    /// so the inner stream keeps running.
+    async fn evaluate_streaming(
+        &self,
+        _principal: &Principal,
+        partial: &str,
+    ) -> Result<Option<f32>, TakoError> {
+        if partial.len() < self.min_chars {
+            return Ok(None);
+        }
+        if let Some(re) = &self.pattern
+            && !re.is_match(partial)
+        {
+            return Ok(None);
+        }
+        Ok(Some(1.0))
     }
 }
 

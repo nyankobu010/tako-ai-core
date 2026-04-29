@@ -59,6 +59,38 @@ Plan: [PLAN_PHASE8.md](PLAN_PHASE8.md). In progress.
   - No Python facade change required (the field is pure data
     inside the bundle JSON; serde handles it transparently).
 
+- **Streaming-aware `ConfidenceGuard`** (Phase 8.D): the
+  trait at `tako_core::ConfidenceGuard` gains a default method
+  `evaluate_streaming(&self, principal, partial: &str) ->
+  Result<Option<f32>, TakoError>`. The default impl returns
+  `Ok(None)` (skip — keep streaming and evaluate the buffered
+  final text), so guards that don't override it behave exactly
+  as before.
+  - `SelfCaller::stream` now accumulates assistant text deltas
+    into a per-iteration buffer and consults
+    `evaluate_streaming` after each delta. If the override
+    returns `Some(score)` with `score >= self.min_confidence`,
+    the inner stream is dropped, an `OrchEvent::Recursion`
+    event carrying the score is yielded, and a synthesised
+    `OrchEvent::Final` over the accumulated text closes the
+    stream. Useful for cheap rule-based heuristics.
+  - `RuleBasedGuard` overrides `evaluate_streaming` to return
+    `Some(1.0)` when the cumulative partial already passes
+    both the length check and (when configured) the regex.
+  - `LlmJudgeGuard` deliberately does **not** override the
+    streaming method — calling out to a judge provider on
+    every delta is a cost disaster. The default `Ok(None)`
+    preserves correctness.
+  - `SelfCaller::stream` also yields a new
+    `OrchEvent::Recursion { depth, confidence }` event at the
+    end of every iteration boundary (early-abort or buffered
+    evaluation), giving consumers a first-class wire signal
+    for recursion progress.
+  - 2 new Rust tests in `crates/tako-orchestrator/tests/
+    self_caller.rs::streaming_guard`: early-abort against a
+    `StreamingFake` provider, and a control case proving the
+    default `Ok(None)` path doesn't drop deltas.
+
 ### Changed
 
 - **`OrchEvent` is now `#[non_exhaustive]`.** Pre-1.0 minor-bump

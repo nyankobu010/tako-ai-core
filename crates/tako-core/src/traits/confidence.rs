@@ -15,9 +15,49 @@ use crate::types::Principal;
 /// Implementations must be deterministic for the same `(principal, text)`
 /// pair when used inside `SelfCaller` so that recursion termination is
 /// predictable.
+///
+/// ## Streaming-aware early termination (v0.9.0)
+///
+/// Optionally override [`evaluate_streaming`](Self::evaluate_streaming)
+/// to let `SelfCaller::stream` early-abort an in-progress generation
+/// the moment a partial output reaches confidence — useful for cheap
+/// rule-based heuristics where evaluating each delta is essentially
+/// free. The default impl returns `Ok(None)` (skip — keep streaming
+/// and evaluate the buffered final text), so impls that don't
+/// override behave exactly as before.
+///
+/// **Cost note**: do not override `evaluate_streaming` for guards
+/// that make a remote call (LLM-as-judge, network classifier, etc.) —
+/// you would invoke the judge on every assistant-text delta. The
+/// shipped [`super::super::traits::confidence::AlwaysConfident`] /
+/// `ConstantConfidence` test fixtures and the
+/// `tako_orchestrator::guards::LlmJudgeGuard` deliberately keep the
+/// default `Ok(None)`.
 #[async_trait]
 pub trait ConfidenceGuard: Send + Sync + 'static {
     async fn evaluate(&self, principal: &Principal, text: &str) -> Result<f32, TakoError>;
+
+    /// Streaming-aware variant: called by `SelfCaller::stream` after
+    /// each `OrchEvent::AssistantText` delta with the *cumulative*
+    /// assistant text accumulated so far for the current iteration.
+    ///
+    /// Return value:
+    /// - `Ok(None)` — keep streaming; do not early-abort. Default.
+    /// - `Ok(Some(score))` — propose a confidence score for the
+    ///   partial output; `SelfCaller::stream` early-aborts if `score
+    ///   >= self.min_confidence`.
+    /// - `Err(_)` — fail the stream.
+    ///
+    /// The default impl returns `Ok(None)`. Override only when
+    /// scoring partial text is essentially free (e.g. length / regex
+    /// heuristics).
+    async fn evaluate_streaming(
+        &self,
+        _principal: &Principal,
+        _partial: &str,
+    ) -> Result<Option<f32>, TakoError> {
+        Ok(None)
+    }
 }
 
 /// Always-confident guard (skips recursion). Useful as a default.

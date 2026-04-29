@@ -377,3 +377,199 @@ async fn stream_yields_inner_assistant_text_before_final() {
     assert!(saw_text, "expected an AssistantText carrying the answer");
     assert!(saw_final, "expected exactly one outer Final");
 }
+
+mod streaming_guard {
+    //! Phase 8.D — streaming-aware ConfidenceGuard early-abort tests.
+    //!
+    //! Exercises the new `evaluate_streaming` hook on
+    //! [`ConfidenceGuard`] and the matching early-abort path in
+    //! [`SelfCaller::stream`].
+
+    use super::*;
+    use futures::StreamExt;
+    use tako_core::{ChatChunk, ConstantConfidence};
+    use tako_orchestrator::OrchEvent;
+
+    /// Streaming-capable fake provider — emits `deltas` as
+    /// `ChatChunk::Delta`s followed by an `End` chunk.
+    #[derive(Debug)]
+    struct StreamingFake {
+        id: String,
+        capabilities: Capabilities,
+        deltas: Vec<String>,
+    }
+
+    impl StreamingFake {
+        fn new(id: &str, deltas: Vec<&str>) -> Self {
+            Self {
+                id: id.into(),
+                capabilities: Capabilities {
+                    supports_streaming: true,
+                    ..Default::default()
+                },
+                deltas: deltas.into_iter().map(String::from).collect(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for StreamingFake {
+        fn id(&self) -> &str {
+            &self.id
+        }
+        fn capabilities(&self) -> &Capabilities {
+            &self.capabilities
+        }
+        async fn chat(&self, _p: &Principal, _r: ChatRequest) -> Result<ChatResponse, TakoError> {
+            Err(TakoError::Invalid("StreamingFake.chat not used".into()))
+        }
+        async fn stream(
+            &self,
+            _p: &Principal,
+            _r: ChatRequest,
+        ) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
+            let deltas = self.deltas.clone();
+            let s = async_stream::stream! {
+                for d in deltas {
+                    yield Ok(ChatChunk::Delta { text: Some(d), tool_calls: vec![] });
+                }
+                yield Ok(ChatChunk::End {
+                    finish_reason: FinishReason::Stop,
+                    usage: Usage::default(),
+                });
+            };
+            Ok(Box::pin(s))
+        }
+    }
+
+    /// `RuleBasedGuard { min_chars: 10 }` over a streaming inner that
+    /// emits "012345" + "6789AB" + "tail" — once the cumulative
+    /// "0123456789AB" reaches >= 10 chars after the second delta the
+    /// outer stream must early-abort, yielding a `Recursion {
+    /// confidence: 1.0 }` followed by a `Final` containing the
+    /// accumulated text. The third delta must never reach the consumer.
+    #[tokio::test]
+    async fn early_aborts_when_streaming_guard_reaches_threshold() {
+        let provider = Arc::new(StreamingFake::new(
+            "fake:p",
+            vec!["012345", "6789AB", "tail"],
+        ));
+        let inner = Arc::new(
+            SingleAgent::builder()
+                .provider(provider.clone())
+                .max_steps(1)
+                .build()
+                .unwrap(),
+        );
+        let sc = SelfCaller::builder()
+            .inner(inner)
+            .max_depth(3)
+            .min_confidence(0.5)
+            .confidence(Arc::new(RuleBasedGuard::new(10)))
+            .build()
+            .unwrap();
+        let mut stream = sc
+            .stream(&Principal::anonymous(), OrchInput::from_user("go"))
+            .await;
+
+        let mut deltas: Vec<String> = Vec::new();
+        let mut recursion_score: Option<f32> = None;
+        let mut final_text: Option<String> = None;
+        let mut saw_recursion_before_final = false;
+        while let Some(ev) = stream.next().await {
+            match ev.unwrap() {
+                OrchEvent::AssistantText { delta, .. } => deltas.push(delta),
+                OrchEvent::Recursion { confidence, .. } => {
+                    recursion_score = Some(confidence);
+                    if final_text.is_none() {
+                        saw_recursion_before_final = true;
+                    }
+                }
+                OrchEvent::Final { output } => {
+                    final_text = Some(output.text.clone());
+                }
+                _ => {}
+            }
+        }
+        // Only the first two deltas should reach the consumer; the
+        // third ("tail") arrives after the early-abort and must not.
+        assert_eq!(
+            deltas,
+            vec!["012345".to_string(), "6789AB".to_string()],
+            "early-abort must drop the inner stream after the threshold delta"
+        );
+        assert_eq!(
+            recursion_score,
+            Some(1.0),
+            "RuleBasedGuard's streaming override returns Some(1.0) on threshold"
+        );
+        assert!(
+            saw_recursion_before_final,
+            "Recursion event must precede the synthesised Final"
+        );
+        let text = final_text.expect("expected exactly one Final");
+        // The synthesised Final carries the accumulated partial text:
+        // exactly the concatenation of the two deltas that triggered
+        // the abort.
+        assert_eq!(text, "0123456789AB");
+        assert!(text.len() >= 10);
+    }
+
+    /// Default `evaluate_streaming` impl returns `Ok(None)`, so a
+    /// guard like `LlmJudgeGuard` (or `ConstantConfidence` here as a
+    /// stand-in) must NOT trigger early-abort even mid-stream — every
+    /// delta should reach the consumer and the buffered evaluation
+    /// path runs as before. `ConstantConfidence(1.0)` accepts the
+    /// final buffered text, terminating after one iteration with no
+    /// recursion.
+    #[tokio::test]
+    async fn default_streaming_impl_does_not_early_abort() {
+        let provider = Arc::new(StreamingFake::new(
+            "fake:p",
+            vec!["short", "-but-", "complete"],
+        ));
+        let inner = Arc::new(
+            SingleAgent::builder()
+                .provider(provider.clone())
+                .max_steps(1)
+                .build()
+                .unwrap(),
+        );
+        let sc = SelfCaller::builder()
+            .inner(inner)
+            .max_depth(3)
+            .min_confidence(0.5)
+            .confidence(Arc::new(ConstantConfidence(1.0)))
+            .build()
+            .unwrap();
+        let mut stream = sc
+            .stream(&Principal::anonymous(), OrchInput::from_user("go"))
+            .await;
+
+        let mut deltas: Vec<String> = Vec::new();
+        let mut finals = 0usize;
+        let mut recursion_events = 0usize;
+        while let Some(ev) = stream.next().await {
+            match ev.unwrap() {
+                OrchEvent::AssistantText { delta, .. } => deltas.push(delta),
+                OrchEvent::Final { .. } => finals += 1,
+                OrchEvent::Recursion { .. } => recursion_events += 1,
+                _ => {}
+            }
+        }
+        // All three deltas reach the consumer (no early-abort).
+        assert_eq!(
+            deltas,
+            vec![
+                "short".to_string(),
+                "-but-".to_string(),
+                "complete".to_string()
+            ],
+            "default streaming impl must not drop deltas"
+        );
+        assert_eq!(finals, 1);
+        // Buffered-evaluation path still emits one Recursion event
+        // per iteration (Phase 8.A wire change).
+        assert_eq!(recursion_events, 1);
+    }
+}
