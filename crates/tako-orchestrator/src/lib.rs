@@ -7,6 +7,7 @@ pub mod conductor;
 pub mod features;
 pub mod router;
 pub mod single;
+pub mod trinity;
 pub mod types;
 
 use async_trait::async_trait;
@@ -19,6 +20,7 @@ pub use features::{FEATURE_DIM, featurise, featurise_text};
 pub use router::OnnxRouter;
 pub use router::{RegexRouter, RegexRouterBuilder};
 pub use single::{ChatDefaults, SingleAgent, SingleAgentBuilder};
+pub use trinity::{Trinity, TrinityBuilder};
 pub use types::{OrchEvent, OrchInput, OrchOutput};
 
 /// What kind of orchestrator. Useful for OTel attributes and dispatch.
