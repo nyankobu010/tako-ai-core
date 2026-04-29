@@ -8,8 +8,11 @@
 //! - [`PyOrchEvent`] is a read-only wrapper around a single
 //!   [`tako_orchestrator::OrchEvent`]. The `kind` getter returns one of
 //!   `"step_start" | "assistant_text" | "tool_call_start" |
-//!   "tool_call_result" | "final"`; per-variant getters expose the
-//!   payload fields (returning `None` when the field doesn't apply).
+//!   "tool_call_result" | "final" | "verifier_score" | "recursion"`;
+//!   per-variant getters expose the payload fields (returning `None`
+//!   when the field doesn't apply). The `verifier_score` and
+//!   `recursion` variants land in v0.9.0 alongside AB-MCTS streaming
+//!   and the streaming-aware `ConfidenceGuard`.
 //! - [`PyOrchEventStream`] is an async iterator (`__aiter__` + async
 //!   `__anext__`) over a `BoxStream` of events. Constructing one
 //!   parks the stream behind a `tokio::sync::Mutex` so the pyclass
@@ -46,7 +49,8 @@ impl PyOrchEvent {
 #[pymethods]
 impl PyOrchEvent {
     /// Discriminant: one of `"step_start" | "assistant_text" |
-    /// "tool_call_start" | "tool_call_result" | "final"`.
+    /// "tool_call_start" | "tool_call_result" | "final" |
+    /// "verifier_score" | "recursion"`.
     #[getter]
     fn kind(&self) -> &'static str {
         match &self.inner {
@@ -55,19 +59,24 @@ impl PyOrchEvent {
             OrchEvent::ToolCallStart { .. } => "tool_call_start",
             OrchEvent::ToolCallResult { .. } => "tool_call_result",
             OrchEvent::Final { .. } => "final",
+            OrchEvent::VerifierScore { .. } => "verifier_score",
+            OrchEvent::Recursion { .. } => "recursion",
+            _ => "unknown",
         }
     }
 
     /// Step index for `step_start`, `assistant_text`,
-    /// `tool_call_start`, `tool_call_result`. `None` for `final`.
+    /// `tool_call_start`, `tool_call_result`, `verifier_score`. `None`
+    /// for `final` and `recursion`.
     #[getter]
     fn step(&self) -> Option<u32> {
         match &self.inner {
             OrchEvent::StepStart { step }
             | OrchEvent::AssistantText { step, .. }
             | OrchEvent::ToolCallStart { step, .. }
-            | OrchEvent::ToolCallResult { step, .. } => Some(*step),
-            OrchEvent::Final { .. } => None,
+            | OrchEvent::ToolCallResult { step, .. }
+            | OrchEvent::VerifierScore { step, .. } => Some(*step),
+            _ => None,
         }
     }
 
@@ -144,6 +153,45 @@ impl PyOrchEvent {
                 Ok(Some(d))
             }
             _ => Ok(None),
+        }
+    }
+
+    /// AB-MCTS branch identifier for `verifier_score`; `None`
+    /// otherwise.
+    #[getter]
+    fn branch(&self) -> Option<u32> {
+        match &self.inner {
+            OrchEvent::VerifierScore { branch, .. } => Some(*branch),
+            _ => None,
+        }
+    }
+
+    /// Verifier score in `[0.0, 1.0]` for `verifier_score`; `None`
+    /// otherwise.
+    #[getter]
+    fn score(&self) -> Option<f32> {
+        match &self.inner {
+            OrchEvent::VerifierScore { score, .. } => Some(*score),
+            _ => None,
+        }
+    }
+
+    /// Recursion depth (0-indexed) for `recursion`; `None` otherwise.
+    #[getter]
+    fn depth(&self) -> Option<u32> {
+        match &self.inner {
+            OrchEvent::Recursion { depth, .. } => Some(*depth),
+            _ => None,
+        }
+    }
+
+    /// Confidence score in `[0.0, 1.0]` for `recursion`; `None`
+    /// otherwise.
+    #[getter]
+    fn confidence(&self) -> Option<f32> {
+        match &self.inner {
+            OrchEvent::Recursion { confidence, .. } => Some(*confidence),
+            _ => None,
         }
     }
 

@@ -212,11 +212,10 @@ async fn single_agent_stream_emits_events_in_order() {
     while let Some(item) = stream.next().await {
         match item.unwrap() {
             OrchEvent::StepStart { .. } => kinds.push("step_start"),
-            OrchEvent::AssistantText { delta, .. } => {
-                if !delta.is_empty() {
-                    kinds.push("assistant_text");
-                }
+            OrchEvent::AssistantText { delta, .. } if !delta.is_empty() => {
+                kinds.push("assistant_text");
             }
+            OrchEvent::AssistantText { .. } => {}
             OrchEvent::ToolCallStart { .. } => kinds.push("tool_call_start"),
             OrchEvent::ToolCallResult { is_error, .. } => {
                 assert!(!is_error);
@@ -227,6 +226,7 @@ async fn single_agent_stream_emits_events_in_order() {
                 final_text = Some(output.text.clone());
                 assert_eq!(output.steps, 2);
             }
+            _ => {}
         }
     }
 

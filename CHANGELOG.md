@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Phase 8 — search streaming + transparency-log completeness.
 Plan: [PLAN_PHASE8.md](PLAN_PHASE8.md). In progress.
 
+### Added
+
+- **`OrchEvent::VerifierScore` and `OrchEvent::Recursion` variants**
+  (Phase 8.A): two new streaming events landed alongside the
+  enum's `#[non_exhaustive]` annotation. `VerifierScore { step,
+  branch, score }` is consumed by AB-MCTS native streaming
+  (Phase 8.B); `Recursion { depth, confidence }` is consumed by
+  the streaming-aware `ConfidenceGuard` path on `SelfCaller`
+  (Phase 8.D). Serde tag stays `kind`; new variants serialize
+  as `{"kind":"verifier_score", ...}` and `{"kind":"recursion",
+  ...}`.
+- **`tako._native.OrchEvent` Python wrapper** gains four new
+  getters: `branch`, `score`, `depth`, `confidence`. Each
+  returns `None` for variants that don't carry the field.
+  `kind` accepts the two new strings; `step` returns `Some(_)`
+  on `verifier_score`. Type stubs in `_native.pyi` updated.
+
+### Changed
+
+- **`OrchEvent` is now `#[non_exhaustive]`.** Pre-1.0 minor-bump
+  break for downstream Rust consumers that exhaustively match
+  on the enum — they need to add a wildcard arm. The Python
+  facade is unaffected (the dynamic `kind`-based dispatch
+  pattern never matched exhaustively).
+
 ## [0.8.0] - 2026-04-29
 
 Phase 7 — production hardening, continued. Closes the two follow-ups
