@@ -1,0 +1,31 @@
+// tako MCP gRPC bridge.
+//
+// MCP itself is JSON-RPC 2.0; the spec doesn't standardise a gRPC
+// transport. We define the smallest possible bidirectional envelope:
+// a single bidi-streaming RPC carrying opaque JSON frames. The server
+// is expected to relay those frames to its underlying MCP handler and
+// stream JSON-RPC responses + notifications back over the same call.
+//
+// This keeps the wire surface independent of MCP's evolving JSON
+// schema: every frame round-trips through `tako_mcp::jsonrpc` exactly
+// as in the stdio / WebSocket transports.
+syntax = "proto3";
+
+package tako.mcp.bridge.v1;
+
+service McpBridge {
+  // Open a long-lived MCP session. The client sends JSON-RPC 2.0
+  // requests + notifications as `Frame { json }`; the server replies
+  // with responses (correlated by `id`) and unsolicited
+  // notifications (no `id`) over the same stream.
+  //
+  // Named `Open` (rather than `Connect`) so the generated
+  // `McpBridgeClient::open()` doesn't collide with `tonic`'s
+  // ambient `Channel::connect()` constructor on the same type.
+  rpc Open(stream Frame) returns (stream Frame);
+}
+
+message Frame {
+  // A complete JSON-RPC 2.0 message, UTF-8 encoded.
+  bytes json = 1;
+}

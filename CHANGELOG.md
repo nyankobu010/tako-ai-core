@@ -7,7 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(none)
+### Added
+
+- **gRPC MCP transport** (`tako_mcp::GrpcTransport`, Phase 4.D): a fourth
+  `McpTransport` impl alongside stdio, Streamable HTTP, and the Phase-4.C
+  WebSocket transport. The `rmcp` crate ships no gRPC transport and the MCP
+  spec doesn't standardise one, so we hand-craft a minimal JSON-RPC bridge:
+  a single bidirectional streaming RPC (`tako.mcp.bridge.v1.McpBridge.Open`)
+  carrying opaque `Frame { bytes json }` messages. Behaviour mirrors
+  `WebSocketTransport`: a reader task spawned at `connect()` demuxes
+  inbound frames into per-request `oneshot` channels (keyed by JSON-RPC
+  `id`) and a `tokio::sync::broadcast` channel for server-emitted
+  notifications; the outbound half is an `mpsc::Sender<Frame>` feeding
+  `tonic`'s streaming request. `connect()` accepts both `http://` (plaintext)
+  and `https://` (rustls + webpki-roots) endpoints; mTLS / custom CAs are
+  out of scope and deferred to a later phase.
+- Gated behind a new `grpc` Cargo feature on `tako-mcp` so `tonic` and the
+  generated protobuf code only land in the dep tree when explicitly
+  enabled. `protoc` is bundled via `protoc-bin-vendored` so contributors
+  don't need a system-wide install to build with `--features grpc`; the
+  `build.rs` no-ops entirely when the feature is off.
+- Workspace `Cargo.toml` adds `tonic = "0.14"` (default-features off,
+  `channel + codegen + router + transport + tls-ring + tls-webpki-roots`),
+  `tonic-prost = "0.14"`, `tonic-prost-build = "0.14"`, `prost = "0.14"`,
+  `tokio-stream = "0.1"`.
+- Tests in `crates/tako-mcp/tests/grpc.rs` (4 cases, gated on `grpc`):
+  happy-path JSON-RPC round-trip, 10 concurrent requests demuxed by id,
+  broadcast notification fan-out, connect-error on a freed port. Server
+  fixture is an in-process `tonic::transport::Server` bound to an
+  ephemeral `127.0.0.1:0` port via `serve_with_incoming`.
+
+### Notes
+
+- PyO3 + Python facade for both `WebSocketTransport` and `GrpcTransport`
+  is intentionally deferred to a later sub-phase; both remain Rust-only
+  for now.
 
 ## [0.4.0] - 2026-04-29
 

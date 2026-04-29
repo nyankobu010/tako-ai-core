@@ -88,6 +88,12 @@ regorus            = "0.9"
 rmcp               = { version = "1.5", features = ["client", "transport-child-process", "transport-streamable-http-client"] }
 # Phase 4 WebSocket MCP transport
 tokio-tungstenite  = { version = "0.29", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
+# Phase 4 gRPC MCP transport
+tonic              = { version = "0.14", default-features = false, features = ["channel", "codegen", "router", "transport", "tls-ring", "tls-webpki-roots"] }
+tonic-prost        = "0.14"
+tonic-prost-build  = "0.14"
+prost              = "0.14"
+tokio-stream       = "0.1"
 
 # PyO3 (Phase 1 wheel target)
 pyo3               = { version = "0.28", features = ["extension-module", "abi3-py310"] }

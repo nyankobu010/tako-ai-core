@@ -24,11 +24,30 @@ async-stream       = "0.3"
 reqwest            = { workspace = true }
 # Optional WebSocket MCP transport (Phase 4). Enable via `--features ws`.
 tokio-tungstenite  = { workspace = true, optional = true }
+# Optional gRPC MCP transport (Phase 4). Enable via `--features grpc`.
+tonic              = { workspace = true, optional = true }
+tonic-prost        = { workspace = true, optional = true }
+prost              = { workspace = true, optional = true }
+tokio-stream       = { workspace = true, optional = true }
 
 [features]
 default = []
 ws      = ["dep:tokio-tungstenite"]
+grpc    = ["dep:tonic", "dep:tonic-prost", "dep:prost", "dep:tokio-stream"]
+
+[build-dependencies]
+# Always present so `build.rs` can reference them; the `build.rs` itself
+# no-ops unless `CARGO_FEATURE_GRPC` is set, so non-`grpc` builds incur
+# only a tiny dependency-graph cost (no `protoc` invocation).
+tonic-prost-build  = { workspace = true }
+# Bundles a `protoc` binary so contributors don't need to install one to
+# build with `--features grpc`.
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }
 tokio-tungstenite  = { workspace = true }
+tonic              = { workspace = true }
+tonic-prost        = { workspace = true }
+prost              = { workspace = true }
+tokio-stream       = { workspace = true, features = ["net"] }
