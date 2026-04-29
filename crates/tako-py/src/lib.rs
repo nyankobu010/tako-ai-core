@@ -13,6 +13,7 @@
 #![allow(unsafe_code)] // PyO3 macro expansions emit unsafe extern blocks; required for FFI.
 
 mod conv;
+mod py_azure;
 mod py_bedrock;
 mod py_compat;
 mod py_conductor;
@@ -29,6 +30,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_provider::PyOpenAI>()?;
     m.add_class::<py_provider::PyAnthropic>()?;
     m.add_class::<py_provider::PyFakeProvider>()?;
+    m.add_class::<py_azure::PyAzureOpenAi>()?;
     m.add_class::<py_bedrock::PyBedrock>()?;
     m.add_class::<py_python_provider::PyPythonProvider>()?;
     m.add_class::<py_orchestrator::PyOrchestrator>()?;

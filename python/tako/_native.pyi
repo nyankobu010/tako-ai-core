@@ -60,6 +60,17 @@ class Bedrock:
     ) -> None: ...
     def id(self) -> str: ...
 
+class AzureOpenAi:
+    def __init__(
+        self,
+        endpoint: str,
+        deployment: str,
+        api_key: str,
+        api_version: str | None = ...,
+        timeout_secs: int | None = ...,
+    ) -> None: ...
+    def id(self) -> str: ...
+
 class Stdio:
     def __init__(self, command: str, args: list[str] | None = ...) -> None: ...
 

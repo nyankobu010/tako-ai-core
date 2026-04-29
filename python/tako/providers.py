@@ -83,6 +83,34 @@ class Fake(_ProviderBase):
         return int(self._handle.call_count())
 
 
+class AzureOpenAI(_ProviderBase):
+    """Azure OpenAI provider.
+
+    Wire format is identical to OpenAI's chat.completions; the routing layer
+    differs: requests go to ``{endpoint}/openai/deployments/{deployment}/chat/completions``
+    with an ``api-key`` header. ``deployment`` is the Azure deployment name
+    (a user-defined alias mapping to a model — distinct from the underlying
+    model id).
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        deployment: str,
+        api_key: str,
+        *,
+        api_version: str | None = None,
+        timeout_secs: int | None = None,
+    ) -> None:
+        self._handle = _native.AzureOpenAi(
+            endpoint,
+            deployment,
+            api_key,
+            api_version=api_version,
+            timeout_secs=timeout_secs,
+        )
+
+
 class Bedrock(_ProviderBase):
     """Amazon Bedrock provider via the Converse API.
 

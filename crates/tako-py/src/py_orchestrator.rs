@@ -37,7 +37,8 @@ impl std::fmt::Debug for PyOrchestrator {
 impl PyOrchestrator {
     /// Build a single-agent orchestrator wrapping a provider.
     ///
-    /// `provider` may be a `PyOpenAI`, `PyAnthropic`, or `PyFakeProvider`.
+    /// `provider` may be a `PyOpenAI`, `PyAnthropic`, `PyAzureOpenAi`,
+    /// `PyBedrock`, `PyFakeProvider`, or `PyPythonProvider`.
     /// `mcp_servers` is an optional list of `PyStdio` / `PyStreamableHttp`
     /// transports; their tools are discovered at construction time and
     /// merged into the orchestrator's tool registry.
@@ -57,13 +58,15 @@ impl PyOrchestrator {
             p.handle
         } else if let Ok(p) = provider.extract::<crate::py_provider::PyFakeProvider>(py) {
             p.handle
+        } else if let Ok(p) = provider.extract::<crate::py_azure::PyAzureOpenAi>(py) {
+            p.handle
         } else if let Ok(p) = provider.extract::<crate::py_bedrock::PyBedrock>(py) {
             p.handle
         } else if let Ok(p) = provider.extract::<crate::py_python_provider::PyPythonProvider>(py) {
             p.handle
         } else {
             return Err(PyValueError::new_err(
-                "provider must be a tako._native.OpenAI, Anthropic, FakeProvider, Bedrock, or PythonProvider",
+                "provider must be a tako._native.OpenAI, Anthropic, AzureOpenAi, Bedrock, FakeProvider, or PythonProvider",
             ));
         };
 
