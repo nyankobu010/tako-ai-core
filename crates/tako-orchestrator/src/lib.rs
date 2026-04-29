@@ -4,6 +4,8 @@
 //! AbMcts / SelfCaller arrive in later phases.
 
 pub mod conductor;
+pub mod features;
+pub mod router;
 pub mod single;
 pub mod types;
 
@@ -12,6 +14,10 @@ use futures::stream::BoxStream;
 use tako_core::{Principal, TakoError};
 
 pub use conductor::{Conductor, ConductorBuilder, DispatchPlan, WorkerDispatch};
+pub use features::{FEATURE_DIM, featurise, featurise_text};
+#[cfg(feature = "onnx")]
+pub use router::OnnxRouter;
+pub use router::{RegexRouter, RegexRouterBuilder};
 pub use single::{ChatDefaults, SingleAgent, SingleAgentBuilder};
 pub use types::{OrchEvent, OrchInput, OrchOutput};
 
