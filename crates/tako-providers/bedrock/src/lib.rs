@@ -1,10 +1,8 @@
 //! Amazon Bedrock provider for tako.
 //!
-//! Implements [`tako_core::LlmProvider`] against Bedrock's Converse API
-//! via the `aws-sdk-bedrockruntime` crate. Streaming
-//! (ConverseStream) is documented as a Phase 2.5 follow-up; the
-//! single-shot Converse path covers the spec's Phase 2 acceptance test
-//! (Bedrock + Converse + tool calls + wiremock-mocked HTTP).
+//! Implements [`tako_core::LlmProvider`] against Bedrock's Converse +
+//! ConverseStream APIs via the `aws-sdk-bedrockruntime` crate. Supports
+//! text, tool calls, tool results, and streaming.
 //!
 //! ```no_run
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,5 +15,6 @@
 
 mod client;
 mod convert;
+mod stream;
 
 pub use client::{BedrockBuilder, BedrockProvider};

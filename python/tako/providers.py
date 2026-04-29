@@ -151,14 +151,11 @@ class Vertex(_ProviderBase):
 
 
 class Bedrock(_ProviderBase):
-    """Amazon Bedrock provider via the Converse API.
+    """Amazon Bedrock provider via Converse + ConverseStream.
 
     Credentials come from the AWS default credential chain (env, profile,
     IRSA, IMDS) — pass ``profile_name`` to pin a specific named profile,
     or ``endpoint_url`` to talk to a VPC-private endpoint or local mock.
-
-    Streaming (``ConverseStream``) is documented as a Phase 2.5 follow-up;
-    today only single-shot ``run()`` is supported.
     """
 
     def __init__(

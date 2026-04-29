@@ -22,6 +22,7 @@ serde_json             = { workspace = true }
 aws-config             = { workspace = true }
 aws-sdk-bedrockruntime = { workspace = true }
 aws-smithy-types       = "1"
+async-stream           = "0.3"
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }
