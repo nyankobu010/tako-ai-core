@@ -335,14 +335,186 @@ impl Orchestrator for Conductor {
 
     async fn stream(
         &self,
-        _principal: &Principal,
-        _input: OrchInput,
+        principal: &Principal,
+        input: OrchInput,
     ) -> BoxStream<'static, Result<OrchEvent, TakoError>> {
-        Box::pin(futures::stream::once(async {
-            Err(TakoError::Invalid(
-                "Conductor streaming is Phase 2.5".into(),
-            ))
-        }))
+        let coordinator = self.coordinator.clone();
+        let workers = self.workers.clone();
+        let max_steps = self.max_steps;
+        let max_fanout = self.max_fanout;
+        let worker_timeout = self.worker_timeout;
+        let fail_fast = self.fail_fast;
+        let principal = principal.clone();
+        let system = self.system_prompt();
+
+        let s = async_stream::try_stream! {
+            let mut messages: Vec<Message> = Vec::new();
+            messages.push(Message::system(system));
+            if let Some(extra) = input.system.clone() {
+                messages.push(Message::system(extra));
+            }
+            messages.extend(input.messages);
+
+            let coord_id = coordinator.id().to_string();
+            let model = coord_id.split(':').nth(1).unwrap_or("").to_string();
+            let mut total_usage = Usage::default();
+            let mut steps = 0_u32;
+            let semaphore = Arc::new(Semaphore::new(max_fanout));
+
+            for step in 0..max_steps {
+                yield OrchEvent::StepStart { step };
+
+                let req = ChatRequest::new(model.clone(), messages.clone());
+                let span = info_span!(
+                    "tako.provider.chat",
+                    "tako.provider.id" = %coord_id,
+                    "tako.orchestrator.step" = step,
+                    "tako.orchestrator.role" = "coordinator",
+                );
+                let resp = coordinator
+                    .chat(&principal, req)
+                    .instrument(span)
+                    .await?;
+                steps += 1;
+                total_usage.input_tokens = total_usage
+                    .input_tokens
+                    .saturating_add(resp.usage.input_tokens);
+                total_usage.output_tokens = total_usage
+                    .output_tokens
+                    .saturating_add(resp.usage.output_tokens);
+
+                let raw_text = resp
+                    .message
+                    .content
+                    .iter()
+                    .filter_map(ContentPart::as_text)
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !raw_text.is_empty() {
+                    yield OrchEvent::AssistantText {
+                        step,
+                        delta: raw_text.clone(),
+                    };
+                }
+
+                messages.push(resp.message.clone());
+
+                let plan = match parse_dispatch_plan(&raw_text) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let retry = format!(
+                            "Your previous output did not match the dispatch JSON schema: {e}. \
+                             Reply with a single valid JSON object."
+                        );
+                        messages.push(Message::user(retry));
+                        continue;
+                    }
+                };
+
+                if plan.halt {
+                    let final_text = plan.final_answer.unwrap_or_else(|| raw_text.clone());
+                    yield OrchEvent::Final {
+                        output: Box::new(OrchOutput {
+                            text: final_text.clone(),
+                            message: Message::assistant(final_text),
+                            usage: total_usage,
+                            steps,
+                        }),
+                    };
+                    return;
+                }
+
+                if plan.dispatch.is_empty() {
+                    messages.push(Message::user(
+                        "You returned an empty dispatch with halt=false. \
+                         Either dispatch a worker or halt with a final answer.",
+                    ));
+                    continue;
+                }
+
+                // Emit tool-call-start events for each dispatched worker so
+                // SSE consumers can see the fanout shape (workers are surfaced
+                // as `worker:<role>` tool calls — there is no first-class
+                // worker event in OrchEvent).
+                for (idx, d) in plan.dispatch.iter().enumerate() {
+                    yield OrchEvent::ToolCallStart {
+                        step,
+                        name: format!("worker:{}", d.worker),
+                        id: format!("step{step}-{idx}"),
+                    };
+                }
+
+                let results = dispatch_workers_static(
+                    &workers,
+                    &principal,
+                    plan.dispatch.clone(),
+                    Arc::clone(&semaphore),
+                    step,
+                    worker_timeout,
+                )
+                .await;
+
+                for (idx, r) in results.iter().enumerate() {
+                    let id = format!("step{step}-{idx}");
+                    let (value, is_err) = match &r.outcome {
+                        Ok(text) => (
+                            serde_json::json!({ "worker": r.name, "result": text }),
+                            false,
+                        ),
+                        Err(e) => (
+                            serde_json::json!({ "worker": r.name, "error": e }),
+                            true,
+                        ),
+                    };
+                    yield OrchEvent::ToolCallResult {
+                        step,
+                        id,
+                        result: value,
+                        is_error: is_err,
+                    };
+                }
+
+                if fail_fast {
+                    if let Some(err) = results.iter().find_map(|r| r.outcome.as_ref().err()) {
+                        Err(TakoError::Provider {
+                            message: format!("Conductor worker failed (fail_fast): {err}"),
+                            source: None,
+                            details: Box::new(tako_core::ProviderErrorDetails {
+                                provider_id: coord_id.clone(),
+                                model: model.clone(),
+                                ..Default::default()
+                            }),
+                        })?;
+                    }
+                }
+
+                let summary = render_worker_results(&results);
+                messages.push(Message::user(summary));
+            }
+
+            // Hit max_steps without explicit halt.
+            let last_text = messages
+                .iter()
+                .rev()
+                .find(|m| matches!(m.role, Role::Assistant))
+                .and_then(|m| {
+                    m.content
+                        .iter()
+                        .find_map(ContentPart::as_text)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_default();
+            yield OrchEvent::Final {
+                output: Box::new(OrchOutput {
+                    text: last_text.clone(),
+                    message: Message::assistant(last_text),
+                    usage: total_usage,
+                    steps,
+                }),
+            };
+        };
+
+        Box::pin(s)
     }
 }
 
@@ -354,82 +526,101 @@ impl Conductor {
         sem: Arc<Semaphore>,
         step: u32,
     ) -> Result<Vec<WorkerResult>, TakoError> {
-        let mut handles = Vec::with_capacity(plan.len());
-        for d in plan {
-            let Some(provider) = self.workers.get(&d.worker).cloned() else {
-                handles.push(tokio::spawn(async move {
-                    WorkerResult {
-                        name: d.worker.clone(),
-                        task: d.task,
-                        outcome: Err(format!("unknown worker `{}`", d.worker)),
-                    }
-                }));
-                continue;
-            };
-            let principal = principal.clone();
-            let sem = Arc::clone(&sem);
-            let timeout_dur = self.worker_timeout;
-            let span = info_span!(
-                "tako.orchestrator.dispatch",
-                "tako.orchestrator.step" = step,
-                "tako.worker.name" = %d.worker,
-                "tako.worker.provider.id" = %provider.id(),
-            );
-            let task_text = d.task.clone();
-            let worker_name = d.worker.clone();
-            handles.push(tokio::spawn(
-                async move {
-                    let _permit = match sem.acquire_owned().await {
-                        Ok(p) => p,
-                        Err(_) => {
-                            return WorkerResult {
-                                name: worker_name,
-                                task: task_text,
-                                outcome: Err("semaphore closed".into()),
-                            };
-                        }
-                    };
-                    let model = provider.id().split(':').nth(1).unwrap_or("").to_string();
-                    let req = ChatRequest::new(model, vec![Message::user(&task_text)]);
-                    let outcome = match timeout(timeout_dur, provider.chat(&principal, req)).await {
-                        Ok(Ok(resp)) => match resp.finish_reason {
-                            FinishReason::Stop | FinishReason::ToolCalls => Ok(resp
-                                .message
-                                .content
-                                .iter()
-                                .filter_map(ContentPart::as_text)
-                                .collect::<Vec<_>>()
-                                .join("")),
-                            other => {
-                                Err(format!("worker finished with unexpected reason: {other:?}"))
-                            }
-                        },
-                        Ok(Err(e)) => Err(e.to_string()),
-                        Err(_) => Err(format!("worker timed out after {:?}", timeout_dur)),
-                    };
-                    WorkerResult {
-                        name: worker_name,
-                        task: task_text,
-                        outcome,
-                    }
-                }
-                .instrument(span),
-            ));
-        }
-
-        let mut results = Vec::with_capacity(handles.len());
-        for h in handles {
-            match h.await {
-                Ok(r) => results.push(r),
-                Err(e) => results.push(WorkerResult {
-                    name: "<join>".into(),
-                    task: String::new(),
-                    outcome: Err(format!("join error: {e}")),
-                }),
-            }
-        }
-        Ok(results)
+        Ok(dispatch_workers_static(
+            &self.workers,
+            principal,
+            plan,
+            sem,
+            step,
+            self.worker_timeout,
+        )
+        .await)
     }
+}
+
+/// Free-function variant of `Conductor::dispatch_workers` that captures only
+/// owned data — needed inside the `async_stream::try_stream!` closure where
+/// `&self` is unavailable across the yield points.
+async fn dispatch_workers_static(
+    workers: &HashMap<String, Arc<dyn LlmProvider>>,
+    principal: &Principal,
+    plan: Vec<WorkerDispatch>,
+    sem: Arc<Semaphore>,
+    step: u32,
+    timeout_dur: Duration,
+) -> Vec<WorkerResult> {
+    let mut handles = Vec::with_capacity(plan.len());
+    for d in plan {
+        let Some(provider) = workers.get(&d.worker).cloned() else {
+            handles.push(tokio::spawn(async move {
+                WorkerResult {
+                    name: d.worker.clone(),
+                    task: d.task,
+                    outcome: Err(format!("unknown worker `{}`", d.worker)),
+                }
+            }));
+            continue;
+        };
+        let principal = principal.clone();
+        let sem = Arc::clone(&sem);
+        let span = info_span!(
+            "tako.orchestrator.dispatch",
+            "tako.orchestrator.step" = step,
+            "tako.worker.name" = %d.worker,
+            "tako.worker.provider.id" = %provider.id(),
+        );
+        let task_text = d.task.clone();
+        let worker_name = d.worker.clone();
+        handles.push(tokio::spawn(
+            async move {
+                let _permit = match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return WorkerResult {
+                            name: worker_name,
+                            task: task_text,
+                            outcome: Err("semaphore closed".into()),
+                        };
+                    }
+                };
+                let model = provider.id().split(':').nth(1).unwrap_or("").to_string();
+                let req = ChatRequest::new(model, vec![Message::user(&task_text)]);
+                let outcome = match timeout(timeout_dur, provider.chat(&principal, req)).await {
+                    Ok(Ok(resp)) => match resp.finish_reason {
+                        FinishReason::Stop | FinishReason::ToolCalls => Ok(resp
+                            .message
+                            .content
+                            .iter()
+                            .filter_map(ContentPart::as_text)
+                            .collect::<Vec<_>>()
+                            .join("")),
+                        other => Err(format!("worker finished with unexpected reason: {other:?}")),
+                    },
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("worker timed out after {:?}", timeout_dur)),
+                };
+                WorkerResult {
+                    name: worker_name,
+                    task: task_text,
+                    outcome,
+                }
+            }
+            .instrument(span),
+        ));
+    }
+
+    let mut results = Vec::with_capacity(handles.len());
+    for h in handles {
+        match h.await {
+            Ok(r) => results.push(r),
+            Err(e) => results.push(WorkerResult {
+                name: "<join>".into(),
+                task: String::new(),
+                outcome: Err(format!("join error: {e}")),
+            }),
+        }
+    }
+    results
 }
 
 fn parse_dispatch_plan(raw: &str) -> Result<DispatchPlan, String> {
