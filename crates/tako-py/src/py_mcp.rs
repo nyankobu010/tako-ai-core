@@ -9,6 +9,10 @@ use std::time::Duration;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tako_core::McpTransport;
+#[cfg(feature = "grpc")]
+use tako_mcp::GrpcTransport;
+#[cfg(feature = "ws")]
+use tako_mcp::WebSocketTransport;
 use tako_mcp::{StdioTransport, StreamableHttpTransport};
 
 use crate::py_provider::map_err;
@@ -117,6 +121,87 @@ impl PyStreamableHttp {
     }
 }
 
+/// MCP WebSocket transport binding (Phase 4.G).
+#[cfg(feature = "ws")]
+#[pyclass(name = "WebSocket", module = "tako._native", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyWebSocket {
+    pub handle: McpTransportHandle,
+    pub url: String,
+}
+
+#[cfg(feature = "ws")]
+#[pymethods]
+impl PyWebSocket {
+    /// Connect to a WebSocket MCP server (`ws://host:port/path` or
+    /// `wss://host:port/path`) and complete the
+    /// `initialize` → `initialized` handshake. Blocks the calling
+    /// Python thread until the handshake returns; the GIL is released
+    /// for the blocking section.
+    #[new]
+    fn new(py: Python<'_>, url: String) -> PyResult<Self> {
+        let url_clone = url.clone();
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let transport = py.detach(|| {
+            rt.block_on(async {
+                let t = WebSocketTransport::connect(&url_clone).await?;
+                let arc: Arc<dyn McpTransport> = Arc::new(t);
+                tako_mcp::handshake(Arc::clone(&arc), tako_mcp::ClientInfo::tako()).await?;
+                Ok::<_, tako_core::TakoError>(arc)
+            })
+        });
+        let inner = transport.map_err(map_err)?;
+        Ok(Self {
+            handle: McpTransportHandle { inner },
+            url,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("WebSocket(url={:?})", self.url)
+    }
+}
+
+/// MCP gRPC transport binding (Phase 4.G).
+#[cfg(feature = "grpc")]
+#[pyclass(name = "Grpc", module = "tako._native", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyGrpc {
+    pub handle: McpTransportHandle,
+    pub endpoint: String,
+}
+
+#[cfg(feature = "grpc")]
+#[pymethods]
+impl PyGrpc {
+    /// Connect to a gRPC MCP bridge (`http://host:port` plaintext, or
+    /// `https://host:port` for rustls + webpki-roots TLS) and complete
+    /// the `initialize` → `initialized` handshake. Blocks the calling
+    /// Python thread until the handshake returns.
+    #[new]
+    fn new(py: Python<'_>, endpoint: String) -> PyResult<Self> {
+        let endpoint_clone = endpoint.clone();
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let transport = py.detach(|| {
+            rt.block_on(async {
+                let t = GrpcTransport::connect(&endpoint_clone).await?;
+                let arc: Arc<dyn McpTransport> = Arc::new(t);
+                tako_mcp::handshake(Arc::clone(&arc), tako_mcp::ClientInfo::tako()).await?;
+                Ok::<_, tako_core::TakoError>(arc)
+            })
+        });
+        let inner = transport.map_err(map_err)?;
+        Ok(Self {
+            handle: McpTransportHandle { inner },
+            endpoint,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Grpc(endpoint={:?})", self.endpoint)
+    }
+}
+
 /// Try to extract an [`McpTransportHandle`] from any of the transport
 /// `#[pyclass]`es. Used by the orchestrator's constructor to accept a
 /// heterogeneous `mcp_servers=[...]` argument.
@@ -127,7 +212,15 @@ pub fn extract_transport_handle(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Mcp
     if let Ok(t) = obj.extract::<PyStreamableHttp>(py) {
         return Ok(t.handle);
     }
+    #[cfg(feature = "ws")]
+    if let Ok(t) = obj.extract::<PyWebSocket>(py) {
+        return Ok(t.handle);
+    }
+    #[cfg(feature = "grpc")]
+    if let Ok(t) = obj.extract::<PyGrpc>(py) {
+        return Ok(t.handle);
+    }
     Err(PyValueError::new_err(
-        "mcp_servers entries must be tako._native.Stdio or tako._native.StreamableHttp instances",
+        "mcp_servers entries must be tako._native.Stdio, StreamableHttp, WebSocket, or Grpc instances",
     ))
 }
