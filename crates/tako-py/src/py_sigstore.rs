@@ -10,6 +10,8 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+#[cfg(feature = "sigstore-protobuf")]
+use tako_governance::sigstore::KeylessBundle;
 use tako_governance::sigstore::{
     Catalogue, CatalogueVerifier, IdentityPolicy, KeylessVerifier, TrustRoot,
 };
@@ -139,6 +141,30 @@ impl PyKeylessVerifier {
         let cat: Catalogue = self
             .inner
             .verify_bundle(manifest, bundle)
+            .map_err(map_err)?;
+        let tools_json = serde_json::to_string(&cat.tools)
+            .map_err(|e| PyValueError::new_err(format!("serialise tools: {e}")))?;
+        Ok((cat.server, tools_json))
+    }
+
+    /// Verify a cosign protobuf-bundle (the output of
+    /// `cosign sign-blob --bundle out.pb`) and return
+    /// `(server, tools_json)` — same shape as `verify_bundle`.
+    ///
+    /// Available when the `sigstore-protobuf` feature is enabled at
+    /// wheel-build time.
+    #[cfg(feature = "sigstore-protobuf")]
+    fn verify_protobuf_bundle(
+        &self,
+        manifest: &[u8],
+        protobuf_bundle: &[u8],
+    ) -> PyResult<(Option<String>, String)> {
+        let kb = KeylessBundle::from_protobuf_bundle(protobuf_bundle).map_err(map_err)?;
+        let bundle_json = serde_json::to_vec(&kb)
+            .map_err(|e| PyValueError::new_err(format!("re-serialise bundle: {e}")))?;
+        let cat: Catalogue = self
+            .inner
+            .verify_bundle(manifest, &bundle_json)
             .map_err(map_err)?;
         let tools_json = serde_json::to_string(&cat.tools)
             .map_err(|e| PyValueError::new_err(format!("serialise tools: {e}")))?;

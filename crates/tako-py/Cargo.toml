@@ -48,7 +48,8 @@ onnx     = ["tako-orchestrator/onnx"]
 # Phase-4 transport / governance / runtime feature forwarders. Each
 # adds the underlying crate's optional dep to the wheel only when
 # explicitly enabled, e.g. `maturin develop --features "ws grpc sigstore redis"`.
-ws       = ["tako-mcp/ws"]
-grpc     = ["tako-mcp/grpc"]
-sigstore = ["tako-governance/sigstore"]
-redis    = ["tako-runtime/redis"]
+ws                = ["tako-mcp/ws"]
+grpc              = ["tako-mcp/grpc"]
+sigstore          = ["tako-governance/sigstore"]
+sigstore-protobuf = ["sigstore", "tako-governance/sigstore-protobuf"]
+redis             = ["tako-runtime/redis"]

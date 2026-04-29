@@ -164,6 +164,11 @@ class KeylessVerifier:
         rekor_public_key_pem: bytes | None = ...,
     ) -> None: ...
     def verify_bundle(self, manifest: bytes, bundle: bytes) -> tuple[str | None, str]: ...
+    def verify_protobuf_bundle(
+        self,
+        manifest: bytes,
+        protobuf_bundle: bytes,
+    ) -> tuple[str | None, str]: ...
 
 class TrustRoot:
     """Available when the wheel is built with the ``sigstore`` feature."""

@@ -129,6 +129,32 @@ class KeylessVerifier:
         tools = [ToolSchema.model_validate(t) for t in json.loads(tools_json)]
         return Catalogue(server=server, tools=tools)
 
+    def verify_protobuf_bundle(
+        self,
+        manifest: bytes,
+        protobuf_bundle: bytes,
+    ) -> Catalogue:
+        """Verify a cosign protobuf-bundle (Phase 7.C).
+
+        ``protobuf_bundle`` is the wire-format output of
+        ``cosign sign-blob --bundle out.pb`` (the Sigstore protobuf-specs
+        ``Bundle`` v1 message). This method decodes that into the
+        JSON-shaped bundle :meth:`verify_bundle` consumes and runs the
+        same identity / signature / chain / Rekor pipeline.
+
+        Raises ``ValueError`` on any mismatch and ``AttributeError``
+        if the wheel was not built with the ``sigstore-protobuf``
+        feature.
+        """
+        if not hasattr(self._native, "verify_protobuf_bundle"):
+            raise AttributeError(
+                "tako wheel built without `sigstore-protobuf`; rebuild with "
+                "`maturin develop --features sigstore-protobuf` to use this method"
+            )
+        server, tools_json = self._native.verify_protobuf_bundle(manifest, protobuf_bundle)
+        tools = [ToolSchema.model_validate(t) for t in json.loads(tools_json)]
+        return Catalogue(server=server, tools=tools)
+
     def __repr__(self) -> str:
         return repr(self._native)
 
