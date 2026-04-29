@@ -23,18 +23,28 @@ published, plus AB-MCTS tree search:
 `tako` is an independent open-source project. It is not affiliated with,
 endorsed by, or sponsored by Sakana AI or any model provider.
 
-## Phase 1 status
+## What's in v0.3.0 (Phase 2.5)
 
-Phase 1 ships:
+The current release adds **cloud breadth**:
 
-- `tako-core` traits + types
-- `tako-runtime` budgets, breakers, rate limiters, retries
-- Anthropic + OpenAI providers (chat, streaming, tool calls)
-- `http-generic` template-driven provider for community contributions
-- MCP stdio + Streamable HTTP transports + tool registry
-- `SingleAgent` orchestrator
-- OTel tracing pipeline + PII redaction + EnvResolver
-- PyO3 wheel + Pydantic v2 facade + sync/async dual API
+- **Azure OpenAI** + **Vertex AI (Gemini)** providers (joining Anthropic,
+  OpenAI, Bedrock, http-generic).
+- Cloud secret resolvers: **Vault**, **AWS Secrets Manager**, **Azure Key
+  Vault**, **GCP Secret Manager**.
+- **Bedrock streaming** (ConverseStream) + **OpenAI-compat SSE** —
+  closing the two `501 Not Implemented` surfaces left in v0.2.0.
+- This **mkdocs site** with full nav + GitHub Pages deploy.
 
-Phase 2-4 add Conductor, Trinity routing, AB-MCTS, OPA, Sigstore,
-cloud-vendor providers and resolvers, and the OpenAI-compat server.
+See [Architecture](architecture.md) for the crate graph + sequence
+diagrams, [Concepts](concepts/providers.md) for the design surface, and
+[Recipes](recipes/azure_openai.md) for end-to-end integration walkthroughs.
+
+## Roadmap
+
+| Phase | Status | Highlights |
+|-------|--------|------------|
+| 1 | ✅ v0.1.0 | Foundation: 3 providers, MCP, SingleAgent, OTel, wheel |
+| 2 | ✅ v0.2.0 | Conductor, Bedrock, OPA, OpenAI-compat server |
+| 2.5 | ✅ v0.3.0 | Azure + Vertex, cloud resolvers, Bedrock+SSE streaming, docs |
+| 3 | next | Trinity learned routing, SelfCaller recursion, eval harness |
+| 4 | future | AB-MCTS, Sigstore, Mistral / Ollama, Redis budgets |
