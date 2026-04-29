@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(none)
+
+## [0.5.0] - 2026-04-29
+
+Phase 4 — Search & scale. Adds AB-MCTS orchestrator with verifiers
+(landed pre-`[Unreleased]` against the previous tag) plus the Phase-4.D
+through 4.G additions: a gRPC MCP transport, Sigstore tool-catalogue
+verification, a Redis-backed `BudgetBackend`, and the matching PyO3 +
+Python facade for all four. The previously-landed Phase-4.A AB-MCTS
+orchestrator, Phase-4.B Mistral / Ollama providers, and Phase-4.C
+WebSocket MCP transport are also published as part of this cut.
+
 ### Added
 
 - **gRPC MCP transport** (`tako_mcp::GrpcTransport`, Phase 4.D): a fourth
@@ -509,7 +521,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.1.0...v0.2.0

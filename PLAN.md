@@ -11,10 +11,17 @@
 >   [PLAN_PHASE25.md](PLAN_PHASE25.md) and `## [0.3.0]`
 > - Phase 3 (learned coordination, v0.4.0) — see
 >   [PLAN_PHASE3.md](PLAN_PHASE3.md) and `## [0.4.0]`
+> - Phase 4 (search & scale, v0.5.0) — AB-MCTS orchestrator + Verifier
+>   trait, Mistral + Ollama providers, WebSocket + gRPC MCP transports,
+>   Sigstore tool-catalogue verification (`CatalogueVerifier`), Redis
+>   `BudgetBackend`, and the matching PyO3 + Python facade for each.
+>   See `## [0.5.0]` in [CHANGELOG.md](CHANGELOG.md).
 >
-> **Next**: Phase 4 — AB-MCTS orchestrator, Mistral / Ollama providers,
-> WebSocket / gRPC MCP transports, Sigstore tool-catalogue verification,
-> Redis-backed BudgetBackend. Plan when starting.
+> **Next**: Phase 5. Likely candidates (subject to scoping when starting):
+> Sigstore keyless verification (Fulcio + Rekor offline bundle); mTLS for
+> the gRPC transport; orchestrator wiring for `BudgetBackend` (Python
+> `Client` / `SingleAgent` accept a backend arg); production hardening.
+> Open a fresh `PLAN_PHASE5.md` before writing code.
 
 ## Phase 1: Foundation
 
