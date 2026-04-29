@@ -43,11 +43,13 @@ impl PyOrchestrator {
     /// transports; their tools are discovered at construction time and
     /// merged into the orchestrator's tool registry.
     #[new]
-    #[pyo3(signature = (provider, max_steps=8, mcp_servers=None))]
+    #[pyo3(signature = (provider, max_steps=8, mcp_servers=None, candidates=None, router=None))]
     fn new(
         provider: PyObject,
         max_steps: u32,
         mcp_servers: Option<Vec<PyObject>>,
+        candidates: Option<Vec<PyObject>>,
+        router: Option<PyObject>,
         py: Python<'_>,
     ) -> PyResult<Self> {
         let handle: ProviderHandle = if let Ok(p) =
@@ -93,12 +95,21 @@ impl PyOrchestrator {
             result.map_err(crate::py_provider::map_err)?;
         }
 
-        let agent = SingleAgent::builder()
+        let mut builder = SingleAgent::builder()
             .provider(handle.inner)
             .tools(registry)
-            .max_steps(max_steps)
-            .build()
-            .map_err(crate::py_provider::map_err)?;
+            .max_steps(max_steps);
+        if let Some(extra) = candidates {
+            for c in extra {
+                let cand = crate::py_conductor::extract_any_provider(py, &c)?;
+                builder = builder.candidate(cand);
+            }
+        }
+        if let Some(r) = router {
+            let router_arc = crate::py_router::extract_router(py, &r)?;
+            builder = builder.router(router_arc);
+        }
+        let agent = builder.build().map_err(crate::py_provider::map_err)?;
         Ok(Self {
             inner: Arc::new(agent),
         })

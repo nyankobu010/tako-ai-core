@@ -22,7 +22,10 @@ mod py_mcp;
 mod py_orchestrator;
 mod py_provider;
 mod py_python_provider;
+mod py_router;
 mod py_secrets;
+mod py_self_caller;
+mod py_trinity;
 mod py_vertex;
 
 use pyo3::prelude::*;
@@ -38,6 +41,13 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_python_provider::PyPythonProvider>()?;
     m.add_class::<py_orchestrator::PyOrchestrator>()?;
     m.add_class::<py_conductor::PyConductor>()?;
+    m.add_class::<py_trinity::PyTrinity>()?;
+    m.add_class::<py_self_caller::PySelfCaller>()?;
+    m.add_class::<py_self_caller::PyRuleBasedGuard>()?;
+    m.add_class::<py_self_caller::PyLlmJudgeGuard>()?;
+    m.add_class::<py_router::PyRegexRouter>()?;
+    #[cfg(feature = "onnx")]
+    m.add_class::<py_router::PyOnnxRouter>()?;
     m.add_class::<py_mcp::PyStdio>()?;
     m.add_class::<py_mcp::PyStreamableHttp>()?;
     m.add_class::<py_governance::PyBudget>()?;
@@ -50,6 +60,15 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_governance::shutdown_otlp_py, m)?)?;
     m.add_function(wrap_pyfunction!(py_compat::serve_openai_py, m)?)?;
     m.add_function(wrap_pyfunction!(py_compat::shutdown_compat_py, m)?)?;
+    m.add_function(wrap_pyfunction!(featurise_text_py, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
+}
+
+/// Expose the Rust featuriser to Python so the training harness's
+/// parity test can compare both sides byte-for-byte.
+#[pyfunction]
+#[pyo3(name = "featurise_text")]
+fn featurise_text_py(text: &str) -> Vec<f32> {
+    tako_orchestrator::featurise_text(text)
 }
