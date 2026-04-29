@@ -293,8 +293,94 @@ class SelfCaller:
         return await self._inner.stream(prompt, tenant_id=tenant_id, user_id=user_id)
 
 
+class AbMcts:
+    """AB-MCTS — Adaptive Branching Monte Carlo Tree Search (Phase 4).
+
+    Each iteration picks a branch via Thompson sampling over per-node
+    Beta posteriors, rolls out one trajectory under the wrapped
+    ``provider``, and updates the posteriors with a verifier-graded
+    score on ``[0, 1]``. Returns the highest-scored leaf.
+
+    ``verifier`` must be a :class:`tako.verifiers.RuleBased` (or a future
+    verifier type registered with ``tako._native``).
+
+    The Python streaming binding lands in v0.9.0: ``async for ev in
+    await mcts.stream(prompt): ...`` yields per-rollout events of kind
+    ``"step_start"``, ``"assistant_text"``, ``"verifier_score"``, and
+    a terminal ``"final"`` carrying the best leaf's text.
+    """
+
+    def __init__(
+        self,
+        provider: _ProviderBase,
+        verifier: Any,
+        *,
+        max_iterations: int = 16,
+        branching_factor: int = 3,
+        max_steps_per_rollout: int = 4,
+        temperature: float = 0.7,
+        min_confidence: float = 0.95,
+    ) -> None:
+        if not hasattr(provider, "_handle"):
+            raise TypeError("provider must be a tako.providers.* instance")
+        if not hasattr(verifier, "_native"):
+            raise TypeError("verifier must be a tako.verifiers.* instance")
+        self._inner = _native.AbMcts(
+            provider._handle,
+            verifier._native,
+            max_iterations=max_iterations,
+            branching_factor=branching_factor,
+            max_steps_per_rollout=max_steps_per_rollout,
+            temperature=temperature,
+            min_confidence=min_confidence,
+        )
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> _Result:
+        text = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(text)
+
+    def run_sync(
+        self,
+        prompt: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> _Result:
+        text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(text)
+
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> Any:
+        """Async-iterable stream of orchestrator events (Phase 8.B).
+
+        Per iteration the stream yields exactly:
+
+        - ``OrchEvent`` with ``kind="step_start"``,
+        - ``OrchEvent`` with ``kind="assistant_text"`` carrying the
+          rollout's full text as a single delta,
+        - ``OrchEvent`` with ``kind="verifier_score"`` whose ``branch``
+          and ``score`` getters expose the leaf id and verifier score
+          on ``[0, 1]``.
+
+        After all iterations (or ``min_confidence`` early-stop), one
+        terminal ``OrchEvent`` with ``kind="final"`` closes the stream.
+        """
+        return await self._inner.stream(prompt, tenant_id=tenant_id, user_id=user_id)
+
+
 # Re-export so callers can write `tako.orchestrator.SingleAgent(...)`.
-__all__ = ["Conductor", "SelfCaller", "SingleAgent", "Trinity"]
+__all__ = ["AbMcts", "Conductor", "SelfCaller", "SingleAgent", "Trinity"]
 
 
 def __getattr__(name: str) -> Any:

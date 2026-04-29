@@ -18,6 +18,7 @@ from . import (
     secrets,
     sigstore,
     tracing,
+    verifiers,
 )
 from .budget import Budget
 from .client import Client
@@ -30,9 +31,10 @@ from .models import (
     ToolSchema,
     Usage,
 )
-from .orchestrator import Conductor, SelfCaller, SingleAgent, Trinity
+from .orchestrator import AbMcts, Conductor, SelfCaller, SingleAgent, Trinity
 
 __all__ = [
+    "AbMcts",
     "Budget",
     "ChatRequest",
     "ChatResponse",
@@ -56,6 +58,7 @@ __all__ = [
     "secrets",
     "sigstore",
     "tracing",
+    "verifiers",
 ]
 
 __version__ = "0.8.0"

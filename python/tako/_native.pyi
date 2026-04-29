@@ -247,6 +247,43 @@ class Trinity:
         user_id: str | None = ...,
     ) -> str: ...
 
+class RuleBasedVerifier:
+    def __init__(
+        self,
+        min_chars: int = ...,
+        pattern: str | None = ...,
+    ) -> None: ...
+
+class AbMcts:
+    def __init__(
+        self,
+        provider: Any,
+        verifier: Any,
+        max_iterations: int = ...,
+        branching_factor: int = ...,
+        max_steps_per_rollout: int = ...,
+        temperature: float = ...,
+        min_confidence: float = ...,
+    ) -> None: ...
+    def run(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> Awaitable[str]: ...
+    def run_sync(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> str: ...
+    def stream(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> Awaitable[OrchEventStream]: ...
+
 class SelfCaller:
     def __init__(
         self,

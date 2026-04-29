@@ -13,6 +13,7 @@
 #![allow(unsafe_code)] // PyO3 macro expansions emit unsafe extern blocks; required for FFI.
 
 mod conv;
+mod py_ab_mcts;
 mod py_azure;
 mod py_bedrock;
 mod py_compat;
@@ -49,6 +50,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_self_caller::PySelfCaller>()?;
     m.add_class::<py_self_caller::PyRuleBasedGuard>()?;
     m.add_class::<py_self_caller::PyLlmJudgeGuard>()?;
+    m.add_class::<py_ab_mcts::PyAbMcts>()?;
+    m.add_class::<py_ab_mcts::PyRuleBasedVerifier>()?;
     m.add_class::<py_orch_event::PyOrchEvent>()?;
     m.add_class::<py_orch_event::PyOrchEventStream>()?;
     m.add_class::<py_router::PyRegexRouter>()?;

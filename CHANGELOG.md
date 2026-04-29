@@ -59,6 +59,25 @@ Plan: [PLAN_PHASE8.md](PLAN_PHASE8.md). In progress.
   - No Python facade change required (the field is pure data
     inside the bundle JSON; serde handles it transparently).
 
+- **`tako.AbMcts` Python facade** (Phase 8.B continued): closes the
+  v0.5.0 gap — AB-MCTS landed in Rust but had no Python binding.
+  - New `tako._native.AbMcts(provider, verifier, *, max_iterations=,
+    branching_factor=, max_steps_per_rollout=, temperature=,
+    min_confidence=)` pyclass with `run`, `run_sync`, and `stream`
+    methods. `stream` returns the existing `PyOrchEventStream` from
+    Phase 7.B — the `verifier_score` events from 8.A surface via
+    that wrapper's new `branch` and `score` getters.
+  - New `tako._native.RuleBasedVerifier(min_chars=, pattern=None)`
+    pyclass — the only verifier currently exposed; further verifier
+    types (callable adapters, custom score fns) are tracked for
+    follow-on releases.
+  - Python facade: `tako.AbMcts(...)` and `tako.verifiers.RuleBased`
+    (new module). Type stubs in `_native.pyi`.
+  - 2 new Python smoke tests in
+    `tests/python/test_ab_mcts_stream.py`: end-to-end stream against
+    a `PythonProvider`-backed AB-MCTS, and verifier-score event
+    branch/score-getter assertions.
+
 - **Native `AbMcts::stream` implementation** (Phase 8.B): replaces
   the Phase 4 stub at `crates/tako-orchestrator/src/ab_mcts.rs:
   315-327` (the only orchestrator's `stream` method that was still
