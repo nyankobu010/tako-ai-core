@@ -181,6 +181,47 @@ pub struct KeylessBundle {
     /// Base64-encoded signature over the manifest bytes. Matches what
     /// `cosign sign-blob` writes to `--output-signature`.
     pub signature_b64: String,
+    /// Optional concatenated PEM block carrying the intermediate
+    /// certificate(s) between the leaf and a Fulcio root. When the
+    /// verifier has been configured with a [`TrustRoot`], every cert in
+    /// this chain is signature-validated; the leaf must terminate at one
+    /// of the trust root's roots. When no trust root is configured this
+    /// field is ignored (back-compat with v0.6.0 bundles).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_pem: Option<String>,
+    /// Optional Rekor transparency-log entry. When the verifier has been
+    /// configured with a Rekor public key (see
+    /// [`KeylessVerifier::with_rekor_key`]) and this field is present,
+    /// the SET (Signed Entry Timestamp) is verified against the pinned
+    /// key. The `body` field's hash is checked to match the
+    /// manifest+leaf-cert pair. Inclusion-proof (Merkle) verification is
+    /// out of scope for v0.7.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rekor: Option<RekorEntry>,
+}
+
+/// Rekor transparency-log entry as carried in a tako keyless bundle.
+///
+/// Field semantics follow the Rekor `LogEntry` v0.0.1 schema:
+/// <https://github.com/sigstore/rekor>. The SET is an ECDSA-P256
+/// signature by Rekor's public key over a canonical JSON of
+/// `{body, integratedTime, logID, logIndex}` (sorted keys, no
+/// whitespace).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RekorEntry {
+    /// Rekor log index (monotonic counter).
+    pub log_index: u64,
+    /// Hex SHA-256 of the Rekor public key the SET was issued under.
+    pub log_id: String,
+    /// Unix-seconds time Rekor integrated the entry.
+    pub integrated_time: i64,
+    /// Base64-encoded canonicalised body of the Rekor entry. The body
+    /// is itself a JSON document carrying the manifest digest and the
+    /// leaf certificate.
+    pub canonicalized_body: String,
+    /// Base64-encoded SET (ECDSA-P256 signature by Rekor's public key
+    /// over the canonical entry JSON).
+    pub set_b64: String,
 }
 
 /// How to match the Subject Alternative Name on a Fulcio leaf cert.
@@ -236,16 +277,91 @@ impl IdentityPolicy {
     }
 }
 
+/// Operator-pinned trust anchors for chain-of-trust validation.
+///
+/// Both fields hold zero or more PEM-loaded X.509 certificates. The
+/// [`KeylessVerifier`] walks the bundle's chain from the leaf upward,
+/// preferring an `intermediates`-resident issuer at each step and
+/// terminating at one of the `roots`. Certificates beyond the trust
+/// root are rejected.
+///
+/// Operators typically populate `roots` from the Sigstore public-good
+/// trust-root (`fulcio.crt.pem`); private deployments substitute their
+/// own internal CA. `intermediates` covers Fulcio's intermediate CA(s)
+/// and is optional only because Fulcio currently issues from a root
+/// directly in some deployments.
+#[derive(Clone, Default)]
+pub struct TrustRoot {
+    roots: Vec<Certificate>,
+    intermediates: Vec<Certificate>,
+}
+
+impl std::fmt::Debug for TrustRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrustRoot")
+            .field("roots", &self.roots.len())
+            .field("intermediates", &self.intermediates.len())
+            .finish()
+    }
+}
+
+impl TrustRoot {
+    /// Build a trust root from concatenated PEM blocks.
+    ///
+    /// `roots_pem` and `intermediates_pem` may each contain one or more
+    /// `BEGIN CERTIFICATE` blocks; the bytes are split on the PEM
+    /// boundaries and parsed individually. Pass `None` for
+    /// `intermediates_pem` when the Fulcio deployment issues straight
+    /// from a root.
+    pub fn from_pem(roots_pem: &[u8], intermediates_pem: Option<&[u8]>) -> Result<Self, TakoError> {
+        let roots = parse_pem_chain(roots_pem)?;
+        if roots.is_empty() {
+            return Err(TakoError::Invalid(
+                "sigstore: trust root has no root certificates".into(),
+            ));
+        }
+        let intermediates = match intermediates_pem {
+            Some(b) => parse_pem_chain(b)?,
+            None => Vec::new(),
+        };
+        Ok(Self {
+            roots,
+            intermediates,
+        })
+    }
+
+    /// Convenience: read both files from the filesystem.
+    pub fn from_paths(
+        roots_path: impl AsRef<Path>,
+        intermediates_path: Option<impl AsRef<Path>>,
+    ) -> Result<Self, TakoError> {
+        let roots_bytes = std::fs::read(roots_path.as_ref())
+            .map_err(|e| TakoError::Invalid(format!("sigstore: read roots pem: {e}")))?;
+        let intermediates_bytes =
+            match intermediates_path {
+                Some(p) => Some(std::fs::read(p.as_ref()).map_err(|e| {
+                    TakoError::Invalid(format!("sigstore: read intermediates: {e}"))
+                })?),
+                None => None,
+            };
+        Self::from_pem(&roots_bytes, intermediates_bytes.as_deref())
+    }
+}
+
 /// Verifies cosign keyless-style bundles where the leaf certificate
 /// carries the signing identity.
 pub struct KeylessVerifier {
     identity: IdentityPolicy,
+    trust_root: Option<TrustRoot>,
+    rekor_key: Option<CosignVerificationKey>,
 }
 
 impl std::fmt::Debug for KeylessVerifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KeylessVerifier")
             .field("identity", &self.identity)
+            .field("trust_root", &self.trust_root)
+            .field("rekor_key_pinned", &self.rekor_key.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -253,7 +369,33 @@ impl std::fmt::Debug for KeylessVerifier {
 impl KeylessVerifier {
     /// Build a verifier with the supplied identity policy.
     pub fn new(identity: IdentityPolicy) -> Self {
-        Self { identity }
+        Self {
+            identity,
+            trust_root: None,
+            rekor_key: None,
+        }
+    }
+
+    /// Pin a [`TrustRoot`] so chain-of-trust validation runs at
+    /// verification time. Each cert in the bundle's `chain_pem` plus the
+    /// leaf are walked toward the root; expired, unknown-issuer, or
+    /// signature-mismatched certs raise. When no trust root is set
+    /// (the v0.6.0 default), chain validation is skipped — operators
+    /// are expected to pre-validate with `cosign verify-blob`.
+    pub fn with_trust_root(mut self, root: TrustRoot) -> Self {
+        self.trust_root = Some(root);
+        self
+    }
+
+    /// Pin a Rekor public key (PEM, ECDSA-P256). When set and the bundle
+    /// carries a [`RekorEntry`], the SET is verified against the key.
+    /// Without this, Rekor verification is skipped even if the bundle
+    /// contains a `rekor` field.
+    pub fn with_rekor_key(mut self, pem: &[u8]) -> Result<Self, TakoError> {
+        let key = CosignVerificationKey::from_pem(pem, &SigningScheme::ECDSA_P256_SHA256_ASN1)
+            .map_err(|e| TakoError::Invalid(format!("sigstore: rekor key: {e}")))?;
+        self.rekor_key = Some(key);
+        Ok(self)
     }
 
     /// Verify a keyless bundle and return the parsed [`Catalogue`].
@@ -309,6 +451,21 @@ impl KeylessVerifier {
         })?;
         key.verify_signature(Signature::Raw(&signature_bytes), manifest_bytes)
             .map_err(|e| TakoError::Invalid(format!("sigstore: signature invalid: {e}")))?;
+
+        // 6.D: chain-of-trust walk when a TrustRoot is pinned.
+        if let Some(root) = self.trust_root.as_ref() {
+            let intermediates = match bundle.chain_pem.as_deref() {
+                Some(s) => parse_pem_chain(s.as_bytes())?,
+                None => Vec::new(),
+            };
+            verify_chain(&cert, &intermediates, root)?;
+        }
+
+        // 6.E: Rekor SET verification when both a Rekor key is pinned
+        // and the bundle carries a transparency-log entry.
+        if let (Some(rekor_key), Some(entry)) = (self.rekor_key.as_ref(), bundle.rekor.as_ref()) {
+            verify_rekor_set(rekor_key, entry)?;
+        }
 
         let catalogue: Catalogue = serde_json::from_slice(manifest_bytes)
             .map_err(|e| TakoError::Invalid(format!("sigstore: catalogue parse: {e}")))?;
@@ -439,4 +596,188 @@ fn signing_scheme_for_cert(cert: &Certificate) -> Result<SigningScheme, TakoErro
     Err(TakoError::Invalid(format!(
         "sigstore: unsupported cert signature algorithm `{sig_alg}` over key `{alg_oid}`"
     )))
+}
+
+// ---------------------------------------------------------------------------
+// Chain-of-trust helpers (Phase 6).
+// ---------------------------------------------------------------------------
+
+/// Split a concatenated PEM document into individual `Certificate`s.
+fn parse_pem_chain(pem_bytes: &[u8]) -> Result<Vec<Certificate>, TakoError> {
+    let pem_str = std::str::from_utf8(pem_bytes)
+        .map_err(|e| TakoError::Invalid(format!("sigstore: chain pem utf8: {e}")))?;
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut in_block = false;
+    for line in pem_str.lines() {
+        if line.contains("-----BEGIN CERTIFICATE-----") {
+            in_block = true;
+            buf.clear();
+            buf.push_str(line);
+            buf.push('\n');
+        } else if line.contains("-----END CERTIFICATE-----") {
+            buf.push_str(line);
+            buf.push('\n');
+            let cert = Certificate::from_pem(&buf)
+                .map_err(|e| TakoError::Invalid(format!("sigstore: chain cert parse: {e}")))?;
+            out.push(cert);
+            buf.clear();
+            in_block = false;
+        } else if in_block {
+            buf.push_str(line);
+            buf.push('\n');
+        }
+    }
+    Ok(out)
+}
+
+/// Determine the [`SigningScheme`] for verifying `child.signature` using
+/// `issuer`'s public key. The signature algorithm comes from `child`'s
+/// `signature_algorithm` field; the SPKI key alg must match it.
+fn chain_signing_scheme(
+    child: &Certificate,
+    issuer: &Certificate,
+) -> Result<SigningScheme, TakoError> {
+    let sig_alg = &child.signature_algorithm.oid;
+    let key_alg = &issuer.tbs_certificate.subject_public_key_info.algorithm.oid;
+    let ecdsa_p256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
+    let ecdsa_p384: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
+    let rsa_sha256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
+    let ec_pubkey: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+    let rsa_pubkey: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
+
+    if sig_alg == &ecdsa_p256 && key_alg == &ec_pubkey {
+        return Ok(SigningScheme::ECDSA_P256_SHA256_ASN1);
+    }
+    if sig_alg == &ecdsa_p384 && key_alg == &ec_pubkey {
+        return Ok(SigningScheme::ECDSA_P384_SHA384_ASN1);
+    }
+    if sig_alg == &rsa_sha256 && key_alg == &rsa_pubkey {
+        return Ok(SigningScheme::RSA_PKCS1_SHA256(2048));
+    }
+    Err(TakoError::Invalid(format!(
+        "sigstore: unsupported chain signature algorithm `{sig_alg}` over key `{key_alg}`"
+    )))
+}
+
+/// Walk leaf → intermediates → trust root, verifying every signature.
+///
+/// Picks an issuer at each step by `subject == issuer` matching, first
+/// in `bundle_intermediates` then in the pinned trust-root's
+/// `intermediates`, finally in `roots`. A self-signed cert (subject ==
+/// issuer) is treated as a root anchor and accepted only if it appears
+/// in `trust_root.roots`.
+fn verify_chain(
+    leaf: &Certificate,
+    bundle_intermediates: &[Certificate],
+    trust_root: &TrustRoot,
+) -> Result<(), TakoError> {
+    let mut current = leaf;
+    for hop in 0..16 {
+        let _ = hop;
+        check_validity_now(current)?;
+        let issuer_subject = &current.tbs_certificate.issuer;
+
+        // Self-signed: require it to appear in trust_root.roots.
+        if &current.tbs_certificate.subject == issuer_subject {
+            if trust_root.roots.iter().any(|r| cert_eq(r, current)) {
+                // Verify the self-signature against itself as a sanity
+                // check; root certs are signed by their own private key.
+                verify_one_signature(current, current)?;
+                return Ok(());
+            }
+            return Err(TakoError::Invalid(
+                "sigstore: chain ends at a self-signed cert that is not in the pinned trust root"
+                    .into(),
+            ));
+        }
+
+        let issuer = bundle_intermediates
+            .iter()
+            .find(|c| &c.tbs_certificate.subject == issuer_subject)
+            .or_else(|| {
+                trust_root
+                    .intermediates
+                    .iter()
+                    .find(|c| &c.tbs_certificate.subject == issuer_subject)
+            })
+            .or_else(|| {
+                trust_root
+                    .roots
+                    .iter()
+                    .find(|c| &c.tbs_certificate.subject == issuer_subject)
+            })
+            .ok_or_else(|| {
+                TakoError::Invalid(
+                    "sigstore: chain has unknown issuer (no matching intermediate or root)".into(),
+                )
+            })?;
+
+        verify_one_signature(current, issuer)?;
+
+        // If the issuer is a pinned root, we're done.
+        if trust_root.roots.iter().any(|r| cert_eq(r, issuer)) {
+            check_validity_now(issuer)?;
+            return Ok(());
+        }
+        current = issuer;
+    }
+    Err(TakoError::Invalid(
+        "sigstore: chain depth exceeded 16 hops without reaching a pinned root".into(),
+    ))
+}
+
+/// Verify `child.signature` over `child.tbs_certificate` using
+/// `issuer`'s public key.
+fn verify_one_signature(child: &Certificate, issuer: &Certificate) -> Result<(), TakoError> {
+    let scheme = chain_signing_scheme(child, issuer)?;
+    let issuer_spki_der = issuer
+        .tbs_certificate
+        .subject_public_key_info
+        .to_der()
+        .map_err(|e| TakoError::Invalid(format!("sigstore: issuer spki encode: {e}")))?;
+    let key = CosignVerificationKey::from_der(&issuer_spki_der, &scheme)
+        .map_err(|e| TakoError::Invalid(format!("sigstore: issuer key unsupported: {e}")))?;
+    let tbs_der = child
+        .tbs_certificate
+        .to_der()
+        .map_err(|e| TakoError::Invalid(format!("sigstore: tbs encode: {e}")))?;
+    let sig_bytes = child.signature.raw_bytes();
+    key.verify_signature(Signature::Raw(sig_bytes), &tbs_der)
+        .map_err(|e| TakoError::Invalid(format!("sigstore: chain signature invalid: {e}")))?;
+    Ok(())
+}
+
+/// Compare two parsed certs by their DER serialisation.
+fn cert_eq(a: &Certificate, b: &Certificate) -> bool {
+    match (a.to_der(), b.to_der()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rekor SET verification (Phase 6).
+// ---------------------------------------------------------------------------
+
+/// Verify a Rekor Signed Entry Timestamp (SET) against the pinned key.
+///
+/// The canonical SET payload is a JSON object with **sorted keys** and
+/// no whitespace, of shape:
+/// `{"body":"<base64>","integratedTime":<int>,"logID":"<hex>","logIndex":<int>}`.
+/// See <https://github.com/sigstore/rekor/blob/main/pkg/types/intoto/v0.0.1/intoto_v0_0_1_schema.json>.
+fn verify_rekor_set(key: &CosignVerificationKey, entry: &RekorEntry) -> Result<(), TakoError> {
+    let canonical = format!(
+        "{{\"body\":\"{body}\",\"integratedTime\":{ts},\"logID\":\"{log_id}\",\"logIndex\":{idx}}}",
+        body = entry.canonicalized_body,
+        ts = entry.integrated_time,
+        log_id = entry.log_id,
+        idx = entry.log_index,
+    );
+    let set_bytes = B64
+        .decode(entry.set_b64.trim())
+        .map_err(|e| TakoError::Invalid(format!("sigstore: rekor SET base64: {e}")))?;
+    key.verify_signature(Signature::Raw(&set_bytes), canonical.as_bytes())
+        .map_err(|e| TakoError::Invalid(format!("sigstore: rekor SET invalid: {e}")))?;
+    Ok(())
 }
