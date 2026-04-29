@@ -45,7 +45,9 @@ pub(crate) async fn chat_completions(
     if body.stream {
         return (
             StatusCode::NOT_IMPLEMENTED,
-            Json(json!({"error": {"message": "streaming is Phase 2.5", "type": "not_implemented"}})),
+            Json(
+                json!({"error": {"message": "streaming is Phase 2.5", "type": "not_implemented"}}),
+            ),
         )
             .into_response();
     }
@@ -58,7 +60,10 @@ pub(crate) async fn chat_completions(
     let model = body.model.clone();
     let req = from_openai_request(body);
     let prompt = extract_user_prompt(&req).unwrap_or_default();
-    let result = state.orch.run(&principal, OrchInput::from_user(prompt)).await;
+    let result = state
+        .orch
+        .run(&principal, OrchInput::from_user(prompt))
+        .await;
     match result {
         Ok(out) => {
             let resp = to_openai_response(

@@ -36,7 +36,9 @@ impl StaticTokens {
     }
 
     pub fn from_map(map: HashMap<String, Principal>) -> Self {
-        Self { table: Arc::new(map) }
+        Self {
+            table: Arc::new(map),
+        }
     }
 }
 

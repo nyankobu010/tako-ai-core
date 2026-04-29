@@ -49,24 +49,23 @@ impl PyOrchestrator {
         mcp_servers: Option<Vec<PyObject>>,
         py: Python<'_>,
     ) -> PyResult<Self> {
-        let handle: ProviderHandle =
-            if let Ok(p) = provider.extract::<crate::py_provider::PyOpenAI>(py) {
-                p.handle
-            } else if let Ok(p) = provider.extract::<crate::py_provider::PyAnthropic>(py) {
-                p.handle
-            } else if let Ok(p) = provider.extract::<crate::py_provider::PyFakeProvider>(py) {
-                p.handle
-            } else if let Ok(p) = provider.extract::<crate::py_bedrock::PyBedrock>(py) {
-                p.handle
-            } else if let Ok(p) =
-                provider.extract::<crate::py_python_provider::PyPythonProvider>(py)
-            {
-                p.handle
-            } else {
-                return Err(PyValueError::new_err(
-                    "provider must be a tako._native.OpenAI, Anthropic, FakeProvider, Bedrock, or PythonProvider",
-                ));
-            };
+        let handle: ProviderHandle = if let Ok(p) =
+            provider.extract::<crate::py_provider::PyOpenAI>(py)
+        {
+            p.handle
+        } else if let Ok(p) = provider.extract::<crate::py_provider::PyAnthropic>(py) {
+            p.handle
+        } else if let Ok(p) = provider.extract::<crate::py_provider::PyFakeProvider>(py) {
+            p.handle
+        } else if let Ok(p) = provider.extract::<crate::py_bedrock::PyBedrock>(py) {
+            p.handle
+        } else if let Ok(p) = provider.extract::<crate::py_python_provider::PyPythonProvider>(py) {
+            p.handle
+        } else {
+            return Err(PyValueError::new_err(
+                "provider must be a tako._native.OpenAI, Anthropic, FakeProvider, Bedrock, or PythonProvider",
+            ));
+        };
 
         let registry = Arc::new(ToolRegistry::new());
 
