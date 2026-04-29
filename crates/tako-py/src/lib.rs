@@ -22,6 +22,7 @@ mod py_mcp;
 mod py_orchestrator;
 mod py_provider;
 mod py_python_provider;
+mod py_secrets;
 mod py_vertex;
 
 use pyo3::prelude::*;
@@ -40,6 +41,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_mcp::PyStdio>()?;
     m.add_class::<py_mcp::PyStreamableHttp>()?;
     m.add_class::<py_governance::PyBudget>()?;
+    m.add_class::<py_secrets::PyVaultResolver>()?;
+    m.add_class::<py_secrets::PyAzureKeyVaultResolver>()?;
+    m.add_class::<py_secrets::PyGcpSecretManagerResolver>()?;
+    m.add_class::<py_secrets::PyAwsSecretsManagerResolver>()?;
     m.add_function(wrap_pyfunction!(py_governance::init_tracing_py, m)?)?;
     m.add_function(wrap_pyfunction!(py_governance::init_otlp_tracing_py, m)?)?;
     m.add_function(wrap_pyfunction!(py_governance::shutdown_otlp_py, m)?)?;

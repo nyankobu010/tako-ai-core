@@ -83,6 +83,37 @@ class Vertex:
     ) -> None: ...
     def id(self) -> str: ...
 
+class VaultResolver:
+    def __init__(self, addr: str, token: str) -> None: ...
+    def resolve(self, key: str) -> Awaitable[str]: ...
+
+class AzureKeyVaultResolver:
+    def __init__(
+        self,
+        vault_url: str,
+        access_token: str,
+        api_version: str | None = ...,
+    ) -> None: ...
+    def resolve(self, key: str) -> Awaitable[str]: ...
+
+class GcpSecretManagerResolver:
+    def __init__(
+        self,
+        project_id: str,
+        access_token: str,
+        endpoint_url: str | None = ...,
+    ) -> None: ...
+    def resolve(self, key: str) -> Awaitable[str]: ...
+
+class AwsSecretsManagerResolver:
+    def __init__(
+        self,
+        region: str | None = ...,
+        profile_name: str | None = ...,
+        endpoint_url: str | None = ...,
+    ) -> None: ...
+    def resolve(self, key: str) -> Awaitable[str]: ...
+
 class Stdio:
     def __init__(self, command: str, args: list[str] | None = ...) -> None: ...
 
