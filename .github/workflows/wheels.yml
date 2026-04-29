@@ -60,7 +60,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     environment: pypi
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           path: dist/
           merge-multiple: true
