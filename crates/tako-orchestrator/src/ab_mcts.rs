@@ -312,18 +312,197 @@ impl Orchestrator for AbMcts {
         .await
     }
 
+    /// Streaming variant of [`AbMcts::run`] (Phase 8.B).
+    ///
+    /// Per iteration of the AB-MCTS search loop, the stream emits:
+    /// 1. [`OrchEvent::StepStart`] with `step = iteration_index`.
+    /// 2. Exactly one [`OrchEvent::AssistantText`] carrying the full
+    ///    rollout text — the rollout helper itself is non-streaming
+    ///    (each rollout may invoke tool calls across multiple
+    ///    provider turns; per-token interleaving across competing
+    ///    branches is out of scope for v0.9.0).
+    /// 3. [`OrchEvent::VerifierScore`] with the rollout's branch
+    ///    index (the leaf node id) and verifier score in `[0, 1]`.
+    ///
+    /// After all iterations (or after early-stop on
+    /// `score >= min_confidence`), the stream emits exactly one
+    /// terminal [`OrchEvent::Final`] containing the highest-scored
+    /// leaf's `OrchOutput`, matching `run`'s return value.
     async fn stream(
         &self,
-        _principal: &Principal,
-        _input: OrchInput,
+        principal: &Principal,
+        input: OrchInput,
     ) -> BoxStream<'static, Result<OrchEvent, TakoError>> {
-        // Tree-search streaming would need to interleave rollouts from
-        // multiple branches; left for a follow-up phase.
-        Box::pin(futures::stream::once(async move {
-            Err(TakoError::Invalid(
-                "AbMcts streaming is not yet implemented; use `run`".into(),
-            ))
-        }))
+        let provider = Arc::clone(&self.provider);
+        let verifier = Arc::clone(&self.verifier);
+        let tools = Arc::clone(&self.tools);
+        let policy = self.policy.clone();
+        let defaults = self.defaults.clone();
+        let max_iterations = self.max_iterations;
+        let branching_factor = self.branching_factor;
+        let max_steps_per_rollout = self.max_steps_per_rollout;
+        let temperature = self.temperature;
+        let min_confidence = self.min_confidence;
+        let principal = principal.clone();
+
+        let s = async_stream::try_stream! {
+            let mut root_messages: Vec<Message> = Vec::new();
+            if let Some(sys) = input.system.clone() {
+                root_messages.push(Message::system(sys));
+            }
+            root_messages.extend(input.messages.clone());
+
+            let prompt_text = input
+                .messages
+                .iter()
+                .filter_map(|m| {
+                    m.content
+                        .iter()
+                        .filter_map(ContentPart::as_text)
+                        .next()
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let mut nodes: Vec<Node> = vec![Node::new_root(root_messages.clone())];
+            let mut best_leaf: Option<usize> = None;
+            let mut best_score: f32 = -1.0;
+            let mut total_usage = Usage::default();
+            let mut rng = StdRng::from_rng(&mut rand::rng());
+
+            for iteration in 0..max_iterations {
+                yield OrchEvent::StepStart { step: iteration };
+
+                // ---- Selection / adaptive branching (mirrors `iterate`) ----
+                let mut current = 0usize;
+                let mut path: Vec<usize> = vec![current];
+                loop {
+                    let node = &nodes[current];
+                    let new_child_sample = sample_beta(&mut rng, 1.0, 1.0);
+                    let mut best_child: Option<usize> = None;
+                    let mut best_child_sample = f32::NEG_INFINITY;
+                    for &c in &node.children {
+                        let c_node = &nodes[c];
+                        let s = sample_beta(&mut rng, c_node.alpha, c_node.beta);
+                        if s > best_child_sample {
+                            best_child_sample = s;
+                            best_child = Some(c);
+                        }
+                    }
+                    let can_branch = (node.children.len() as u32) < branching_factor;
+                    let should_expand = match best_child {
+                        None => true,
+                        Some(_) => can_branch && new_child_sample > best_child_sample,
+                    };
+                    if should_expand {
+                        break;
+                    }
+                    let Some(next) = best_child else { break };
+                    path.push(next);
+                    current = next;
+                }
+
+                // ---- Expansion + simulation (rollout) ----
+                let parent_idx = current;
+                let parent_messages = nodes[parent_idx].messages.clone();
+                let (rollout_message, rollout_text, rollout_usage, rollout_steps) =
+                    rollout_static(
+                        Arc::clone(&provider),
+                        Arc::clone(&tools),
+                        policy.clone(),
+                        defaults.clone(),
+                        max_steps_per_rollout,
+                        temperature,
+                        &principal,
+                        parent_messages.clone(),
+                    )
+                    .await?;
+
+                // Forward the rollout's full text as a single
+                // AssistantText delta. Per-token streaming inside a
+                // multi-step rollout is deferred (would need to thread
+                // `provider.stream` through the tool-call loop).
+                if !rollout_text.is_empty() {
+                    yield OrchEvent::AssistantText {
+                        step: iteration,
+                        delta: rollout_text.clone(),
+                    };
+                }
+
+                let mut child_messages = parent_messages;
+                child_messages.push(rollout_message.clone());
+
+                // ---- Verification ----
+                let score = verifier
+                    .score(&principal, &prompt_text, &rollout_text)
+                    .await?
+                    .clamp(0.0, 1.0);
+
+                // ---- Insert leaf ----
+                let leaf = Node {
+                    messages: child_messages,
+                    alpha: 1.0,
+                    beta: 1.0,
+                    children: Vec::new(),
+                    output_text: Some(rollout_text),
+                    output_message: Some(rollout_message),
+                    rollout_steps,
+                };
+                let leaf_idx = nodes.len();
+                nodes.push(leaf);
+                nodes[parent_idx].children.push(leaf_idx);
+                path.push(leaf_idx);
+
+                yield OrchEvent::VerifierScore {
+                    step: iteration,
+                    branch: leaf_idx as u32,
+                    score,
+                };
+
+                // ---- Back-propagation ----
+                for &n in &path {
+                    nodes[n].alpha += score;
+                    nodes[n].beta += 1.0 - score;
+                }
+
+                total_usage.input_tokens =
+                    total_usage.input_tokens.saturating_add(rollout_usage.input_tokens);
+                total_usage.output_tokens =
+                    total_usage.output_tokens.saturating_add(rollout_usage.output_tokens);
+
+                if score > best_score {
+                    best_score = score;
+                    best_leaf = Some(leaf_idx);
+                }
+                if best_score >= min_confidence {
+                    break;
+                }
+            }
+
+            let leaf_idx = best_leaf.ok_or_else(|| {
+                TakoError::Invalid(
+                    "AbMcts: no rollout completed (try increasing max_iterations)".into(),
+                )
+            })?;
+            let leaf = &nodes[leaf_idx];
+            let final_message = leaf
+                .output_message
+                .clone()
+                .unwrap_or_else(|| Message::assistant(""));
+            let text = leaf.output_text.clone().unwrap_or_default();
+            let total_steps = leaf.rollout_steps;
+            yield OrchEvent::Final {
+                output: Box::new(OrchOutput {
+                    text,
+                    message: final_message,
+                    usage: total_usage,
+                    steps: total_steps,
+                }),
+            };
+        };
+
+        Box::pin(s)
     }
 }
 
@@ -431,127 +610,147 @@ impl AbMcts {
     async fn rollout(
         &self,
         principal: &Principal,
-        mut messages: Vec<Message>,
+        messages: Vec<Message>,
     ) -> Result<(Message, String, Usage, u32), TakoError> {
-        let mut total_usage = Usage::default();
-        let mut steps = 0u32;
-        let mut last_assistant: Option<Message> = None;
-        let model = self
-            .provider
-            .id()
-            .split(':')
-            .nth(1)
-            .unwrap_or("")
-            .to_string();
+        rollout_static(
+            Arc::clone(&self.provider),
+            Arc::clone(&self.tools),
+            self.policy.clone(),
+            self.defaults.clone(),
+            self.max_steps_per_rollout,
+            self.temperature,
+            principal,
+            messages,
+        )
+        .await
+    }
+}
 
-        for step in 0..self.max_steps_per_rollout {
-            let req = ChatRequest {
-                model: model.clone(),
-                messages: messages.clone(),
-                tools: self.tools.schemas().await,
-                temperature: Some(self.temperature),
-                max_tokens: self.defaults.max_tokens,
-                stop: Vec::new(),
-                stream: false,
-                metadata: Default::default(),
-            };
-            let span = info_span!(
-                "tako.provider.chat",
-                "tako.provider.id" = %self.provider.id(),
-                "tako.provider.model" = %model,
-                "tako.orchestrator.step" = step,
-            );
-            let resp = self.provider.chat(principal, req).instrument(span).await?;
-            steps += 1;
-            total_usage.input_tokens = total_usage
-                .input_tokens
-                .saturating_add(resp.usage.input_tokens);
-            total_usage.output_tokens = total_usage
-                .output_tokens
-                .saturating_add(resp.usage.output_tokens);
+/// Free-function form of [`AbMcts::rollout`]. Extracted in v0.9.0 so
+/// [`AbMcts::stream`] (Phase 8.B) can drive rollouts from inside an
+/// `async_stream::try_stream!` block without holding a `&self`
+/// reference across the stream's `'static` lifetime.
+#[allow(clippy::too_many_arguments)]
+async fn rollout_static(
+    provider: Arc<dyn LlmProvider>,
+    tools: Arc<ToolRegistry>,
+    policy: Option<Arc<dyn PolicyEngine>>,
+    defaults: ChatDefaults,
+    max_steps_per_rollout: u32,
+    temperature: f32,
+    principal: &Principal,
+    mut messages: Vec<Message>,
+) -> Result<(Message, String, Usage, u32), TakoError> {
+    let mut total_usage = Usage::default();
+    let mut steps = 0u32;
+    let mut last_assistant: Option<Message> = None;
+    let model = provider.id().split(':').nth(1).unwrap_or("").to_string();
 
-            let assistant = resp.message.clone();
-            messages.push(assistant.clone());
+    for step in 0..max_steps_per_rollout {
+        let req = ChatRequest {
+            model: model.clone(),
+            messages: messages.clone(),
+            tools: tools.schemas().await,
+            temperature: Some(temperature),
+            max_tokens: defaults.max_tokens,
+            stop: Vec::new(),
+            stream: false,
+            metadata: Default::default(),
+        };
+        let span = info_span!(
+            "tako.provider.chat",
+            "tako.provider.id" = %provider.id(),
+            "tako.provider.model" = %model,
+            "tako.orchestrator.step" = step,
+        );
+        let resp = provider.chat(principal, req).instrument(span).await?;
+        steps += 1;
+        total_usage.input_tokens = total_usage
+            .input_tokens
+            .saturating_add(resp.usage.input_tokens);
+        total_usage.output_tokens = total_usage
+            .output_tokens
+            .saturating_add(resp.usage.output_tokens);
 
-            let tool_calls: Vec<(String, String, serde_json::Value)> = assistant
-                .content
-                .iter()
-                .filter_map(|c| match c {
-                    ContentPart::ToolCall { id, name, args } => {
-                        Some((id.clone(), name.clone(), args.clone()))
-                    }
-                    _ => None,
-                })
-                .collect();
+        let assistant = resp.message.clone();
+        messages.push(assistant.clone());
 
-            if tool_calls.is_empty()
-                || matches!(
-                    resp.finish_reason,
-                    FinishReason::Stop | FinishReason::Length
-                ) && tool_calls.is_empty()
-            {
-                last_assistant = Some(assistant);
-                break;
-            }
-
-            let mut tool_results: Vec<ContentPart> = Vec::with_capacity(tool_calls.len());
-            for (id, name, args) in tool_calls {
-                if let Some(engine) = &self.policy {
-                    let ctx = PolicyContext {
-                        stage: PolicyStage::PreTool,
-                        model: model.clone(),
-                        messages_hash: hash_messages_pub(&messages),
-                        tools: vec![name.clone()],
-                        tool_args_hash: Some(hash_value_pub(&args)),
-                        response_hash: None,
-                    };
-                    match engine.evaluate(principal, ctx).await? {
-                        PolicyDecision::Deny { reason } => {
-                            return Err(TakoError::PolicyDenied(format!(
-                                "tool `{name}`: {reason}"
-                            )));
-                        }
-                        PolicyDecision::RequireApproval { reason } => {
-                            return Err(TakoError::PolicyDenied(format!(
-                                "tool `{name}` requires approval: {reason}"
-                            )));
-                        }
-                        _ => {}
-                    }
-                }
-                let result = match self.tools.invoke(principal, &name, args).await {
-                    Ok(v) => ContentPart::ToolResult {
-                        id,
-                        result: v,
-                        is_error: false,
-                    },
-                    Err(e) => ContentPart::ToolResult {
-                        id,
-                        result: serde_json::json!({ "error": e.to_string() }),
-                        is_error: true,
-                    },
-                };
-                tool_results.push(result);
-            }
-            messages.push(Message {
-                role: Role::User,
-                content: tool_results,
-            });
-
-            if step + 1 == self.max_steps_per_rollout {
-                last_assistant = Some(assistant);
-            }
-        }
-
-        let final_message = last_assistant.unwrap_or_else(|| Message::assistant(""));
-        let text = final_message
+        let tool_calls: Vec<(String, String, serde_json::Value)> = assistant
             .content
             .iter()
-            .filter_map(ContentPart::as_text)
-            .collect::<Vec<_>>()
-            .join("");
-        Ok((final_message, text, total_usage, steps))
+            .filter_map(|c| match c {
+                ContentPart::ToolCall { id, name, args } => {
+                    Some((id.clone(), name.clone(), args.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+
+        if tool_calls.is_empty()
+            || matches!(
+                resp.finish_reason,
+                FinishReason::Stop | FinishReason::Length
+            ) && tool_calls.is_empty()
+        {
+            last_assistant = Some(assistant);
+            break;
+        }
+
+        let mut tool_results: Vec<ContentPart> = Vec::with_capacity(tool_calls.len());
+        for (id, name, args) in tool_calls {
+            if let Some(engine) = &policy {
+                let ctx = PolicyContext {
+                    stage: PolicyStage::PreTool,
+                    model: model.clone(),
+                    messages_hash: hash_messages_pub(&messages),
+                    tools: vec![name.clone()],
+                    tool_args_hash: Some(hash_value_pub(&args)),
+                    response_hash: None,
+                };
+                match engine.evaluate(principal, ctx).await? {
+                    PolicyDecision::Deny { reason } => {
+                        return Err(TakoError::PolicyDenied(format!("tool `{name}`: {reason}")));
+                    }
+                    PolicyDecision::RequireApproval { reason } => {
+                        return Err(TakoError::PolicyDenied(format!(
+                            "tool `{name}` requires approval: {reason}"
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+            let result = match tools.invoke(principal, &name, args).await {
+                Ok(v) => ContentPart::ToolResult {
+                    id,
+                    result: v,
+                    is_error: false,
+                },
+                Err(e) => ContentPart::ToolResult {
+                    id,
+                    result: serde_json::json!({ "error": e.to_string() }),
+                    is_error: true,
+                },
+            };
+            tool_results.push(result);
+        }
+        messages.push(Message {
+            role: Role::User,
+            content: tool_results,
+        });
+
+        if step + 1 == max_steps_per_rollout {
+            last_assistant = Some(assistant);
+        }
     }
+
+    let final_message = last_assistant.unwrap_or_else(|| Message::assistant(""));
+    let text = final_message
+        .content
+        .iter()
+        .filter_map(ContentPart::as_text)
+        .collect::<Vec<_>>()
+        .join("");
+    Ok((final_message, text, total_usage, steps))
 }
 
 /// Sample from `Beta(α, β)` via the ratio of two `Gamma(·, 1)`

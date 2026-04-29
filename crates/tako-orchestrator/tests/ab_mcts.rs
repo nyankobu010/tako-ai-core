@@ -199,3 +199,171 @@ async fn ab_mcts_with_rule_based_verifier() {
     // rollout and terminate.
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8.B — native AbMcts::stream
+// ---------------------------------------------------------------------------
+
+mod stream {
+    //! Phase 8.B end-to-end tests for `AbMcts::stream`.
+    //!
+    //! Exercises the streamed event ordering: per iteration, exactly
+    //! one [`OrchEvent::StepStart`] arrives, the rollout's full text
+    //! is delivered as a single `AssistantText` delta, and a
+    //! `VerifierScore` carrying the verifier's float on `[0, 1]`
+    //! arrives *after* the text. The stream ends with exactly one
+    //! terminal `Final` event constructed from the highest-scored
+    //! leaf.
+
+    use super::*;
+    use futures::StreamExt;
+    use tako_orchestrator::OrchEvent;
+
+    #[tokio::test]
+    async fn stream_emits_step_text_score_then_final() {
+        let provider = Arc::new(
+            FakeProvider::new("fake:p", vec![assistant("first rollout text")]).with_repeat(),
+        );
+        let mcts = AbMcts::builder()
+            .provider(provider.clone())
+            .verifier(Arc::new(AlwaysScore(0.5)))
+            .max_iterations(3)
+            .max_steps_per_rollout(1)
+            .min_confidence(0.95) // never trips
+            .build()
+            .unwrap();
+
+        let mut stream = mcts
+            .stream(&Principal::anonymous(), OrchInput::from_user("go"))
+            .await;
+
+        let mut events: Vec<OrchEvent> = Vec::new();
+        while let Some(ev) = stream.next().await {
+            events.push(ev.unwrap());
+        }
+
+        // Exactly 3 iterations × (StepStart + AssistantText + VerifierScore)
+        // = 9 events, plus 1 terminal Final = 10 total.
+        assert_eq!(events.len(), 10, "got events: {events:?}");
+
+        // First three events are iteration 0's bundle, in order.
+        match &events[0] {
+            OrchEvent::StepStart { step } => assert_eq!(*step, 0),
+            other => panic!("expected StepStart at index 0, got {other:?}"),
+        }
+        match &events[1] {
+            OrchEvent::AssistantText { step, delta } => {
+                assert_eq!(*step, 0);
+                assert_eq!(delta, "first rollout text");
+            }
+            other => panic!("expected AssistantText at index 1, got {other:?}"),
+        }
+        match &events[2] {
+            OrchEvent::VerifierScore {
+                step,
+                branch: _,
+                score,
+            } => {
+                assert_eq!(*step, 0);
+                assert!((score - 0.5).abs() < 1e-3);
+            }
+            other => panic!("expected VerifierScore at index 2, got {other:?}"),
+        }
+        // Last event is the terminal Final.
+        match events.last().unwrap() {
+            OrchEvent::Final { output } => {
+                assert_eq!(output.text, "first rollout text");
+            }
+            other => panic!("expected terminal Final, got {other:?}"),
+        }
+        // Provider was called exactly max_iterations times (one chat
+        // per non-streaming rollout, max_steps_per_rollout=1).
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+    }
+
+    /// Verifier scores arrive *after* the rollout's AssistantText for
+    /// the same iteration, never before. This is the key ordering
+    /// guarantee callers rely on (you can't score text you haven't
+    /// seen).
+    #[tokio::test]
+    async fn stream_verifier_scores_arrive_after_assistant_text() {
+        let provider =
+            Arc::new(FakeProvider::new("fake:p", vec![assistant("rollout body")]).with_repeat());
+        let mcts = AbMcts::builder()
+            .provider(provider)
+            .verifier(Arc::new(AlwaysScore(0.42)))
+            .max_iterations(2)
+            .max_steps_per_rollout(1)
+            .min_confidence(0.95)
+            .build()
+            .unwrap();
+
+        let mut stream = mcts
+            .stream(&Principal::anonymous(), OrchInput::from_user("hi"))
+            .await;
+
+        // For each iteration, track the indices of the AssistantText
+        // and VerifierScore. The score's position must be > the
+        // text's position (and adjacent in this fixture).
+        let mut text_idx_by_step: std::collections::HashMap<u32, usize> =
+            std::collections::HashMap::new();
+        let mut score_idx_by_step: std::collections::HashMap<u32, usize> =
+            std::collections::HashMap::new();
+        let mut idx = 0usize;
+        while let Some(ev) = stream.next().await {
+            match ev.unwrap() {
+                OrchEvent::AssistantText { step, .. } => {
+                    text_idx_by_step.insert(step, idx);
+                }
+                OrchEvent::VerifierScore { step, .. } => {
+                    score_idx_by_step.insert(step, idx);
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+        for step in 0..2u32 {
+            let ti = text_idx_by_step[&step];
+            let si = score_idx_by_step[&step];
+            assert!(si > ti, "step {step}: score at {si} not after text at {ti}");
+        }
+    }
+
+    /// `min_confidence` early-stop must end the stream after the
+    /// rollout that crosses the threshold — emitting exactly one
+    /// Final right after that rollout's VerifierScore.
+    #[tokio::test]
+    async fn stream_early_stops_on_min_confidence() {
+        let provider =
+            Arc::new(FakeProvider::new("fake:p", vec![assistant("good enough")]).with_repeat());
+        let mcts = AbMcts::builder()
+            .provider(provider.clone())
+            .verifier(Arc::new(AlwaysScore(0.99)))
+            .max_iterations(10)
+            .max_steps_per_rollout(1)
+            .min_confidence(0.5)
+            .build()
+            .unwrap();
+
+        let mut stream = mcts
+            .stream(&Principal::anonymous(), OrchInput::from_user("go"))
+            .await;
+
+        let mut events: Vec<OrchEvent> = Vec::new();
+        while let Some(ev) = stream.next().await {
+            events.push(ev.unwrap());
+        }
+
+        // First-iteration triple + terminal Final = 4 events. The
+        // remaining 9 iterations of max_iterations=10 are skipped
+        // because score=0.99 ≥ min_confidence=0.5 on iteration 0.
+        assert_eq!(
+            events.len(),
+            4,
+            "expected early-stop after one rollout: {events:?}"
+        );
+        assert!(matches!(events.last(), Some(OrchEvent::Final { .. })));
+        // Provider was called exactly once.
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    }
+}

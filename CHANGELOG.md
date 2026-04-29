@@ -59,6 +59,34 @@ Plan: [PLAN_PHASE8.md](PLAN_PHASE8.md). In progress.
   - No Python facade change required (the field is pure data
     inside the bundle JSON; serde handles it transparently).
 
+- **Native `AbMcts::stream` implementation** (Phase 8.B): replaces
+  the Phase 4 stub at `crates/tako-orchestrator/src/ab_mcts.rs:
+  315-327` (the only orchestrator's `stream` method that was still
+  returning a placeholder error).
+  - Per iteration, the stream emits exactly:
+    1. `OrchEvent::StepStart { step: iteration }`
+    2. `OrchEvent::AssistantText { step, delta: rollout_text }`
+       carrying the rollout's full text as a single delta. Per-token
+       streaming inside a multi-step rollout is deferred — would
+       require threading `provider.stream()` through the in-rollout
+       tool-call loop, which is non-trivial and out of scope.
+    3. `OrchEvent::VerifierScore { step, branch, score }` (variant
+       added in 8.A) carrying the leaf's branch index and verifier
+       score on `[0, 1]`.
+  - `min_confidence` early-stop short-circuits the loop after the
+    rollout that crosses the threshold. The stream terminates with
+    exactly one `OrchEvent::Final` constructed from the
+    highest-scored leaf, matching `run`'s return value.
+  - Refactor: the existing rollout body lifts out of
+    `AbMcts::rollout` into a free `rollout_static` function so
+    `run` and `stream` share the same simulation loop.
+  - 3 new Rust tests in
+    `crates/tako-orchestrator/tests/ab_mcts.rs::stream`: 10-event
+    happy-path round-trip with `AlwaysScore(0.5)`,
+    text-before-score ordering invariant across iterations, and
+    `min_confidence` early-stop yielding exactly 4 events
+    (StepStart + AssistantText + VerifierScore + Final).
+
 - **Streaming-aware `ConfidenceGuard`** (Phase 8.D): the
   trait at `tako_core::ConfidenceGuard` gains a default method
   `evaluate_streaming(&self, principal, partial: &str) ->
