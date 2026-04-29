@@ -310,3 +310,101 @@ async fn single_agent_respects_max_steps() {
     assert_eq!(result.steps, 2);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
 }
+
+// ---------------------------------------------------------------------------
+// Budget wiring (Phase 5.C).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn budget_record_accumulates_usage_across_steps() {
+    use tako_core::Budget;
+    use tako_runtime::{BudgetBackend, BudgetTracker, InMemoryBudgetBackend};
+
+    let backend = Arc::new(InMemoryBudgetBackend::new());
+    let tracker = Arc::new(BudgetTracker::new(
+        Arc::clone(&backend) as Arc<dyn BudgetBackend>,
+        Budget::default(),
+    ));
+
+    let provider = Arc::new(FakeProvider::new(
+        "fake:m1",
+        vec![
+            assistant_tool_call("c1", "echo", json!({"text":"a"})),
+            assistant_text("done"),
+        ],
+    ));
+    let registry = Arc::new(ToolRegistry::new());
+    registry.register_native(Arc::new(EchoTool::new())).await;
+
+    let agent = SingleAgent::builder()
+        .provider(provider.clone())
+        .tools(registry)
+        .max_steps(3)
+        .budget(Arc::clone(&tracker))
+        .build()
+        .unwrap();
+
+    let principal = Principal {
+        tenant_id: "tenant-a".into(),
+        user_id: "user-1".into(),
+        roles: vec![],
+        trace_id: None,
+        metadata: Default::default(),
+    };
+    agent
+        .run(&principal, OrchInput::from_user("hi"))
+        .await
+        .unwrap();
+
+    // Two provider calls — usage from each ChatResponse should land in
+    // the backend keyed by tenant_id.
+    let usage = backend.current_usage("tenant-a").await.unwrap();
+    // FakeProvider's tool-call response has 4+8=12 tokens; the text
+    // response 5+3=8. Total: 20.
+    assert_eq!(usage.tokens_today, 20);
+}
+
+#[tokio::test]
+async fn budget_pre_check_short_circuits_on_request_cap() {
+    use std::collections::BTreeMap;
+    use tako_core::Budget;
+    use tako_runtime::{BudgetBackend, BudgetTracker, InMemoryBudgetBackend};
+
+    // FakeProvider's estimate_cost_usd defaults to 0.0, so per-request
+    // dollar cap won't trip. Use the per-request *token* cap instead —
+    // the orchestrator passes `req.max_tokens` as the pre-check token
+    // estimate, so a `max_tokens=64` request with cap 16 must fail.
+    let backend = Arc::new(InMemoryBudgetBackend::new());
+    let tracker = Arc::new(BudgetTracker::new(
+        Arc::clone(&backend) as Arc<dyn BudgetBackend>,
+        Budget {
+            max_usd_per_request: None,
+            max_tokens_per_request: Some(16),
+            max_usd_per_day: None,
+            max_usd_per_tenant_per_day: BTreeMap::new(),
+        },
+    ));
+
+    let provider = Arc::new(FakeProvider::new(
+        "fake:m1",
+        vec![assistant_text("never reached")],
+    ));
+    let agent = SingleAgent::builder()
+        .provider(provider.clone())
+        .max_steps(2)
+        .max_tokens(64)
+        .budget(Arc::clone(&tracker))
+        .build()
+        .unwrap();
+
+    let result = agent
+        .run(&Principal::anonymous(), OrchInput::from_user("hi"))
+        .await;
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, TakoError::BudgetExhausted(_)),
+        "expected BudgetExhausted, got {err:?}"
+    );
+    // Provider must NOT have been called.
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}

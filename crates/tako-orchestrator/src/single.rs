@@ -14,6 +14,7 @@ use tako_core::{
     ToolCallDelta, Usage,
 };
 use tako_mcp::ToolRegistry;
+use tako_runtime::BudgetTracker;
 use tracing::{Instrument, info_span};
 
 use crate::types::{OrchEvent, OrchInput, OrchOutput};
@@ -39,6 +40,11 @@ pub struct SingleAgent {
     /// Optional policy engine consulted at PreChat / PreTool stages.
     /// `None` is equivalent to AllowAll (zero overhead).
     policy: Option<Arc<dyn PolicyEngine>>,
+    /// Optional budget tracker consulted before each provider call
+    /// (`pre_check`) and after each call (`record`). When `None`, no
+    /// budget enforcement runs and the orchestrator behaves exactly as
+    /// in v0.5.0.
+    budget: Option<Arc<BudgetTracker>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -71,6 +77,7 @@ pub struct SingleAgentBuilder {
     max_steps: Option<u32>,
     defaults: ChatDefaults,
     policy: Option<Arc<dyn PolicyEngine>>,
+    budget: Option<Arc<BudgetTracker>>,
 }
 
 impl std::fmt::Debug for SingleAgentBuilder {
@@ -134,6 +141,17 @@ impl SingleAgentBuilder {
         self
     }
 
+    /// Attach a [`BudgetTracker`]. When set, the orchestrator calls
+    /// `pre_check` before each provider invocation and `record` after,
+    /// using the provider's [`tako_core::LlmProvider::estimate_cost_usd`]
+    /// for both the pre-flight estimate and the post-call cost
+    /// (provider crates do not yet expose actual-rate cost on `Usage`).
+    /// A `BudgetExhausted` error short-circuits the run.
+    pub fn budget(mut self, t: Arc<BudgetTracker>) -> Self {
+        self.budget = Some(t);
+        self
+    }
+
     pub fn build(self) -> Result<SingleAgent, TakoError> {
         Ok(SingleAgent {
             provider: self.provider.ok_or_else(|| {
@@ -145,6 +163,7 @@ impl SingleAgentBuilder {
             max_steps: self.max_steps.unwrap_or(DEFAULT_MAX_STEPS),
             defaults: self.defaults,
             policy: self.policy,
+            budget: self.budget,
         })
     }
 }
@@ -229,6 +248,16 @@ impl Orchestrator for SingleAgent {
                 let model = provider.id().split(':').nth(1).unwrap_or("").to_string();
                 let tool_schemas = self.tools.schemas().await;
                 let req = self.build_request(&model, messages.clone(), tool_schemas);
+
+                // Pre-check: estimate cost + token budget before the call.
+                // Pessimistic; per-provider rates aren't on the trait so
+                // we reuse the same estimate post-call.
+                let estimated_usd = provider.estimate_cost_usd(&req);
+                if let Some(b) = self.budget.as_ref() {
+                    let est_tokens = req.max_tokens.unwrap_or(0);
+                    b.pre_check(principal, estimated_usd, est_tokens).await?;
+                }
+
                 let resp = {
                     let span = info_span!(
                         "tako.provider.chat",
@@ -238,6 +267,9 @@ impl Orchestrator for SingleAgent {
                     );
                     provider.chat(principal, req).instrument(span).await?
                 };
+                if let Some(b) = self.budget.as_ref() {
+                    b.record(principal, estimated_usd, resp.usage).await?;
+                }
                 steps += 1;
                 total_usage.input_tokens = total_usage
                     .input_tokens
@@ -354,6 +386,7 @@ impl Orchestrator for SingleAgent {
         let defaults = self.defaults.clone();
         let max_steps = self.max_steps;
         let principal = principal.clone();
+        let budget = self.budget.clone();
 
         let s = async_stream::try_stream! {
             // Per-step provider spans are emitted inside the loop. We do not
@@ -393,6 +426,13 @@ impl Orchestrator for SingleAgent {
                     stream: provider.capabilities().supports_streaming,
                     metadata: Default::default(),
                 };
+
+                // Budget pre-check before either streaming or buffered call.
+                let estimated_usd = provider.estimate_cost_usd(&req);
+                if let Some(b) = budget.as_ref() {
+                    let est_tokens = req.max_tokens.unwrap_or(0);
+                    b.pre_check(&principal, estimated_usd, est_tokens).await?;
+                }
 
                 let span = info_span!(
                     "tako.provider.chat",
@@ -490,6 +530,9 @@ impl Orchestrator for SingleAgent {
                     (resp.message, resp.finish_reason, resp.usage)
                 };
 
+                if let Some(b) = budget.as_ref() {
+                    b.record(&principal, estimated_usd, step_usage).await?;
+                }
                 steps += 1;
                 total_usage.input_tokens = total_usage
                     .input_tokens
