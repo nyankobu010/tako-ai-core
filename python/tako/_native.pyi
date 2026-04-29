@@ -71,6 +71,18 @@ class AzureOpenAi:
     ) -> None: ...
     def id(self) -> str: ...
 
+class Vertex:
+    def __init__(
+        self,
+        project_id: str,
+        model: str,
+        access_token: str,
+        location: str | None = ...,
+        endpoint_url: str | None = ...,
+        timeout_secs: int | None = ...,
+    ) -> None: ...
+    def id(self) -> str: ...
+
 class Stdio:
     def __init__(self, command: str, args: list[str] | None = ...) -> None: ...
 

@@ -35,4 +35,5 @@ tako-providers-openai       = { workspace = true }
 tako-providers-azure-openai = { workspace = true }
 tako-providers-http-generic = { workspace = true }
 tako-providers-bedrock      = { workspace = true }
+tako-providers-vertex       = { workspace = true }
 tako-compat                 = { workspace = true }
