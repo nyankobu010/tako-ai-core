@@ -91,6 +91,29 @@ class Orchestrator:
         user_id: str | None = ...,
     ) -> str: ...
 
+class Conductor:
+    def __init__(
+        self,
+        coordinator: Any,
+        workers: dict[str, Any],
+        max_steps: int = ...,
+        max_fanout: int = ...,
+        worker_timeout_secs: int = ...,
+        fail_fast: bool = ...,
+    ) -> None: ...
+    def run(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> Awaitable[str]: ...
+    def run_sync(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> str: ...
+
 class Budget:
     def __init__(
         self,

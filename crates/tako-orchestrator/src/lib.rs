@@ -1,8 +1,9 @@
 //! `tako-orchestrator` — orchestration strategies for tako.
 //!
-//! Phase 1 ships [`SingleAgent`]. Conductor / Trinity / AbMcts / SelfCaller
-//! arrive in later phases.
+//! Phase 1 ships [`SingleAgent`]; Phase 2 adds [`Conductor`]. Trinity /
+//! AbMcts / SelfCaller arrive in later phases.
 
+pub mod conductor;
 pub mod single;
 pub mod types;
 
@@ -10,6 +11,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use tako_core::{Principal, TakoError};
 
+pub use conductor::{Conductor, ConductorBuilder, DispatchPlan, WorkerDispatch};
 pub use single::{ChatDefaults, SingleAgent, SingleAgentBuilder};
 pub use types::{OrchEvent, OrchInput, OrchOutput};
 

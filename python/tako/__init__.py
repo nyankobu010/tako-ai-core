@@ -19,13 +19,14 @@ from .models import (
     ToolSchema,
     Usage,
 )
-from .orchestrator import SingleAgent
+from .orchestrator import Conductor, SingleAgent
 
 __all__ = [
     "Budget",
     "ChatRequest",
     "ChatResponse",
     "Client",
+    "Conductor",
     "ContentPart",
     "Message",
     "Role",
