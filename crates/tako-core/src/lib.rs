@@ -14,8 +14,8 @@ pub mod types;
 
 pub use error::{ProviderErrorDetails, TakoError};
 pub use traits::{
-    AlwaysConfident, ConfidenceGuard, ConstantConfidence, LlmProvider, McpTransport, PolicyEngine,
-    Router, Tool,
+    AlwaysConfident, AlwaysScore, ConfidenceGuard, ConstantConfidence, LlmProvider, McpTransport,
+    PolicyEngine, Router, Tool, Verifier,
 };
 pub use types::{
     Budget, BudgetUsage, Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart,
