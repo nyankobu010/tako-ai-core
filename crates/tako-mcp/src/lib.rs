@@ -19,6 +19,8 @@ pub mod transport;
 
 pub use lifecycle::{ClientInfo, MCP_PROTOCOL_VERSION, handshake};
 pub use registry::ToolRegistry;
+#[cfg(feature = "grpc")]
+pub use transport::GrpcTransport;
 #[cfg(feature = "ws")]
 pub use transport::WebSocketTransport;
 pub use transport::{StdioTransport, StreamableHttpBuilder, StreamableHttpTransport};
