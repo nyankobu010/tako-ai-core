@@ -109,7 +109,7 @@ base64                  = "0.22"
 
 # ML inference (Phase 3 Trinity router; OnnxRouter behind `onnx` feature)
 ort                     = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "ndarray"] }
-ndarray                 = "0.16"
+ndarray                 = "0.17"
 
 # RNG (Phase 4 AB-MCTS Thompson sampling)
 rand                    = { version = "0.9", default-features = false, features = ["std", "std_rng", "thread_rng"] }
