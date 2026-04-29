@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tako_core::{
     ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal, Role, TakoError, Usage,
 };
+use tako_runtime::BudgetTracker;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
 use tracing::{Instrument, info_span};
@@ -72,6 +73,11 @@ pub struct Conductor {
     max_fanout: usize,
     worker_timeout: Duration,
     fail_fast: bool,
+    /// Optional budget tracker consulted before each coordinator and
+    /// worker provider call (`pre_check`) and after each call
+    /// (`record`). When `None`, no budget enforcement runs and the
+    /// orchestrator behaves exactly as in v0.6.0.
+    budget: Option<Arc<BudgetTracker>>,
 }
 
 impl std::fmt::Debug for Conductor {
@@ -128,6 +134,7 @@ pub struct ConductorBuilder {
     max_fanout: Option<usize>,
     worker_timeout: Option<Duration>,
     fail_fast: Option<bool>,
+    budget: Option<Arc<BudgetTracker>>,
 }
 
 impl std::fmt::Debug for ConductorBuilder {
@@ -170,6 +177,20 @@ impl ConductorBuilder {
         self
     }
 
+    /// Attach a [`BudgetTracker`]. When set, the orchestrator calls
+    /// `pre_check` before each coordinator and worker provider call,
+    /// and `record` after, using
+    /// [`tako_core::LlmProvider::estimate_cost_usd`] for both the
+    /// pre-flight estimate and post-call cost (provider crates do not
+    /// yet expose actual-rate cost on `Usage`). A `BudgetExhausted`
+    /// error short-circuits the run for the coordinator path; for
+    /// worker paths it is folded into the worker's error outcome and
+    /// then propagated by `fail_fast` if enabled.
+    pub fn budget(mut self, t: Arc<BudgetTracker>) -> Self {
+        self.budget = Some(t);
+        self
+    }
+
     pub fn build(self) -> Result<Conductor, TakoError> {
         Ok(Conductor {
             coordinator: self.coordinator.ok_or_else(|| {
@@ -180,6 +201,7 @@ impl ConductorBuilder {
             max_fanout: self.max_fanout.unwrap_or(DEFAULT_MAX_FANOUT),
             worker_timeout: self.worker_timeout.unwrap_or(DEFAULT_WORKER_TIMEOUT),
             fail_fast: self.fail_fast.unwrap_or(false),
+            budget: self.budget,
         })
     }
 }
@@ -224,6 +246,11 @@ impl Orchestrator for Conductor {
 
             for step in 0..self.max_steps {
                 let req = ChatRequest::new(model.clone(), messages.clone());
+                let estimated_usd = self.coordinator.estimate_cost_usd(&req);
+                if let Some(b) = self.budget.as_ref() {
+                    let est_tokens = req.max_tokens.unwrap_or(0);
+                    b.pre_check(principal, estimated_usd, est_tokens).await?;
+                }
                 let resp = {
                     let span = info_span!(
                         "tako.provider.chat",
@@ -236,6 +263,9 @@ impl Orchestrator for Conductor {
                         .instrument(span)
                         .await?
                 };
+                if let Some(b) = self.budget.as_ref() {
+                    b.record(principal, estimated_usd, resp.usage).await?;
+                }
                 steps += 1;
                 total_usage.input_tokens = total_usage
                     .input_tokens
@@ -290,6 +320,8 @@ impl Orchestrator for Conductor {
                 let results = self
                     .dispatch_workers(principal, plan.dispatch, Arc::clone(&semaphore), step)
                     .await?;
+                // dispatch_workers already drained per-worker pre/record
+                // calls; nothing further to bookkeep here.
 
                 if self.fail_fast {
                     if let Some(err) = results.iter().find_map(|r| r.outcome.as_ref().err()) {
@@ -346,6 +378,7 @@ impl Orchestrator for Conductor {
         let fail_fast = self.fail_fast;
         let principal = principal.clone();
         let system = self.system_prompt();
+        let budget = self.budget.clone();
 
         let s = async_stream::try_stream! {
             let mut messages: Vec<Message> = Vec::new();
@@ -365,6 +398,11 @@ impl Orchestrator for Conductor {
                 yield OrchEvent::StepStart { step };
 
                 let req = ChatRequest::new(model.clone(), messages.clone());
+                let estimated_usd = coordinator.estimate_cost_usd(&req);
+                if let Some(b) = budget.as_ref() {
+                    let est_tokens = req.max_tokens.unwrap_or(0);
+                    b.pre_check(&principal, estimated_usd, est_tokens).await?;
+                }
                 let span = info_span!(
                     "tako.provider.chat",
                     "tako.provider.id" = %coord_id,
@@ -375,6 +413,9 @@ impl Orchestrator for Conductor {
                     .chat(&principal, req)
                     .instrument(span)
                     .await?;
+                if let Some(b) = budget.as_ref() {
+                    b.record(&principal, estimated_usd, resp.usage).await?;
+                }
                 steps += 1;
                 total_usage.input_tokens = total_usage
                     .input_tokens
@@ -451,6 +492,7 @@ impl Orchestrator for Conductor {
                     Arc::clone(&semaphore),
                     step,
                     worker_timeout,
+                    budget.clone(),
                 )
                 .await;
 
@@ -533,6 +575,7 @@ impl Conductor {
             sem,
             step,
             self.worker_timeout,
+            self.budget.clone(),
         )
         .await)
     }
@@ -548,6 +591,7 @@ async fn dispatch_workers_static(
     sem: Arc<Semaphore>,
     step: u32,
     timeout_dur: Duration,
+    budget: Option<Arc<BudgetTracker>>,
 ) -> Vec<WorkerResult> {
     let mut handles = Vec::with_capacity(plan.len());
     for d in plan {
@@ -571,6 +615,7 @@ async fn dispatch_workers_static(
         );
         let task_text = d.task.clone();
         let worker_name = d.worker.clone();
+        let budget = budget.clone();
         handles.push(tokio::spawn(
             async move {
                 let _permit = match sem.acquire_owned().await {
@@ -585,17 +630,41 @@ async fn dispatch_workers_static(
                 };
                 let model = provider.id().split(':').nth(1).unwrap_or("").to_string();
                 let req = ChatRequest::new(model, vec![Message::user(&task_text)]);
+                let estimated_usd = provider.estimate_cost_usd(&req);
+                if let Some(b) = budget.as_ref() {
+                    let est_tokens = req.max_tokens.unwrap_or(0);
+                    if let Err(e) = b.pre_check(&principal, estimated_usd, est_tokens).await {
+                        return WorkerResult {
+                            name: worker_name,
+                            task: task_text,
+                            outcome: Err(e.to_string()),
+                        };
+                    }
+                }
                 let outcome = match timeout(timeout_dur, provider.chat(&principal, req)).await {
-                    Ok(Ok(resp)) => match resp.finish_reason {
-                        FinishReason::Stop | FinishReason::ToolCalls => Ok(resp
-                            .message
-                            .content
-                            .iter()
-                            .filter_map(ContentPart::as_text)
-                            .collect::<Vec<_>>()
-                            .join("")),
-                        other => Err(format!("worker finished with unexpected reason: {other:?}")),
-                    },
+                    Ok(Ok(resp)) => {
+                        if let Some(b) = budget.as_ref() {
+                            if let Err(e) = b.record(&principal, estimated_usd, resp.usage).await {
+                                return WorkerResult {
+                                    name: worker_name,
+                                    task: task_text,
+                                    outcome: Err(e.to_string()),
+                                };
+                            }
+                        }
+                        match resp.finish_reason {
+                            FinishReason::Stop | FinishReason::ToolCalls => Ok(resp
+                                .message
+                                .content
+                                .iter()
+                                .filter_map(ContentPart::as_text)
+                                .collect::<Vec<_>>()
+                                .join("")),
+                            other => {
+                                Err(format!("worker finished with unexpected reason: {other:?}"))
+                            }
+                        }
+                    }
                     Ok(Err(e)) => Err(e.to_string()),
                     Err(_) => Err(format!("worker timed out after {:?}", timeout_dur)),
                 };
