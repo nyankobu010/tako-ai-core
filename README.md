@@ -85,23 +85,23 @@ result = orch.run_sync("Quick question: ...")
 
 ## Feature matrix
 
-| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 |
-|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|
-| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | |
-| OpenAI-compat HTTP server          |         | ✅      |         |         |         |
-| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |
-| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |
-| `Conductor` orchestrator           |         | ✅      |         |         |         |
-| `Trinity` learned router           |         |         | ✅      |         |         |
-| `SelfCaller` recursion             |         |         | ✅      |         |         |
-| `AbMcts` tree search               |         |         |         | ✅      |         |
-| OPA / Rego policy enforcement      |         | ✅      |         |         |         |
-| PII / DLP redaction                | ✅      |         |         |         |         |
-| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |
-| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ orchestrator wiring |
-| Circuit breakers + rate limits     | ✅      |         |         |         |         |
-| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless |
-| Sync + async dual API              | ✅      |         |         |         |         |
+| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 |
+|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|
+| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | |
+| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |
+| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |
+| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |
+| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |
+| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |
+| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget |
+| `AbMcts` tree search               |         |         |         | ✅      |         |         |
+| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |
+| PII / DLP redaction                | ✅      |         |         |         |         |         |
+| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |
+| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge |
+| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |
+| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET |
+| Sync + async dual API              | ✅      |         |         |         |         |         |
 
 ## Roadmap
 
@@ -122,6 +122,10 @@ result = orch.run_sync("Quick question: ...")
   verifier (Fulcio leaf cert + identity policy), gRPC MCP mTLS, and
   `BudgetTracker` orchestrator wiring through `tako.SingleAgent` /
   `tako.Client`.
+- **Phase 6 — Production hardening, continued** *(done, v0.7.0)*:
+  `BudgetTracker` wired through `tako.Conductor`, `tako.Trinity`, and
+  `tako.guards.LlmJudge`; `KeylessVerifier` extended with operator-pinned
+  chain-of-trust validation (`TrustRoot`) and Rekor SET verification.
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 

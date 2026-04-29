@@ -20,12 +20,17 @@
 >   (leaf cert + identity policy), gRPC mTLS (custom CAs + client
 >   certs), and `BudgetTracker` wiring through `SingleAgent` /
 >   `tako.Client`. See [PLAN_PHASE5.md](PLAN_PHASE5.md) and `## [0.6.0]`.
+> - Phase 6 (production hardening, continued, v0.7.0) — `BudgetTracker`
+>   wired into `Conductor`, `Trinity`, and `LlmJudgeGuard`; Sigstore
+>   `KeylessVerifier` extended with chain-of-trust validation
+>   (`TrustRoot`) and Rekor SET verification. See
+>   [PLAN_PHASE6.md](PLAN_PHASE6.md) and `## [0.7.0]`.
 >
-> **Next**: Phase 6. Unscoped at the time of writing. Likely candidates:
-> Conductor / Trinity / SelfCaller budget wiring (mirror Phase 5.C);
-> Sigstore chain-of-trust + Rekor SET (extend Phase 5.A); Trinity
-> streaming (Phase 3 carry-over). Open a fresh `PLAN_PHASE6.md` before
-> writing code.
+> **Next**: Phase 7. Unscoped at the time of writing. Likely candidates:
+> Rekor inclusion-proof (Merkle proof) verification, extending Phase 6.E;
+> `SelfCaller::stream` native implementation (Phase 4 stub); cosign
+> protobuf-bundle → `KeylessBundle` adapter; AB-MCTS native streaming.
+> Open a fresh `PLAN_PHASE7.md` before writing code.
 
 ## Phase 1: Foundation
 

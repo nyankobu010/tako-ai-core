@@ -9,6 +9,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.7.0] - 2026-04-29
+
+Phase 6 — production hardening, continued. Closes the two follow-ups
+flagged in `## [0.6.0]`'s release notes:
+
+### Added
+
+- **`BudgetTracker` wired into `Conductor`, `Trinity`, and
+  `LlmJudgeGuard`** (Phase 6.A / 6.B / 6.C): mirrors the v0.6.0
+  `SingleAgent` pattern across the remaining provider-call sites.
+  - `Conductor::builder().budget(Arc<BudgetTracker>)` instruments
+    every coordinator call and every fan-out worker call: each worker
+    task runs `pre_check` → `chat` → `record` independently. A
+    `BudgetExhausted` from a worker collapses into the worker's
+    error outcome and is then surfaced via `fail_fast` if enabled.
+  - `Trinity::builder().budget(Arc<BudgetTracker>)` instruments the
+    chosen role's chat call in `run` and both the streaming and
+    non-streaming paths in `stream`.
+  - `LlmJudgeGuard::with_budget(Arc<BudgetTracker>)` instruments the
+    judge's own provider call so a `SelfCaller` paired with an
+    `LlmJudgeGuard` meters confidence-evaluation usage independently
+    of the inner orchestrator's regular execution. `SelfCaller`
+    itself does not grow a budget field — its `inner` orchestrator
+    already carries one and direct provider calls live only in the
+    guard.
+  - PyO3: `tako._native.{Conductor, Trinity, LlmJudgeGuard}.__init__`
+    gains `budget=` and `budget_backend=` kwargs, all routed through
+    `crate::py_runtime::extract_budget_backend`. Same kwargs plumbed
+    through to the Python facade in `tako.{Conductor, Trinity}` and
+    `tako.guards.LlmJudge`.
+  - 6 new Rust tests (3 conductor, 2 trinity, 1 self-caller) +
+    3 new Python smoke tests
+    (`test_phase6_budget_{conductor,trinity,judge}.py`).
+  - New example `examples/19_budget_fanout.py` demonstrating budget
+    tracking across a Conductor's coordinator + worker fan-out.
+
+- **Sigstore `KeylessVerifier` chain-of-trust + Rekor SET**
+  (Phase 6.D / 6.E):
+  - New `tako_governance::sigstore::TrustRoot` struct, loadable
+    from concatenated PEM blocks (`from_pem`) or filesystem paths
+    (`from_paths`). Holds operator-pinned root + intermediate
+    certificates as `Vec<x509_cert::Certificate>`.
+  - `KeylessVerifier::with_trust_root(TrustRoot) -> Self` extends
+    the v0.6.0 leaf-cert + identity-policy check with a
+    chain-of-trust walk: each cert in the bundle's new
+    `chain_pem` field is signature-validated against its issuer,
+    `notBefore` / `notAfter` are checked, and the chain must
+    terminate at one of the pinned roots (max 16 hops).
+  - `KeylessBundle` gains two backwards-compatible fields:
+    `chain_pem: Option<String>` (intermediate certs) and
+    `rekor: Option<RekorEntry>` (transparency-log entry +
+    SET-signed metadata). Both serde-default to `None`, so v0.6.0
+    bundles deserialize unchanged.
+  - `KeylessVerifier::with_rekor_key(&[u8]) -> Result<Self>` pins
+    the Rekor public-good ECDSA-P256 key. When set and the bundle
+    carries a `rekor` field, `verify_bundle` reconstructs the
+    canonical entry JSON (sorted keys, no whitespace) and verifies
+    the SET. Inclusion-proof (Merkle) verification is intentionally
+    deferred to Phase 7.
+  - PyO3: new `tako._native.TrustRoot` pyclass; extended
+    `tako._native.KeylessVerifier` with `trust_root=` and
+    `rekor_public_key_pem=` kwargs. Python facade adds
+    `tako.sigstore.TrustRoot` and the matching kwargs on
+    `tako.sigstore.KeylessVerifier`.
+  - 4 new Rust tests (2 chain validation cases, 2 Rekor SET cases)
+    + 2 new Python smoke tests in
+    `tests/python/test_phase6_sigstore_chain.py`.
+  - New example `examples/20_sigstore_full_chain.py` running the
+    full identity + chain + Rekor pipeline against runtime-minted
+    fixtures.
+
+- Implementation uses existing deps (`x509-cert`,
+  `sigstore::crypto::CosignVerificationKey`); the `sigstore` crate's
+  heavy `verify` feature (with `webbrowser` + `openidconnect`) stays
+  out of the dep tree.
+
+### Notes
+
+- `SelfCaller::stream` remains stubbed (Phase 4 carry-over). Native
+  streaming is tracked for Phase 7.
+- Rekor inclusion-proof (Merkle proof against the log root) is
+  intentionally out of scope for v0.7.0. The `RekorEntry` JSON shape
+  is forward-compatible with an added `inclusion_proof` field.
+- A `cosign-bundle.json → KeylessBundle` shim is still tracked for a
+  future ergonomics pass.
+
 ## [0.6.0] - 2026-04-29
 
 Phase 5 — production hardening. Closes the three explicit follow-ups
