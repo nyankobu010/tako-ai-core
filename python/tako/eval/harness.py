@@ -89,18 +89,35 @@ def load_jsonl(path: str | Path, *, name: str | None = None) -> Dataset:
     return Dataset(name=name or p.stem, tasks=tasks)
 
 
-def load_dataset(name: str) -> Dataset:
-    """Load a built-in dataset by short name. ``"synthetic"`` is the
-    only one shipped in Phase 3; other names raise ``NotImplementedError``."""
+def load_dataset(name: str, *, limit: int | None = None) -> Dataset:
+    """Load a built-in dataset by short name.
+
+    Built-in names:
+    - ``"synthetic"`` — 10-task in-tree dataset (math + factual + code).
+    - ``"swe_bench_lite"`` — princeton-nlp/SWE-bench_Lite, fetched
+      on-demand from Hugging Face. Requires ``pip install tako[eval]``.
+    - ``"gpqa_diamond"`` — Idavidrein/gpqa (DIAMOND split). Requires
+      ``pip install tako[eval]``.
+
+    ``limit`` truncates the task list (useful for smoke runs).
+    """
 
     if name == "synthetic":
-        return load_synthetic()
-    if name in {"swe_bench_lite", "gpqa_diamond"}:
-        raise NotImplementedError(
-            f"{name!r}: external dataset loaders are Phase 4 work. "
-            "See PLAN_PHASE3.md for the deferral list."
-        )
-    raise ValueError(f"unknown dataset {name!r}")
+        ds = load_synthetic()
+    elif name == "swe_bench_lite":
+        from .datasets.external import load_swe_bench_lite
+
+        ds = load_swe_bench_lite(limit=limit)
+    elif name == "gpqa_diamond":
+        from .datasets.external import load_gpqa_diamond
+
+        ds = load_gpqa_diamond(limit=limit)
+    else:
+        raise ValueError(f"unknown dataset {name!r}")
+
+    if limit is not None and name == "synthetic":
+        ds = Dataset(name=ds.name, tasks=ds.tasks[:limit])
+    return ds
 
 
 # An async callable that maps prompt → output text. Decouples the eval
