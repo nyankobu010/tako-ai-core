@@ -1,0 +1,30 @@
+[package]
+name         = "tako-providers-ollama"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Ollama local-runner provider for tako (NDJSON streaming over /api/chat)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tokio-util         = { workspace = true, features = ["io"] }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+reqwest            = { workspace = true }
+url                = { workspace = true }
+bytes              = { workspace = true }
+async-stream       = "0.3"
+
+[dev-dependencies]
+wiremock           = { workspace = true }
+tokio              = { workspace = true, features = ["full"] }
