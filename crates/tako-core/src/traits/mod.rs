@@ -7,6 +7,7 @@ pub mod policy;
 pub mod provider;
 pub mod router;
 pub mod tool;
+pub mod verifier;
 
 pub use confidence::{AlwaysConfident, ConfidenceGuard, ConstantConfidence};
 pub use mcp::McpTransport;
@@ -14,3 +15,4 @@ pub use policy::PolicyEngine;
 pub use provider::LlmProvider;
 pub use router::Router;
 pub use tool::Tool;
+pub use verifier::{AlwaysScore, Verifier};
