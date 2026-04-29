@@ -10,8 +10,8 @@ use futures::stream::BoxStream;
 use serde_json::json;
 use tako_compat::{ServeConfig, StaticTokens, serve_openai};
 use tako_core::{
-    Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message, Principal, TakoError,
-    Usage,
+    Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message,
+    Principal, TakoError, Usage,
 };
 use tako_orchestrator::SingleAgent;
 
@@ -53,7 +53,11 @@ impl LlmProvider for FakeProvider {
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
-    async fn chat(&self, _principal: &Principal, _req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        _principal: &Principal,
+        _req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.responses
             .lock()
@@ -80,10 +84,7 @@ async fn boot_server() -> (std::net::SocketAddr, Arc<FakeProvider>) {
             .unwrap(),
     );
 
-    let auth = Arc::new(
-        StaticTokens::new()
-            .with("test-token", Principal::new("acme", "alice")),
-    );
+    let auth = Arc::new(StaticTokens::new().with("test-token", Principal::new("acme", "alice")));
 
     let (addr, _handle) = serve_openai(
         agent,
@@ -118,7 +119,10 @@ async fn chat_completions_round_trip() {
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["object"], "chat.completion");
     assert_eq!(json["choices"][0]["message"]["role"], "assistant");
-    assert_eq!(json["choices"][0]["message"]["content"], "hello from compat");
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "hello from compat"
+    );
     assert_eq!(json["choices"][0]["finish_reason"], "stop");
     assert_eq!(json["usage"]["prompt_tokens"], 5);
     assert_eq!(json["usage"]["completion_tokens"], 3);

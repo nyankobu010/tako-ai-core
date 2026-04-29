@@ -12,8 +12,9 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde_json::json;
 use tako_core::{
-    Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, LlmProvider, Message, PolicyContext,
-    PolicyDecision, PolicyEngine, PolicyStage, Principal, Role, TakoError, Tool, ToolSchema, Usage,
+    Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, LlmProvider,
+    Message, PolicyContext, PolicyDecision, PolicyEngine, PolicyStage, Principal, Role, TakoError,
+    Tool, ToolSchema, Usage,
 };
 use tako_governance::{AuditLog, OpaBundle};
 use tako_mcp::ToolRegistry;
@@ -57,7 +58,11 @@ impl LlmProvider for FakeProvider {
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
-    async fn chat(&self, _principal: &Principal, _req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        _principal: &Principal,
+        _req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.responses
             .lock()
@@ -103,7 +108,11 @@ impl Tool for ShellExecTool {
     fn schema(&self) -> &ToolSchema {
         &self.schema
     }
-    async fn invoke(&self, _principal: &Principal, _args: serde_json::Value) -> Result<serde_json::Value, TakoError> {
+    async fn invoke(
+        &self,
+        _principal: &Principal,
+        _args: serde_json::Value,
+    ) -> Result<serde_json::Value, TakoError> {
         // If we get here, the policy let the call through.
         Ok(json!({"status": "ran"}))
     }
@@ -117,7 +126,11 @@ struct AuditingPolicy {
 
 #[async_trait]
 impl PolicyEngine for AuditingPolicy {
-    async fn evaluate(&self, principal: &Principal, ctx: PolicyContext) -> Result<PolicyDecision, TakoError> {
+    async fn evaluate(
+        &self,
+        principal: &Principal,
+        ctx: PolicyContext,
+    ) -> Result<PolicyDecision, TakoError> {
         let decision = self.inner.evaluate(principal, ctx.clone()).await?;
         self.audit.record(principal, &ctx, &decision).await;
         Ok(decision)
@@ -144,10 +157,16 @@ fn assistant_tool_call(id: &str, name: &str, args: serde_json::Value) -> ChatRes
 async fn opa_blocks_forbidden_tool_with_audit_record() {
     let provider = Arc::new(FakeProvider::new(
         "fake:m1",
-        vec![assistant_tool_call("call_1", "shell.exec", json!({"cmd": "ls"}))],
+        vec![assistant_tool_call(
+            "call_1",
+            "shell.exec",
+            json!({"cmd": "ls"}),
+        )],
     ));
     let registry = Arc::new(ToolRegistry::new());
-    registry.register_native(Arc::new(ShellExecTool::new())).await;
+    registry
+        .register_native(Arc::new(ShellExecTool::new()))
+        .await;
 
     let bundle = OpaBundle::from_string("pre_tool.rego", POLICY);
     let (audit, buf) = AuditLog::in_memory();
@@ -206,7 +225,9 @@ async fn opa_allows_admin_through() {
         ],
     ));
     let registry = Arc::new(ToolRegistry::new());
-    registry.register_native(Arc::new(ShellExecTool::new())).await;
+    registry
+        .register_native(Arc::new(ShellExecTool::new()))
+        .await;
 
     let bundle = OpaBundle::from_string("pre_tool.rego", POLICY);
     let agent = SingleAgent::builder()

@@ -10,7 +10,8 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde_json::json;
 use tako_core::{
-    Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message, Principal, TakoError, Usage,
+    Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message,
+    Principal, TakoError, Usage,
 };
 use tako_orchestrator::{Conductor, OrchInput, Orchestrator};
 
@@ -48,16 +49,18 @@ impl LlmProvider for FakeProvider {
     fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
-    async fn chat(&self, _principal: &Principal, _req: ChatRequest) -> Result<ChatResponse, TakoError> {
+    async fn chat(
+        &self,
+        _principal: &Principal,
+        _req: ChatRequest,
+    ) -> Result<ChatResponse, TakoError> {
         if !self.delay.is_zero() {
             tokio::time::sleep(self.delay).await;
         }
         self.calls.fetch_add(1, Ordering::SeqCst);
-        self.responses
-            .lock()
-            .await
-            .pop_front()
-            .ok_or_else(|| TakoError::Invalid(format!("FakeProvider({}): out of responses", self.id)))
+        self.responses.lock().await.pop_front().ok_or_else(|| {
+            TakoError::Invalid(format!("FakeProvider({}): out of responses", self.id))
+        })
     }
     async fn stream(
         &self,
@@ -109,10 +112,7 @@ async fn conductor_dispatches_two_workers_and_halts() {
         "fake:code",
         vec![assistant_text("fn fib(n: u32) -> u32 { ... }")],
     ));
-    let math = Arc::new(FakeProvider::new(
-        "fake:math",
-        vec![assistant_text("OK")],
-    ));
+    let math = Arc::new(FakeProvider::new("fake:math", vec![assistant_text("OK")]));
 
     let cond = Conductor::builder()
         .coordinator(coordinator.clone())
@@ -123,7 +123,10 @@ async fn conductor_dispatches_two_workers_and_halts() {
         .unwrap();
 
     let result = cond
-        .run(&Principal::anonymous(), OrchInput::from_user("plan + verify"))
+        .run(
+            &Principal::anonymous(),
+            OrchInput::from_user("plan + verify"),
+        )
         .await
         .unwrap();
     assert_eq!(result.text, "All good.");
@@ -213,10 +216,7 @@ async fn conductor_fail_fast_aborts_on_unknown_worker() {
 async fn conductor_recovers_from_malformed_coordinator_json() {
     let coordinator = Arc::new(FakeProvider::new(
         "fake:coord",
-        vec![
-            assistant_text("not json at all"),
-            coord_halt("recovered"),
-        ],
+        vec![assistant_text("not json at all"), coord_halt("recovered")],
     ));
     let cond = Conductor::builder()
         .coordinator(coordinator.clone())
@@ -237,10 +237,7 @@ async fn conductor_max_steps_caps_loop() {
     // Coordinator never halts; max_steps caps it.
     let coordinator = Arc::new(FakeProvider::new(
         "fake:coord",
-        vec![
-            coord_dispatch(&[("w", "a")]),
-            coord_dispatch(&[("w", "b")]),
-        ],
+        vec![coord_dispatch(&[("w", "a")]), coord_dispatch(&[("w", "b")])],
     ));
     let worker = Arc::new(FakeProvider::new(
         "fake:worker",
@@ -280,7 +277,8 @@ async fn conductor_halt_with_no_workers_registered() {
 #[test]
 fn dispatch_plan_strips_markdown_fence() {
     use tako_orchestrator::DispatchPlan;
-    let raw = "```json\n{\"thought\":\"hi\",\"dispatch\":[],\"halt\":true,\"final_answer\":\"x\"}\n```";
+    let raw =
+        "```json\n{\"thought\":\"hi\",\"dispatch\":[],\"halt\":true,\"final_answer\":\"x\"}\n```";
     // Re-implement the strip locally to avoid exposing the parser.
     let trimmed = raw.trim();
     let stripped = if let Some(rest) = trimmed.strip_prefix("```json") {

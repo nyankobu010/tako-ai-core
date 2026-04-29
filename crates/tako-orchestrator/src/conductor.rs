@@ -172,9 +172,9 @@ impl ConductorBuilder {
 
     pub fn build(self) -> Result<Conductor, TakoError> {
         Ok(Conductor {
-            coordinator: self
-                .coordinator
-                .ok_or_else(|| TakoError::Invalid("ConductorBuilder: coordinator is required".into()))?,
+            coordinator: self.coordinator.ok_or_else(|| {
+                TakoError::Invalid("ConductorBuilder: coordinator is required".into())
+            })?,
             workers: self.workers,
             max_steps: self.max_steps.unwrap_or(DEFAULT_MAX_STEPS),
             max_fanout: self.max_fanout.unwrap_or(DEFAULT_MAX_FANOUT),
@@ -231,13 +231,18 @@ impl Orchestrator for Conductor {
                         "tako.orchestrator.step" = step,
                         "tako.orchestrator.role" = "coordinator",
                     );
-                    self.coordinator.chat(principal, req).instrument(span).await?
+                    self.coordinator
+                        .chat(principal, req)
+                        .instrument(span)
+                        .await?
                 };
                 steps += 1;
-                total_usage.input_tokens =
-                    total_usage.input_tokens.saturating_add(resp.usage.input_tokens);
-                total_usage.output_tokens =
-                    total_usage.output_tokens.saturating_add(resp.usage.output_tokens);
+                total_usage.input_tokens = total_usage
+                    .input_tokens
+                    .saturating_add(resp.usage.input_tokens);
+                total_usage.output_tokens = total_usage
+                    .output_tokens
+                    .saturating_add(resp.usage.output_tokens);
 
                 let raw_text = resp
                     .message
@@ -310,7 +315,12 @@ impl Orchestrator for Conductor {
                 .iter()
                 .rev()
                 .find(|m| matches!(m.role, Role::Assistant))
-                .and_then(|m| m.content.iter().find_map(ContentPart::as_text).map(str::to_owned))
+                .and_then(|m| {
+                    m.content
+                        .iter()
+                        .find_map(ContentPart::as_text)
+                        .map(str::to_owned)
+                })
                 .unwrap_or_default();
             Ok(OrchOutput {
                 text: last_text.clone(),
@@ -329,7 +339,9 @@ impl Orchestrator for Conductor {
         _input: OrchInput,
     ) -> BoxStream<'static, Result<OrchEvent, TakoError>> {
         Box::pin(futures::stream::once(async {
-            Err(TakoError::Invalid("Conductor streaming is Phase 2.5".into()))
+            Err(TakoError::Invalid(
+                "Conductor streaming is Phase 2.5".into(),
+            ))
         }))
     }
 }
@@ -388,7 +400,9 @@ impl Conductor {
                                 .filter_map(ContentPart::as_text)
                                 .collect::<Vec<_>>()
                                 .join("")),
-                            other => Err(format!("worker finished with unexpected reason: {other:?}")),
+                            other => {
+                                Err(format!("worker finished with unexpected reason: {other:?}"))
+                            }
                         },
                         Ok(Err(e)) => Err(e.to_string()),
                         Err(_) => Err(format!("worker timed out after {:?}", timeout_dur)),

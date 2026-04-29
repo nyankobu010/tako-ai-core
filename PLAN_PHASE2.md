@@ -1,10 +1,11 @@
 # PLAN — Phase 2 (with bundled Phase 1.5)
 
-> Successor to [PLAN.md](PLAN.md). Phase 1 has landed. This document
-> covers the next milestone: Phase 1.5 Python-parity follow-ups,
-> followed by the four Phase 2 features the user picked as MUST-LAND.
-> Everything else from spec §18 Phase 2 is explicitly deferred to
-> Phase 2.5.
+> **Status: complete (v0.2.0, 2026-04-29).** All four MUST-LAND
+> deliverables landed plus the three bundled Phase 1.5 follow-ups.
+> See [CHANGELOG.md](CHANGELOG.md) `## [0.2.0]` for the full list.
+>
+> Successor to [PLAN.md](PLAN.md). Everything from spec §18 Phase 2
+> not covered here is deferred to Phase 2.5.
 
 ## Context
 

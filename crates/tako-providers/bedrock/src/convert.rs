@@ -4,7 +4,8 @@ use aws_sdk_bedrockruntime::primitives::Blob;
 use aws_sdk_bedrockruntime::types as br;
 use aws_smithy_types::{Document, Number};
 use tako_core::{
-    ChatRequest, ChatResponse, ContentPart, FinishReason, Message, Role, TakoError, ToolSchema, Usage,
+    ChatRequest, ChatResponse, ContentPart, FinishReason, Message, Role, TakoError, ToolSchema,
+    Usage,
 };
 
 /// Build the inputs to a Bedrock `Converse` request:
@@ -51,21 +52,22 @@ pub fn to_converse_inputs(req: &ChatRequest) -> Result<ConverseInputs, TakoError
         }
     }
 
-    let inference_config = if req.temperature.is_some() || req.max_tokens.is_some() || !req.stop.is_empty() {
-        let mut cfg = br::InferenceConfiguration::builder();
-        if let Some(t) = req.temperature {
-            cfg = cfg.temperature(t);
-        }
-        if let Some(m) = req.max_tokens {
-            cfg = cfg.max_tokens(i32::try_from(m).unwrap_or(i32::MAX));
-        }
-        if !req.stop.is_empty() {
-            cfg = cfg.set_stop_sequences(Some(req.stop.clone()));
-        }
-        Some(cfg.build())
-    } else {
-        None
-    };
+    let inference_config =
+        if req.temperature.is_some() || req.max_tokens.is_some() || !req.stop.is_empty() {
+            let mut cfg = br::InferenceConfiguration::builder();
+            if let Some(t) = req.temperature {
+                cfg = cfg.temperature(t);
+            }
+            if let Some(m) = req.max_tokens {
+                cfg = cfg.max_tokens(i32::try_from(m).unwrap_or(i32::MAX));
+            }
+            if !req.stop.is_empty() {
+                cfg = cfg.set_stop_sequences(Some(req.stop.clone()));
+            }
+            Some(cfg.build())
+        } else {
+            None
+        };
 
     let tool_config = if req.tools.is_empty() {
         None
@@ -118,7 +120,9 @@ fn json_to_document(value: &serde_json::Value) -> Document {
             }
         }
         serde_json::Value::String(s) => Document::String(s.clone()),
-        serde_json::Value::Array(arr) => Document::Array(arr.iter().map(json_to_document).collect()),
+        serde_json::Value::Array(arr) => {
+            Document::Array(arr.iter().map(json_to_document).collect())
+        }
         serde_json::Value::Object(map) => Document::Object(
             map.iter()
                 .map(|(k, v)| (k.clone(), json_to_document(v)))
@@ -136,7 +140,9 @@ fn document_to_json(doc: &Document) -> serde_json::Value {
         Document::Number(n) => match n {
             Number::PosInt(u) => Value::Number((*u).into()),
             Number::NegInt(i) => Value::Number((*i).into()),
-            Number::Float(f) => serde_json::Number::from_f64(*f).map(Value::Number).unwrap_or(Value::Null),
+            Number::Float(f) => serde_json::Number::from_f64(*f)
+                .map(Value::Number)
+                .unwrap_or(Value::Null),
         },
         Document::String(s) => Value::String(s.clone()),
         Document::Array(arr) => Value::Array(arr.iter().map(document_to_json).collect()),
@@ -168,7 +174,11 @@ fn content_to_blocks(parts: &[ContentPart]) -> Result<Vec<br::ContentBlock>, Tak
                     .map_err(|e| TakoError::Invalid(format!("Bedrock ToolUseBlock build: {e}")))?;
                 out.push(br::ContentBlock::ToolUse(block));
             }
-            ContentPart::ToolResult { id, result, is_error } => {
+            ContentPart::ToolResult {
+                id,
+                result,
+                is_error,
+            } => {
                 let inner = br::ToolResultContentBlock::Text(result.to_string());
                 let block = br::ToolResultBlock::builder()
                     .tool_use_id(id)
@@ -179,7 +189,9 @@ fn content_to_blocks(parts: &[ContentPart]) -> Result<Vec<br::ContentBlock>, Tak
                         br::ToolResultStatus::Success
                     })
                     .build()
-                    .map_err(|e| TakoError::Invalid(format!("Bedrock ToolResultBlock build: {e}")))?;
+                    .map_err(|e| {
+                        TakoError::Invalid(format!("Bedrock ToolResultBlock build: {e}"))
+                    })?;
                 out.push(br::ContentBlock::ToolResult(block));
             }
             ContentPart::Image { mime, data_b64 } => {
@@ -217,11 +229,15 @@ pub fn from_converse_output(
     let stop_reason = match output.stop_reason() {
         br::StopReason::EndTurn => FinishReason::Stop,
         br::StopReason::StopSequence => FinishReason::Stop,
-        br::StopReason::MaxTokens | br::StopReason::ModelContextWindowExceeded => FinishReason::Length,
+        br::StopReason::MaxTokens | br::StopReason::ModelContextWindowExceeded => {
+            FinishReason::Length
+        }
         br::StopReason::ToolUse => FinishReason::ToolCalls,
         br::StopReason::ContentFiltered => FinishReason::ContentFilter,
         br::StopReason::GuardrailIntervened => FinishReason::ContentFilter,
-        br::StopReason::MalformedModelOutput | br::StopReason::MalformedToolUse => FinishReason::Error,
+        br::StopReason::MalformedModelOutput | br::StopReason::MalformedToolUse => {
+            FinishReason::Error
+        }
         _ => FinishReason::Other,
     };
 
@@ -292,10 +308,7 @@ mod tests {
     fn to_converse_inputs_extracts_system() {
         let req = ChatRequest {
             model: "anthropic.claude".into(),
-            messages: vec![
-                Message::system("You are helpful."),
-                Message::user("hi"),
-            ],
+            messages: vec![Message::system("You are helpful."), Message::user("hi")],
             tools: vec![],
             temperature: None,
             max_tokens: None,
@@ -331,7 +344,10 @@ mod tests {
         };
         let inputs = to_converse_inputs(&req).unwrap();
         assert!(inputs.tool_config.is_some(), "tool_config not built");
-        assert!(inputs.inference_config.is_some(), "inference_config not built");
+        assert!(
+            inputs.inference_config.is_some(),
+            "inference_config not built"
+        );
     }
 
     #[test]

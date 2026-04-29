@@ -15,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-version      = "0.1.0"
+version      = "0.2.0"
 edition      = "2024"
 rust-version = "1.85"
 license      = "Apache-2.0"
@@ -97,16 +97,16 @@ wiremock           = "0.6"
 proptest           = "1"
 
 # crates internal
-tako-core          = { path = "crates/tako-core",                   version = "0.1.0" }
-tako-runtime       = { path = "crates/tako-runtime",                version = "0.1.0" }
-tako-mcp          = { path = "crates/tako-mcp",                    version = "0.1.0" }
-tako-orchestrator = { path = "crates/tako-orchestrator",           version = "0.1.0" }
-tako-governance   = { path = "crates/tako-governance",             version = "0.1.0" }
-tako-providers-anthropic    = { path = "crates/tako-providers/anthropic",    version = "0.1.0" }
-tako-providers-openai       = { path = "crates/tako-providers/openai",       version = "0.1.0" }
-tako-providers-http-generic = { path = "crates/tako-providers/http-generic", version = "0.1.0" }
-tako-providers-bedrock      = { path = "crates/tako-providers/bedrock",      version = "0.1.0" }
-tako-compat                 = { path = "crates/tako-compat",                 version = "0.1.0" }
+tako-core          = { path = "crates/tako-core",                   version = "0.2.0" }
+tako-runtime       = { path = "crates/tako-runtime",                version = "0.2.0" }
+tako-mcp          = { path = "crates/tako-mcp",                    version = "0.2.0" }
+tako-orchestrator = { path = "crates/tako-orchestrator",           version = "0.2.0" }
+tako-governance   = { path = "crates/tako-governance",             version = "0.2.0" }
+tako-providers-anthropic    = { path = "crates/tako-providers/anthropic",    version = "0.2.0" }
+tako-providers-openai       = { path = "crates/tako-providers/openai",       version = "0.2.0" }
+tako-providers-http-generic = { path = "crates/tako-providers/http-generic", version = "0.2.0" }
+tako-providers-bedrock      = { path = "crates/tako-providers/bedrock",      version = "0.2.0" }
+tako-compat                 = { path = "crates/tako-compat",                 version = "0.2.0" }
 
 [profile.release]
 lto           = "thin"

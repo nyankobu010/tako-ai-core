@@ -67,8 +67,9 @@ impl OpaBundle {
     pub fn from_path(dir: impl AsRef<Path>) -> Result<Self, TakoError> {
         let dir = dir.as_ref();
         let mut sources = HashMap::new();
-        let entries = std::fs::read_dir(dir)
-            .map_err(|e| TakoError::Invalid(format!("OpaBundle from_path({:?}): {e}", dir.display())))?;
+        let entries = std::fs::read_dir(dir).map_err(|e| {
+            TakoError::Invalid(format!("OpaBundle from_path({:?}): {e}", dir.display()))
+        })?;
         for entry in entries {
             let entry = entry.map_err(|e| TakoError::Invalid(format!("read_dir entry: {e}")))?;
             let path = entry.path();
@@ -78,8 +79,9 @@ impl OpaBundle {
                     .and_then(|s| s.to_str())
                     .map(str::to_string)
                     .unwrap_or_else(|| path.display().to_string());
-                let content = std::fs::read_to_string(&path)
-                    .map_err(|e| TakoError::Invalid(format!("read_to_string({}): {e}", path.display())))?;
+                let content = std::fs::read_to_string(&path).map_err(|e| {
+                    TakoError::Invalid(format!("read_to_string({}): {e}", path.display()))
+                })?;
                 sources.insert(name, content);
             }
         }
@@ -131,7 +133,11 @@ fn compute_sha(sources: &HashMap<String, String>) -> String {
 
 #[async_trait]
 impl PolicyEngine for OpaBundle {
-    async fn evaluate(&self, principal: &Principal, ctx: PolicyContext) -> Result<PolicyDecision, TakoError> {
+    async fn evaluate(
+        &self,
+        principal: &Principal,
+        ctx: PolicyContext,
+    ) -> Result<PolicyDecision, TakoError> {
         let mut engine = self.engine()?;
 
         let input = serde_json::json!({
@@ -186,7 +192,8 @@ fn parse_decision(v: regorus::Value) -> PolicyDecision {
         return PolicyDecision::Allow;
     }
     let json_str = serde_json::to_string(&v).unwrap_or_default();
-    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
     match parsed {
         serde_json::Value::String(s) if s == "allow" => PolicyDecision::Allow,
         serde_json::Value::String(s) if s == "deny" => PolicyDecision::Deny {
@@ -210,7 +217,11 @@ fn parse_decision(v: regorus::Value) -> PolicyDecision {
                     let mask = map
                         .get("mask")
                         .and_then(|v| v.as_array())
-                        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     PolicyDecision::RedactMessages { mask }
                 }
@@ -218,12 +229,20 @@ fn parse_decision(v: regorus::Value) -> PolicyDecision {
                     let mask = map
                         .get("mask")
                         .and_then(|v| v.as_array())
-                        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     PolicyDecision::RedactResponse { mask }
                 }
                 "force_model" => {
-                    let model = map.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let model = map
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     PolicyDecision::ForceModel { model }
                 }
                 "require_approval" => PolicyDecision::RequireApproval { reason },
@@ -261,7 +280,9 @@ impl AuditLog {
             .open(path.as_ref())
             .map_err(|e| TakoError::Invalid(format!("AuditLog::jsonl open: {e}")))?;
         Ok(Self {
-            inner: Arc::new(Mutex::new(AuditInner { writer: Box::new(f) })),
+            inner: Arc::new(Mutex::new(AuditInner {
+                writer: Box::new(f),
+            })),
         })
     }
 
@@ -283,7 +304,12 @@ impl AuditLog {
 
     /// Record a single decision. Best-effort: write errors are logged
     /// but don't propagate.
-    pub async fn record(&self, principal: &Principal, ctx: &PolicyContext, decision: &PolicyDecision) {
+    pub async fn record(
+        &self,
+        principal: &Principal,
+        ctx: &PolicyContext,
+        decision: &PolicyDecision,
+    ) {
         let entry = serde_json::json!({
             "ts": chrono::Utc::now().to_rfc3339(),
             "principal": {
@@ -416,7 +442,8 @@ default decision := {"decision": "allow"}
         let decision = PolicyDecision::Deny {
             reason: "test".into(),
         };
-        log.record(&user_principal(), &ctx_pre_tool(), &decision).await;
+        log.record(&user_principal(), &ctx_pre_tool(), &decision)
+            .await;
         let g = buf.lock().unwrap();
         let line = std::str::from_utf8(&g).unwrap();
         assert!(line.contains("\"stage\":\"pre_tool\""));

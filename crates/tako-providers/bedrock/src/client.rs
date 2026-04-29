@@ -166,6 +166,10 @@ impl LlmProvider for BedrockProvider {
     }
 }
 
-fn map_sdk_error<E: std::fmt::Display + std::fmt::Debug>(provider_id: &str, model: &str, e: E) -> TakoError {
+fn map_sdk_error<E: std::fmt::Display + std::fmt::Debug>(
+    provider_id: &str,
+    model: &str,
+    e: E,
+) -> TakoError {
     TakoError::provider(provider_id, model, format!("{e}"))
 }
