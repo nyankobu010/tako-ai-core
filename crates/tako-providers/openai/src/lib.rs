@@ -15,7 +15,9 @@
 //! ```
 
 mod client;
-mod convert;
-mod stream;
+#[doc(hidden)]
+pub mod convert;
+#[doc(hidden)]
+pub mod stream;
 
 pub use client::{OpenAiBuilder, OpenAiProvider};

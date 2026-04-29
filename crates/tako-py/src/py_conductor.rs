@@ -113,6 +113,9 @@ fn extract_provider(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<ProviderHandle>
     if let Ok(p) = obj.extract::<crate::py_provider::PyFakeProvider>(py) {
         return Ok(p.handle);
     }
+    if let Ok(p) = obj.extract::<crate::py_azure::PyAzureOpenAi>(py) {
+        return Ok(p.handle);
+    }
     if let Ok(p) = obj.extract::<crate::py_bedrock::PyBedrock>(py) {
         return Ok(p.handle);
     }
@@ -120,7 +123,7 @@ fn extract_provider(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<ProviderHandle>
         return Ok(p.handle);
     }
     Err(PyValueError::new_err(
-        "provider must be a tako._native.OpenAI, Anthropic, Bedrock, FakeProvider, or PythonProvider",
+        "provider must be a tako._native.OpenAI, Anthropic, AzureOpenAi, Bedrock, FakeProvider, or PythonProvider",
     ))
 }
 
