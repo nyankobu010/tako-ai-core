@@ -1,6 +1,6 @@
 # PLAN — Phase 8 (search streaming + transparency-log completeness)
 
-> **Status: in progress.** Successor to [PLAN_PHASE7.md](PLAN_PHASE7.md).
+> **Status: complete (v0.9.0, 2026-04-29).** Successor to [PLAN_PHASE7.md](PLAN_PHASE7.md).
 > Closes the four "out of scope" items flagged in `## [0.8.0]`'s
 > release notes. Target tag: **v0.9.0**.
 
