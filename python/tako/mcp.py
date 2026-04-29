@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from tako import _native
@@ -46,14 +47,55 @@ class WebSocket(_TransportBase):
         self._native = _native.WebSocket(url)
 
 
+def _read_pem(inline: bytes | None, path: str | Path | None, label: str) -> bytes | None:
+    """Resolve a PEM either from inline ``bytes`` or from a filesystem
+    path. Exactly zero or one of the two must be provided.
+    """
+    if inline is not None and path is not None:
+        raise ValueError(f"{label}: pass inline bytes or a path, not both")
+    if inline is not None:
+        return inline
+    if path is not None:
+        return Path(path).read_bytes()
+    return None
+
+
 class Grpc(_TransportBase):
     """MCP gRPC transport. JSON-RPC frames carried over a single bidi
-    streaming RPC. Endpoint is ``http://host:port`` (plaintext) or
-    ``https://host:port`` (rustls + webpki-roots). Available when the
-    wheel was built with the ``grpc`` Cargo feature."""
+    streaming RPC.
 
-    def __init__(self, endpoint: str) -> None:
-        self._native = _native.Grpc(endpoint)
+    Endpoint is ``http://host:port`` (plaintext) or ``https://host:port``
+    for TLS. With no TLS kwargs the server cert is verified against
+    ``webpki-roots``. Pass ``ca_pem`` (or ``ca_path``) to use a custom CA
+    bundle, plus ``client_cert_pem`` / ``client_key_pem`` (or their
+    ``_path`` siblings) together to enable mTLS. ``domain_name``
+    overrides the SNI / cert-hostname check.
+
+    Available when the wheel was built with the ``grpc`` Cargo feature.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        ca_pem: bytes | None = None,
+        ca_path: str | Path | None = None,
+        client_cert_pem: bytes | None = None,
+        client_cert_path: str | Path | None = None,
+        client_key_pem: bytes | None = None,
+        client_key_path: str | Path | None = None,
+        domain_name: str | None = None,
+    ) -> None:
+        ca = _read_pem(ca_pem, ca_path, "ca_pem")
+        cert = _read_pem(client_cert_pem, client_cert_path, "client_cert_pem")
+        key = _read_pem(client_key_pem, client_key_path, "client_key_pem")
+        self._native = _native.Grpc(
+            endpoint,
+            ca_pem=ca,
+            client_cert_pem=cert,
+            client_key_pem=key,
+            domain_name=domain_name,
+        )
 
 
 __all__ = ["Grpc", "Http", "Stdio", "WebSocket"]

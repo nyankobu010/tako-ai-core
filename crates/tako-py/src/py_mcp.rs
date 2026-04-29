@@ -175,16 +175,56 @@ pub struct PyGrpc {
 #[pymethods]
 impl PyGrpc {
     /// Connect to a gRPC MCP bridge (`http://host:port` plaintext, or
-    /// `https://host:port` for rustls + webpki-roots TLS) and complete
-    /// the `initialize` → `initialized` handshake. Blocks the calling
-    /// Python thread until the handshake returns.
+    /// `https://host:port` for TLS) and complete the `initialize` →
+    /// `initialized` handshake. Blocks the calling Python thread until
+    /// the handshake returns.
+    ///
+    /// With no TLS kwargs the default `webpki-roots` trust store is
+    /// used. Pass `ca_pem` to swap in a custom CA, plus
+    /// `client_cert_pem` + `client_key_pem` together to enable mTLS.
+    /// `domain_name` overrides the SNI / cert-hostname check.
     #[new]
-    fn new(py: Python<'_>, endpoint: String) -> PyResult<Self> {
+    #[pyo3(signature = (
+        endpoint,
+        *,
+        ca_pem=None,
+        client_cert_pem=None,
+        client_key_pem=None,
+        domain_name=None,
+    ))]
+    fn new(
+        py: Python<'_>,
+        endpoint: String,
+        ca_pem: Option<&[u8]>,
+        client_cert_pem: Option<&[u8]>,
+        client_key_pem: Option<&[u8]>,
+        domain_name: Option<String>,
+    ) -> PyResult<Self> {
         let endpoint_clone = endpoint.clone();
+        let ca_pem = ca_pem.map(<[u8]>::to_vec);
+        let client_cert_pem = client_cert_pem.map(<[u8]>::to_vec);
+        let client_key_pem = client_key_pem.map(<[u8]>::to_vec);
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         let transport = py.detach(|| {
             rt.block_on(async {
-                let t = GrpcTransport::connect(&endpoint_clone).await?;
+                let t = if let Some(ca) = ca_pem.as_deref() {
+                    GrpcTransport::connect_with_tls(
+                        &endpoint_clone,
+                        ca,
+                        client_cert_pem.as_deref(),
+                        client_key_pem.as_deref(),
+                        domain_name.as_deref(),
+                    )
+                    .await?
+                } else if client_cert_pem.is_some() || client_key_pem.is_some() {
+                    return Err(tako_core::TakoError::Transport(
+                        "tako.mcp.Grpc: ca_pem is required when client_cert_pem / \
+                         client_key_pem are set"
+                            .into(),
+                    ));
+                } else {
+                    GrpcTransport::connect(&endpoint_clone).await?
+                };
                 let arc: Arc<dyn McpTransport> = Arc::new(t);
                 tako_mcp::handshake(Arc::clone(&arc), tako_mcp::ClientInfo::tako()).await?;
                 Ok::<_, tako_core::TakoError>(arc)

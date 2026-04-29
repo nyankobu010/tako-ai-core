@@ -133,7 +133,15 @@ class WebSocket:
 class Grpc:
     """Available when the wheel is built with the ``grpc`` feature."""
 
-    def __init__(self, endpoint: str) -> None: ...
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        ca_pem: bytes | None = ...,
+        client_cert_pem: bytes | None = ...,
+        client_key_pem: bytes | None = ...,
+        domain_name: str | None = ...,
+    ) -> None: ...
 
 class CatalogueVerifier:
     """Available when the wheel is built with the ``sigstore`` feature."""
