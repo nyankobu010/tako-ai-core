@@ -26,23 +26,24 @@ synopsis and quickstart.
 | 5 — Production hardening | v0.6.0 | done (2026-04-29) | [PLAN_PHASE5.md](PLAN_PHASE5.md) | [`## [0.6.0]`](CHANGELOG.md) |
 | 6 — Production hardening, continued | v0.7.0 | done (2026-04-29) | [PLAN_PHASE6.md](PLAN_PHASE6.md) | [`## [0.7.0]`](CHANGELOG.md) |
 | 7 — Sigstore + streaming closures | v0.8.0 | done (2026-04-29) | [PLAN_PHASE7.md](PLAN_PHASE7.md) | [`## [0.8.0]`](CHANGELOG.md) |
+| 8 — Search streaming + transparency-log completeness | v0.9.0 | in progress | [PLAN_PHASE8.md](PLAN_PHASE8.md) | [`## [Unreleased]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 8 candidates (indicative, not yet committed)
+### Phase 9 candidates (indicative, not yet committed)
 
-- **AB-MCTS native streaming** — interleave rollouts across branches;
-  potentially adds a verifier-score event to `OrchEvent`.
-- **Rekor checkpoint (`SignedNote`) verification** — out-of-band
-  signature over the tree head, separate from the inclusion proof
-  itself.
-- **`OrchEvent::Recursion` variant** — expose recursion depth +
-  confidence on the wire (only if a concrete consumer asks).
-- **Streaming-aware `ConfidenceGuard`** — early-abort during a long
-  inner generation rather than evaluating buffered final text.
+- **Streaming `LlmJudgeGuard`** — per-N-delta judge calls behind an
+  explicit opt-in (cost-aware streaming-aware judging).
+- **Rekor log-state continuity / checkpoint freshness anchor** —
+  trust-on-first-use over checkpoint `tree_size` to refuse rollback.
+- **Native `tako-compat` protocol extension** exposing
+  `verifier_score` / `recursion` events to non-OpenAI clients (a
+  `tako.*` SSE event type alongside the OpenAI `data:` frames).
+- **AB-MCTS with `Trinity`-style learned routing per branch** —
+  router-driven branch expansion.
 
 ### Beyond (speculative)
 

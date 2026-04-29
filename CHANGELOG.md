@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(none)
+Phase 8 — search streaming + transparency-log completeness.
+Plan: [PLAN_PHASE8.md](PLAN_PHASE8.md). In progress.
 
 ## [0.8.0] - 2026-04-29
 
