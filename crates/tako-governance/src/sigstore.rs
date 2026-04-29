@@ -193,9 +193,10 @@ pub struct KeylessBundle {
     /// configured with a Rekor public key (see
     /// [`KeylessVerifier::with_rekor_key`]) and this field is present,
     /// the SET (Signed Entry Timestamp) is verified against the pinned
-    /// key. The `body` field's hash is checked to match the
-    /// manifest+leaf-cert pair. Inclusion-proof (Merkle) verification is
-    /// out of scope for v0.7.0.
+    /// key. If the entry also carries an
+    /// [`RekorInclusionProof`](RekorEntry::inclusion_proof) (added in
+    /// v0.8.0), the Merkle audit path is verified against the supplied
+    /// tree root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rekor: Option<RekorEntry>,
 }
@@ -222,6 +223,36 @@ pub struct RekorEntry {
     /// Base64-encoded SET (ECDSA-P256 signature by Rekor's public key
     /// over the canonical entry JSON).
     pub set_b64: String,
+    /// Optional Merkle inclusion proof against the Rekor tree head.
+    /// When present and the verifier has been configured with a Rekor
+    /// key (see [`KeylessVerifier::with_rekor_key`]), the audit path is
+    /// verified per RFC 6962 §2.1.1. The checkpoint signature
+    /// (`SignedNote` over the tree head) is **not** verified here —
+    /// that is a separate concern from the inclusion proof itself and
+    /// is tracked as a Phase 8 follow-up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inclusion_proof: Option<RekorInclusionProof>,
+}
+
+/// Merkle inclusion proof against a Rekor tree head.
+///
+/// Field semantics follow the Rekor `LogEntry.verification.inclusionProof`
+/// JSON shape: <https://github.com/sigstore/rekor>. Hashes are
+/// hex-encoded SHA-256 digests; the proof is verified per RFC 6962
+/// §2.1.1 with leaf hash `SHA256(0x00 || canonicalized_body)` and
+/// internal-node hash `SHA256(0x01 || left || right)`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RekorInclusionProof {
+    /// Sibling hash list (hex), bottom-up, from the leaf's neighbour
+    /// to the children of the root.
+    pub hashes_hex: Vec<String>,
+    /// Total number of leaves in the Rekor tree at the moment the
+    /// proof was issued.
+    pub tree_size: u64,
+    /// 0-based index of the entry's leaf within the tree.
+    pub log_index: u64,
+    /// Hex-encoded root hash of the Rekor tree at `tree_size`.
+    pub root_hash_hex: String,
 }
 
 /// How to match the Subject Alternative Name on a Fulcio leaf cert.
@@ -465,6 +496,13 @@ impl KeylessVerifier {
         // and the bundle carries a transparency-log entry.
         if let (Some(rekor_key), Some(entry)) = (self.rekor_key.as_ref(), bundle.rekor.as_ref()) {
             verify_rekor_set(rekor_key, entry)?;
+            // 7.A: Rekor Merkle inclusion-proof verification, when the
+            // entry also carries one. SET binds the entry's metadata to
+            // a moment in time; the inclusion proof binds it to a
+            // specific position in the public log.
+            if let Some(proof) = entry.inclusion_proof.as_ref() {
+                verify_rekor_inclusion(entry, proof)?;
+            }
         }
 
         let catalogue: Catalogue = serde_json::from_slice(manifest_bytes)
@@ -779,5 +817,111 @@ fn verify_rekor_set(key: &CosignVerificationKey, entry: &RekorEntry) -> Result<(
         .map_err(|e| TakoError::Invalid(format!("sigstore: rekor SET base64: {e}")))?;
     key.verify_signature(Signature::Raw(&set_bytes), canonical.as_bytes())
         .map_err(|e| TakoError::Invalid(format!("sigstore: rekor SET invalid: {e}")))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Rekor inclusion-proof verification (Phase 7.A).
+// ---------------------------------------------------------------------------
+
+/// Verify a Rekor Merkle inclusion proof per RFC 6962 §2.1.1.
+///
+/// Leaf hash is `SHA256(0x00 || canonicalized_body_bytes)` where the
+/// body bytes are the base64-decoded value of [`RekorEntry::canonicalized_body`].
+/// Internal-node hash is `SHA256(0x01 || left || right)`. The leaf index
+/// the proof was issued for must equal `entry.log_index`, and the
+/// proof's `tree_size` must be strictly greater than `log_index`.
+fn verify_rekor_inclusion(
+    entry: &RekorEntry,
+    proof: &RekorInclusionProof,
+) -> Result<(), TakoError> {
+    if proof.log_index != entry.log_index {
+        return Err(TakoError::Invalid(format!(
+            "sigstore: rekor inclusion proof log_index ({}) does not match entry log_index ({})",
+            proof.log_index, entry.log_index,
+        )));
+    }
+    if proof.tree_size == 0 || entry.log_index >= proof.tree_size {
+        return Err(TakoError::Invalid(format!(
+            "sigstore: rekor inclusion proof: log_index {} out of range for tree_size {}",
+            entry.log_index, proof.tree_size,
+        )));
+    }
+
+    use sha2::{Digest, Sha256};
+
+    let body_bytes = B64
+        .decode(entry.canonicalized_body.trim())
+        .map_err(|e| TakoError::Invalid(format!("sigstore: rekor body base64: {e}")))?;
+
+    // Leaf hash: SHA256(0x00 || body)
+    let mut h = Sha256::new();
+    h.update([0x00u8]);
+    h.update(&body_bytes);
+    let mut r: [u8; 32] = h.finalize().into();
+
+    // Decode each sibling hash from hex into [u8; 32].
+    let path: Vec<[u8; 32]> = proof
+        .hashes_hex
+        .iter()
+        .map(|s| {
+            let raw = hex::decode(s.trim())
+                .map_err(|e| TakoError::Invalid(format!("sigstore: rekor proof hex: {e}")))?;
+            <[u8; 32]>::try_from(raw.as_slice()).map_err(|_| {
+                TakoError::Invalid(format!(
+                    "sigstore: rekor proof hash wrong length (got {} bytes, want 32)",
+                    raw.len()
+                ))
+            })
+        })
+        .collect::<Result<_, TakoError>>()?;
+
+    let mut fnode = entry.log_index;
+    let mut sn = proof.tree_size - 1;
+
+    for p in &path {
+        if sn == 0 {
+            return Err(TakoError::Invalid(
+                "sigstore: rekor inclusion proof too long".into(),
+            ));
+        }
+        if fnode & 1 == 1 || fnode == sn {
+            // r is right child; sibling is on the left.
+            let mut h = Sha256::new();
+            h.update([0x01u8]);
+            h.update(p);
+            h.update(r);
+            r = h.finalize().into();
+            // Skip the run of right-edge nodes that don't have a real
+            // sibling (they propagate up unchanged).
+            while fnode & 1 == 0 && fnode != 0 {
+                fnode >>= 1;
+                sn >>= 1;
+            }
+        } else {
+            // r is left child; sibling is on the right.
+            let mut h = Sha256::new();
+            h.update([0x01u8]);
+            h.update(r);
+            h.update(p);
+            r = h.finalize().into();
+        }
+        fnode >>= 1;
+        sn >>= 1;
+    }
+
+    if sn != 0 {
+        return Err(TakoError::Invalid(
+            "sigstore: rekor inclusion proof too short".into(),
+        ));
+    }
+
+    let expected_root = hex::decode(proof.root_hash_hex.trim())
+        .map_err(|e| TakoError::Invalid(format!("sigstore: rekor root hex: {e}")))?;
+    if expected_root.as_slice() != r {
+        return Err(TakoError::Invalid(
+            "sigstore: rekor inclusion proof: computed root does not match pinned root".into(),
+        ));
+    }
     Ok(())
 }

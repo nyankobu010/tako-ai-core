@@ -651,6 +651,7 @@ mod rekor {
                 integrated_time,
                 canonicalized_body: body_b64,
                 set_b64,
+                inclusion_proof: None,
             }),
         };
         let bundle_bytes = serde_json::to_vec(&bundle).unwrap();
@@ -703,6 +704,7 @@ mod rekor {
                 integrated_time,
                 canonicalized_body: body_b64,
                 set_b64,
+                inclusion_proof: None,
             }),
         };
         let bundle_bytes = serde_json::to_vec(&bundle).unwrap();
@@ -720,6 +722,292 @@ mod rekor {
         assert!(
             msg.contains("rekor SET invalid") || msg.contains("rekor SET base64"),
             "expected rekor-set error, got: {msg}"
+        );
+    }
+}
+
+mod inclusion_proof {
+    //! Phase 7.A — Rekor Merkle inclusion-proof verification.
+    //!
+    //! Each test builds a runtime Merkle tree per RFC 6962 (leaves
+    //! hashed with the 0x00 prefix, internal nodes with 0x01) and
+    //! exercises [`KeylessVerifier::verify_bundle`] against it.
+
+    use super::sample_manifest;
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use rcgen::{
+        CertificateParams, CustomExtension, DnType, ExtendedKeyUsagePurpose, KeyPair,
+        KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, SanType,
+    };
+    use sha2::{Digest, Sha256};
+    use sigstore::crypto::{SigStoreSigner, SigningScheme};
+    use tako_governance::sigstore::{
+        IdentityPolicy, KeylessBundle, KeylessVerifier, RekorEntry, RekorInclusionProof,
+    };
+    use time::OffsetDateTime;
+
+    const FULCIO_OIDC_ISSUER_V1: [u64; 9] = [1, 3, 6, 1, 4, 1, 57264, 1, 1];
+
+    fn fresh_rekor_keypair() -> (SigStoreSigner, String) {
+        let signer = SigningScheme::ECDSA_P256_SHA256_ASN1
+            .create_signer()
+            .unwrap();
+        let pem = signer
+            .to_sigstore_keypair()
+            .unwrap()
+            .public_key_to_pem()
+            .unwrap();
+        (signer, pem)
+    }
+
+    fn build_leaf(issuer_uri: &str, san_uri: &str) -> (String, KeyPair) {
+        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut params = CertificateParams::default();
+        params.distinguished_name.push(DnType::CommonName, "leaf");
+        params.subject_alt_names = vec![SanType::URI(san_uri.try_into().unwrap())];
+        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
+        params.not_before = OffsetDateTime::now_utc() - time::Duration::minutes(5);
+        params.not_after = OffsetDateTime::now_utc() + time::Duration::minutes(60);
+        let oid_iter: Vec<u64> = FULCIO_OIDC_ISSUER_V1.to_vec();
+        let mut ext = CustomExtension::from_oid_content(&oid_iter, issuer_uri.as_bytes().to_vec());
+        ext.set_criticality(false);
+        params.custom_extensions = vec![ext];
+        let cert = params.self_signed(&key_pair).unwrap();
+        (cert.pem(), key_pair)
+    }
+
+    fn sign_manifest(kp: &KeyPair, manifest: &[u8]) -> Vec<u8> {
+        let pkcs8 = kp.serialize_der();
+        let sk = sigstore::crypto::signing_key::SigStoreKeyPair::from_der(&pkcs8).unwrap();
+        let signer = sk
+            .to_sigstore_signer(&SigningScheme::ECDSA_P256_SHA256_ASN1)
+            .unwrap();
+        signer.sign(manifest).unwrap()
+    }
+
+    fn mint_set(
+        rekor_signer: &SigStoreSigner,
+        body_b64: &str,
+        integrated_time: i64,
+        log_id: &str,
+        log_index: u64,
+    ) -> String {
+        let canonical = format!(
+            "{{\"body\":\"{body}\",\"integratedTime\":{ts},\"logID\":\"{log_id}\",\"logIndex\":{idx}}}",
+            body = body_b64,
+            ts = integrated_time,
+            log_id = log_id,
+            idx = log_index,
+        );
+        let sig = rekor_signer.sign(canonical.as_bytes()).unwrap();
+        B64.encode(&sig)
+    }
+
+    fn leaf_hash(body: &[u8]) -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update([0x00u8]);
+        h.update(body);
+        h.finalize().into()
+    }
+
+    fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update([0x01u8]);
+        h.update(left);
+        h.update(right);
+        h.finalize().into()
+    }
+
+    /// Compute the RFC 6962 Merkle tree hash (MTH) over `leaves`. The
+    /// split at each level is at the largest power of two strictly
+    /// less than the subtree's leaf count.
+    fn mth(leaves: &[[u8; 32]]) -> [u8; 32] {
+        match leaves.len() {
+            0 => panic!("empty tree"),
+            1 => leaves[0],
+            n => {
+                let mut k: usize = 1;
+                while k < n {
+                    k <<= 1;
+                }
+                k >>= 1;
+                let left = mth(&leaves[..k]);
+                let right = mth(&leaves[k..]);
+                node_hash(&left, &right)
+            }
+        }
+    }
+
+    /// Build the RFC 6962 inclusion-proof (audit path) for `index` in
+    /// the tree of `leaves`. Returns the bottom-up sibling list.
+    fn audit_path(leaves: &[[u8; 32]], index: usize) -> Vec<[u8; 32]> {
+        fn rec(leaves: &[[u8; 32]], index: usize, out: &mut Vec<[u8; 32]>) {
+            if leaves.len() <= 1 {
+                return;
+            }
+            let n = leaves.len();
+            let mut k: usize = 1;
+            while k < n {
+                k <<= 1;
+            }
+            k >>= 1;
+            if index < k {
+                rec(&leaves[..k], index, out);
+                out.push(mth(&leaves[k..]));
+            } else {
+                rec(&leaves[k..], index - k, out);
+                out.push(mth(&leaves[..k]));
+            }
+        }
+        let mut path = Vec::new();
+        rec(leaves, index, &mut path);
+        path
+    }
+
+    /// Build a canonical bundle with a fresh tree, returning the
+    /// bundle JSON, the matching identity policy, and the Rekor PEM.
+    fn build_bundle_with_proof(
+        n_leaves: usize,
+        target_index: usize,
+    ) -> (Vec<u8>, IdentityPolicy, String) {
+        let manifest = sample_manifest();
+        let issuer = "https://token.actions.githubusercontent.com";
+        let san = "https://example.com/svc";
+        let (leaf_pem, leaf_kp) = build_leaf(issuer, san);
+        let manifest_sig = sign_manifest(&leaf_kp, &manifest);
+
+        let (rekor_signer, rekor_pem) = fresh_rekor_keypair();
+        let log_id = "ab".repeat(32);
+        let log_index = target_index as u64;
+        let integrated_time = 1_700_000_000_i64;
+
+        // Synthesise n_leaves distinct bodies; the target index's body
+        // is the one we'll embed in the bundle.
+        let bodies: Vec<Vec<u8>> = (0..n_leaves)
+            .map(|i| format!("rekor-body-{i}").into_bytes())
+            .collect();
+        let leaf_hashes: Vec<[u8; 32]> = bodies.iter().map(|b| leaf_hash(b)).collect();
+        let root = mth(&leaf_hashes);
+        let path = audit_path(&leaf_hashes, target_index);
+
+        let body_b64 = B64.encode(&bodies[target_index]);
+        let set_b64 = mint_set(
+            &rekor_signer,
+            &body_b64,
+            integrated_time,
+            &log_id,
+            log_index,
+        );
+        let inclusion = RekorInclusionProof {
+            hashes_hex: path.iter().map(hex::encode).collect(),
+            tree_size: n_leaves as u64,
+            log_index,
+            root_hash_hex: hex::encode(root),
+        };
+
+        let bundle = KeylessBundle {
+            leaf_cert_pem: leaf_pem,
+            signature_b64: B64.encode(&manifest_sig),
+            chain_pem: None,
+            rekor: Some(RekorEntry {
+                log_index,
+                log_id,
+                integrated_time,
+                canonicalized_body: body_b64,
+                set_b64,
+                inclusion_proof: Some(inclusion),
+            }),
+        };
+        (
+            serde_json::to_vec(&bundle).unwrap(),
+            IdentityPolicy::exact(issuer, san),
+            rekor_pem,
+        )
+    }
+
+    #[test]
+    fn round_trips_against_runtime_built_tree() {
+        let manifest = sample_manifest();
+        // Tree of 5 leaves; verify inclusion of index 2 (covers the
+        // mixed-subtree audit-path branch).
+        let (bundle_bytes, identity, rekor_pem) = build_bundle_with_proof(5, 2);
+        let verifier = KeylessVerifier::new(identity)
+            .with_rekor_key(rekor_pem.as_bytes())
+            .unwrap();
+        let cat = verifier.verify_bundle(&manifest, &bundle_bytes).unwrap();
+        assert_eq!(cat.tools.len(), 2);
+
+        // Right-edge leaf in an unbalanced tree exercises the
+        // `fn == sn` branch of the verifier.
+        let (bundle_bytes, identity, rekor_pem) = build_bundle_with_proof(5, 4);
+        let verifier = KeylessVerifier::new(identity)
+            .with_rekor_key(rekor_pem.as_bytes())
+            .unwrap();
+        verifier.verify_bundle(&manifest, &bundle_bytes).unwrap();
+    }
+
+    #[test]
+    fn rejects_tampered_audit_path_hash() {
+        let manifest = sample_manifest();
+        let (bundle_bytes, identity, rekor_pem) = build_bundle_with_proof(5, 2);
+        let mut bundle: KeylessBundle = serde_json::from_slice(&bundle_bytes).unwrap();
+        let proof = bundle
+            .rekor
+            .as_mut()
+            .unwrap()
+            .inclusion_proof
+            .as_mut()
+            .unwrap();
+        // Flip a hex char in the first sibling hash.
+        let mut chars: Vec<char> = proof.hashes_hex[0].chars().collect();
+        chars[0] = if chars[0] == 'a' { 'b' } else { 'a' };
+        proof.hashes_hex[0] = chars.into_iter().collect();
+        let bundle_bytes = serde_json::to_vec(&bundle).unwrap();
+
+        let verifier = KeylessVerifier::new(identity)
+            .with_rekor_key(rekor_pem.as_bytes())
+            .unwrap();
+        let err = verifier
+            .verify_bundle(&manifest, &bundle_bytes)
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("rekor inclusion proof"),
+            "expected inclusion-proof error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_mutated_root_hash() {
+        let manifest = sample_manifest();
+        let (bundle_bytes, identity, rekor_pem) = build_bundle_with_proof(5, 2);
+        let mut bundle: KeylessBundle = serde_json::from_slice(&bundle_bytes).unwrap();
+        let proof = bundle
+            .rekor
+            .as_mut()
+            .unwrap()
+            .inclusion_proof
+            .as_mut()
+            .unwrap();
+        // Replace the root with a hash of a constant.
+        let mut h = Sha256::new();
+        h.update(b"not-the-real-root");
+        let bogus: [u8; 32] = h.finalize().into();
+        proof.root_hash_hex = hex::encode(bogus);
+        let bundle_bytes = serde_json::to_vec(&bundle).unwrap();
+
+        let verifier = KeylessVerifier::new(identity)
+            .with_rekor_key(rekor_pem.as_bytes())
+            .unwrap();
+        let err = verifier
+            .verify_bundle(&manifest, &bundle_bytes)
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("rekor inclusion proof"),
+            "expected inclusion-proof error, got: {msg}"
         );
     }
 }
