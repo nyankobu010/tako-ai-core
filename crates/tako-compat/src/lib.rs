@@ -11,15 +11,15 @@
 //!   expose its providers; the list comes from the user's serve config).
 //! - `GET  /healthz`, `GET  /readyz` — liveness probes.
 //!
-//! Streaming SSE is documented as Phase 2.5 — the rest of the spec's
-//! Phase 2 acceptance ("`tako.compat.serve_openai` passes openai-SDK
-//! conformance tests for chat.completions") works without it for the
-//! non-streaming path.
+//! Streaming SSE follows the OpenAI `chat.completion.chunk` shape and
+//! terminates with a `data: [DONE]` line, matching the official SDK's
+//! parser.
 
 mod auth;
 mod openai;
 mod routes;
 mod server;
+mod sse;
 
 pub use auth::{AuthResolver, StaticTokens};
 pub use server::{ServeConfig, serve_openai};

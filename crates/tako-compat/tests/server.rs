@@ -160,7 +160,7 @@ async fn unknown_token_returns_401() {
 }
 
 #[tokio::test]
-async fn stream_request_returns_501() {
+async fn stream_request_returns_sse_chunks_and_done() {
     let (addr, _) = boot_server().await;
     let client = reqwest::Client::new();
     let body = json!({
@@ -175,7 +175,24 @@ async fn stream_request_returns_501() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 501);
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        ct.starts_with("text/event-stream"),
+        "expected text/event-stream, got {ct}"
+    );
+    let bytes = resp.bytes().await.unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    // The stream must include at least one chat.completion.chunk and end
+    // with a `data: [DONE]` line — the OpenAI SDK's parser bails
+    // otherwise.
+    assert!(text.contains("chat.completion.chunk"), "saw: {text}");
+    assert!(text.contains("data: [DONE]"), "saw: {text}");
 }
 
 #[tokio::test]
