@@ -65,11 +65,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest detection, wrong-key rejection, malformed PEM rejection, and
   non-JSON payload rejection (after a valid signature).
 
+- **Redis-backed `BudgetBackend`** (`tako_runtime::RedisBudgetBackend`,
+  Phase 4.F): a multi-process `BudgetBackend` impl alongside the Phase-1
+  `InMemoryBudgetBackend`. Keys are
+  `<prefix>:{tenant_id}:{YYYY-MM-DD}` (UTC) so day rollover is automatic
+  — tomorrow's writes land in a fresh key and yesterday's evicts via TTL
+  (default 48 hours). `record()` is atomic via a small Lua script
+  collapsing `HINCRBYFLOAT usd`, `HINCRBY tokens`, and `EXPIRE` into
+  one round-trip. `current_usage()` is `HGETALL` (missing key → zero
+  usage with no extra branching). `connect()` accepts both `redis://`
+  (plaintext) and `rediss://` (TLS) URLs, and uses `redis::aio::ConnectionManager`
+  for transparent reconnects on transient failures. `with_key_prefix`
+  / `with_ttl` builder methods adjust the defaults.
+- Gated behind a new `redis` Cargo feature on `tako-runtime` so the
+  `redis` crate (and its TLS / async-runtime infrastructure) only land
+  in the dep tree when explicitly enabled.
+- Workspace `Cargo.toml` adds `redis = "1.2"` with `default-features =
+  false, features = ["aio", "tokio-comp", "tokio-rustls-comp",
+  "connection-manager", "script", "tls-rustls-webpki-roots"]` —
+  matching the rustls + webpki-roots TLS choice used by `reqwest` and
+  `tokio-tungstenite` elsewhere in the workspace. `chrono` is added as
+  an optional dep on `tako-runtime` (gated by the same `redis` feature)
+  for UTC day-key formatting.
+- Tests in `crates/tako-runtime/tests/redis_budget.rs` (6 cases, gated
+  on `redis` and auto-skipped when `REDIS_URL` is unset): missing-key
+  zero-usage, record/read round-trip, multi-record accumulation,
+  tenant isolation, daily-cap enforcement via `BudgetTracker`, and TTL
+  application on the first record. Plus 2 unit tests in
+  `src/budget_redis.rs` for the `format_day_key` pure function (date
+  format stability + Unicode tenant IDs).
+
 ### Notes
 
-- PyO3 + Python facade for `WebSocketTransport`, `GrpcTransport`, and
-  `CatalogueVerifier` is intentionally deferred to a later sub-phase;
-  all three remain Rust-only for now.
+- PyO3 + Python facade for `WebSocketTransport`, `GrpcTransport`,
+  `CatalogueVerifier`, and `RedisBudgetBackend` is intentionally
+  deferred to a later sub-phase; all four remain Rust-only for now.
 
 ## [0.4.0] - 2026-04-29
 
