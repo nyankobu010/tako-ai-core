@@ -7,13 +7,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use serde_json::json;
 use tako_core::{
     Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message,
     Principal, TakoError, Usage,
 };
-use tako_orchestrator::{Conductor, OrchInput, Orchestrator};
+use tako_orchestrator::{Conductor, OrchEvent, OrchInput, Orchestrator};
 
 #[derive(Debug)]
 struct FakeProvider {
@@ -272,6 +273,54 @@ async fn conductor_halt_with_no_workers_registered() {
         .await
         .unwrap();
     assert_eq!(result.text, "instant");
+}
+
+#[tokio::test]
+async fn conductor_stream_emits_worker_events_and_final() {
+    let coordinator = Arc::new(FakeProvider::new(
+        "fake:coord",
+        vec![coord_dispatch(&[("code", "do thing")]), coord_halt("done.")],
+    ));
+    let code = Arc::new(FakeProvider::new(
+        "fake:code",
+        vec![assistant_text("did thing")],
+    ));
+    let cond = Conductor::builder()
+        .coordinator(coordinator.clone())
+        .worker("code", code.clone())
+        .max_steps(5)
+        .build()
+        .unwrap();
+
+    let mut stream = cond
+        .stream(&Principal::anonymous(), OrchInput::from_user("go"))
+        .await;
+
+    let mut saw_worker_call = false;
+    let mut saw_worker_result = false;
+    let mut final_text: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        match item.unwrap() {
+            OrchEvent::ToolCallStart { name, .. } if name == "worker:code" => {
+                saw_worker_call = true;
+            }
+            OrchEvent::ToolCallResult {
+                result, is_error, ..
+            } => {
+                assert!(!is_error);
+                if result.get("worker").and_then(|v| v.as_str()) == Some("code") {
+                    saw_worker_result = true;
+                }
+            }
+            OrchEvent::Final { output } => {
+                final_text = Some(output.text.clone());
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_worker_call, "expected ToolCallStart for worker:code");
+    assert!(saw_worker_result, "expected ToolCallResult for worker:code");
+    assert_eq!(final_text.as_deref(), Some("done."));
 }
 
 #[test]

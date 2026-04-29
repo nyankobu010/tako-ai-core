@@ -109,11 +109,11 @@ async fn chat_completions_stream(
     let principal_for_run = principal.clone();
     let prompt_for_run = prompt.clone();
 
-    // Try the orchestrator's native streaming first; fall back to a
-    // single-chunk emulation backed by `run()` for orchestrators that
-    // don't yet implement event streaming. The wire format is identical
-    // either way (chunks + `data: [DONE]`), so the OpenAI SDK can't tell
-    // the difference.
+    // SingleAgent and Conductor stream natively (Phase 3); the emulation
+    // fallback below is retained only as a safety net for third-party or
+    // user-supplied orchestrators that haven't implemented `stream()`. The
+    // wire format is identical either way (chunks + `data: [DONE]`), so
+    // the OpenAI SDK can't tell the difference.
     let mut native = orch.stream(&principal, OrchInput::from_user(prompt)).await;
     let head = native.next().await;
     let event_stream: futures::stream::BoxStream<'static, Result<OrchEvent, tako_core::TakoError>> =
