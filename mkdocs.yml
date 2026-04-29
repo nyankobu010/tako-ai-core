@@ -13,6 +13,8 @@ nav:
   - Concepts:
       - Providers: concepts/providers.md
       - Orchestrators: concepts/orchestrators.md
+      - Routing: concepts/routing.md
+      - SelfCaller: concepts/self_caller.md
       - Policy: concepts/policy.md
       - Secrets: concepts/secrets.md
       - Budgets: concepts/budgets.md
@@ -24,6 +26,9 @@ nav:
       - Bedrock: recipes/bedrock.md
       - OpenAI-compat server: recipes/openai_compat_server.md
       - Conductor: recipes/conductor.md
+      - Trinity: recipes/trinity.md
+      - SelfCaller: recipes/self_caller.md
+      - Eval harness: recipes/eval_harness.md
       - OPA / Rego policy: recipes/opa_policy.md
       - Secret resolvers: recipes/secret_resolvers.md
   - API reference:
