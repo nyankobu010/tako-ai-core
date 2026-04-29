@@ -220,3 +220,160 @@ async fn llm_judge_guard_with_budget_records_judge_usage() {
     let usage = backend.current_usage("tenant-judge").await.unwrap();
     assert_eq!(usage.tokens_today, 6);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 7.B — native SelfCaller::stream.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn stream_passes_through_when_confident() {
+    use futures::StreamExt;
+    use tako_orchestrator::OrchEvent;
+
+    // Confidence guard always returns 1.0 → no recursion. Exactly one
+    // outer Final event reaches the caller.
+    let provider = Arc::new(FakeProvider::new("fake:p", vec![assistant("the answer")]));
+    let inner = Arc::new(
+        SingleAgent::builder()
+            .provider(provider.clone())
+            .max_steps(1)
+            .build()
+            .unwrap(),
+    );
+    let sc = SelfCaller::builder()
+        .inner(inner)
+        .max_depth(3)
+        .min_confidence(0.5)
+        .confidence(Arc::new(ConstantConfidence(1.0)))
+        .build()
+        .unwrap();
+    let mut stream = sc
+        .stream(&Principal::anonymous(), OrchInput::from_user("hi"))
+        .await;
+    let mut finals = 0;
+    let mut last_text = String::new();
+    while let Some(ev) = stream.next().await {
+        if let OrchEvent::Final { output } = ev.unwrap() {
+            finals += 1;
+            last_text = output.text;
+        }
+    }
+    assert_eq!(finals, 1);
+    assert_eq!(last_text, "the answer");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn stream_recurses_to_max_depth_when_guard_rejects() {
+    use futures::StreamExt;
+    use tako_orchestrator::OrchEvent;
+
+    // Constantly low confidence → SelfCaller hits max_depth=2 and emits
+    // exactly one outer Final, holding the LAST inner output's text.
+    let provider = Arc::new(FakeProvider::new(
+        "fake:p",
+        vec![
+            assistant("attempt 0 (low)"),
+            assistant("attempt 1 (low)"),
+            assistant("attempt 2 (low)"),
+        ],
+    ));
+    let inner = Arc::new(
+        SingleAgent::builder()
+            .provider(provider.clone())
+            .max_steps(1)
+            .build()
+            .unwrap(),
+    );
+    let sc = SelfCaller::builder()
+        .inner(inner)
+        .max_depth(2)
+        .min_confidence(0.99)
+        .confidence(Arc::new(ConstantConfidence(0.0)))
+        .build()
+        .unwrap();
+    let mut stream = sc
+        .stream(&Principal::anonymous(), OrchInput::from_user("solve"))
+        .await;
+    let mut finals = 0;
+    let mut step_starts = 0;
+    let mut last_text = String::new();
+    while let Some(ev) = stream.next().await {
+        match ev.unwrap() {
+            OrchEvent::Final { output } => {
+                finals += 1;
+                last_text = output.text;
+            }
+            OrchEvent::StepStart { .. } => {
+                step_starts += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(finals, 1, "outer stream must yield exactly one Final");
+    assert_eq!(last_text, "attempt 2 (low)");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+    // Each inner SingleAgent stream emits a StepStart per inner step;
+    // we ran 3 inner orchestrator invocations of 1 step each, so the
+    // outer stream forwards 3 StepStarts.
+    assert_eq!(step_starts, 3);
+}
+
+#[tokio::test]
+async fn stream_yields_inner_assistant_text_before_final() {
+    use futures::StreamExt;
+    use tako_orchestrator::OrchEvent;
+
+    // SingleAgent::stream falls back to chat() + a synthetic
+    // AssistantText event for non-streaming providers, then Final. The
+    // outer stream must forward the AssistantText before yielding its
+    // own Final.
+    let provider = Arc::new(FakeProvider::new(
+        "fake:p",
+        vec![assistant("the answer is 42")],
+    ));
+    let inner = Arc::new(
+        SingleAgent::builder()
+            .provider(provider.clone())
+            .max_steps(1)
+            .build()
+            .unwrap(),
+    );
+    let sc = SelfCaller::builder()
+        .inner(inner)
+        .max_depth(3)
+        .min_confidence(0.5)
+        .confidence(Arc::new(ConstantConfidence(1.0)))
+        .build()
+        .unwrap();
+    let mut stream = sc
+        .stream(&Principal::anonymous(), OrchInput::from_user("hi"))
+        .await;
+
+    let mut events: Vec<OrchEvent> = Vec::new();
+    while let Some(ev) = stream.next().await {
+        events.push(ev.unwrap());
+    }
+
+    let mut saw_text = false;
+    let mut saw_final = false;
+    for ev in &events {
+        match ev {
+            OrchEvent::AssistantText { delta, .. } => {
+                assert!(
+                    !saw_final,
+                    "AssistantText must not arrive after the outer Final"
+                );
+                if delta.contains("42") {
+                    saw_text = true;
+                }
+            }
+            OrchEvent::Final { .. } => {
+                saw_final = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_text, "expected an AssistantText carrying the answer");
+    assert!(saw_final, "expected exactly one outer Final");
+}

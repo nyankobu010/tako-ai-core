@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 pub use tako_core::ConfidenceGuard;
 use tako_core::{ChatRequest, FinishReason, LlmProvider, Message, Principal, TakoError};
@@ -189,16 +190,98 @@ impl Orchestrator for SelfCaller {
         .await
     }
 
+    /// Streaming variant of [`SelfCaller::run`].
+    ///
+    /// Forwards every event from the inner orchestrator's stream
+    /// verbatim, except [`OrchEvent::Final`] events on intermediate
+    /// recursion iterations — those are captured and evaluated by the
+    /// [`ConfidenceGuard`] instead of being yielded. Only the final
+    /// accepted (or max-depth) iteration's `Final` event is forwarded.
+    ///
+    /// **Recursion signal on the wire**: the v0.8.0 [`OrchEvent`] enum
+    /// is intentionally unchanged, so the client-visible cue that a
+    /// recursion happened is "more [`OrchEvent::StepStart`]s arrive
+    /// after the inner stream's last event but before this stream's
+    /// own `Final`". A first-class `Recursion { depth, confidence }`
+    /// variant is tracked as a Phase 8 candidate.
     async fn stream(
         &self,
-        _principal: &Principal,
-        _input: OrchInput,
+        principal: &Principal,
+        input: OrchInput,
     ) -> BoxStream<'static, Result<OrchEvent, TakoError>> {
-        Box::pin(futures::stream::once(async move {
-            Err(TakoError::Invalid(
-                "SelfCaller streaming is Phase 4; use `run` for now".into(),
-            ))
-        }))
+        let inner = Arc::clone(&self.inner);
+        let confidence = Arc::clone(&self.confidence);
+        let max_depth = self.max_depth;
+        let min_confidence = self.min_confidence;
+        let revision_prompt = self.revision_prompt.clone();
+        let principal = principal.clone();
+
+        let s = async_stream::try_stream! {
+            let starting_depth = read_depth(&principal);
+            let mut current_input = input;
+            let mut last_output: Option<OrchOutput> = None;
+
+            for offset in 0..=max_depth {
+                let depth = starting_depth.saturating_add(offset);
+                let p = bumped_principal(&principal, depth);
+
+                let span = info_span!(
+                    "tako.recursion.step",
+                    "tako.recursion.depth" = depth,
+                    "tako.recursion.confidence" = tracing::field::Empty,
+                );
+
+                let mut inner_stream = inner
+                    .stream(&p, current_input.clone())
+                    .instrument(span.clone())
+                    .await;
+                let mut captured: Option<OrchOutput> = None;
+                while let Some(ev) = inner_stream.next().await {
+                    match ev? {
+                        OrchEvent::Final { output } => {
+                            captured = Some(*output);
+                            // Do not forward intermediate Final events;
+                            // the outer stream emits exactly one Final
+                            // (the accepted iteration's) at the end.
+                        }
+                        other => {
+                            yield other;
+                        }
+                    }
+                }
+                let out = captured.ok_or_else(|| {
+                    TakoError::Invalid(
+                        "SelfCaller: inner stream ended without Final event".into(),
+                    )
+                })?;
+
+                let conf = confidence.evaluate(&p, &out.text).await?;
+                span.record("tako.recursion.confidence", conf);
+
+                if conf >= min_confidence || offset >= max_depth {
+                    yield OrchEvent::Final { output: Box::new(out) };
+                    return;
+                }
+
+                let mut next_messages = current_input.messages.clone();
+                next_messages.push(Message::assistant(out.text.clone()));
+                next_messages.push(Message::user(revision_prompt.clone()));
+                current_input = OrchInput {
+                    messages: next_messages,
+                    system: current_input.system,
+                };
+                last_output = Some(out);
+            }
+            // Should be unreachable: the loop yields-and-returns above
+            // when offset >= max_depth.
+            if let Some(out) = last_output {
+                yield OrchEvent::Final { output: Box::new(out) };
+            } else {
+                Err(TakoError::Invalid("SelfCaller: stream produced no output".into()))?;
+            }
+        };
+
+        Box::pin(s)
     }
 }
 
