@@ -25,4 +25,6 @@ pub use secrets::{
     SecretResolver, SecretString, VaultResolver,
 };
 #[cfg(feature = "sigstore")]
-pub use sigstore::{Catalogue, CatalogueVerifier};
+pub use sigstore::{
+    Catalogue, CatalogueVerifier, IdentityPolicy, KeylessBundle, KeylessVerifier, SanMatch,
+};

@@ -40,12 +40,20 @@ aws-sdk-secretsmanager = { workspace = true }
 
 # Phase 4 Sigstore tool-catalogue verification (optional, behind `sigstore`).
 sigstore               = { workspace = true, optional = true }
+# X.509 cert parsing for the Phase 5 keyless verifier; pulled in
+# transitively by `sigstore` already, so this only widens the visible
+# surface.
+x509-cert              = { version = "0.2", default-features = false, features = ["pem"], optional = true }
+const-oid              = { version = "0.9", optional = true }
+pem                    = { version = "3", optional = true }
 
 [features]
 default  = []
-sigstore = ["dep:sigstore"]
+sigstore = ["dep:sigstore", "dep:x509-cert", "dep:const-oid", "dep:pem"]
 
 [dev-dependencies]
 tokio    = { workspace = true, features = ["full"] }
 wiremock = { workspace = true }
 sigstore = { workspace = true }
+rcgen    = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+time     = "0.3"
