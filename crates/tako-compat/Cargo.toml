@@ -1,0 +1,31 @@
+[package]
+name         = "tako-compat"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "OpenAI-compatible HTTP server for tako (Phase 2)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+tako-orchestrator  = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+anyhow             = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+axum               = { workspace = true }
+tower              = { workspace = true }
+tower-http         = { workspace = true }
+hyper              = { workspace = true }
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["full"] }
+reqwest            = { workspace = true }

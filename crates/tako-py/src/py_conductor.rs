@@ -14,7 +14,13 @@ use crate::py_provider::{ProviderHandle, map_err};
 
 #[pyclass(name = "Conductor", module = "tako._native", skip_from_py_object)]
 pub struct PyConductor {
-    inner: Arc<Conductor>,
+    pub(crate) inner: Arc<Conductor>,
+}
+
+impl PyConductor {
+    pub(crate) fn inner_arc(&self) -> Arc<dyn Orchestrator> {
+        Arc::clone(&self.inner) as Arc<dyn Orchestrator>
+    }
 }
 
 impl std::fmt::Debug for PyConductor {

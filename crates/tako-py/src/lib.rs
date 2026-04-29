@@ -14,6 +14,7 @@
 
 mod conv;
 mod py_bedrock;
+mod py_compat;
 mod py_conductor;
 mod py_governance;
 mod py_mcp;
@@ -38,6 +39,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_governance::init_tracing_py, m)?)?;
     m.add_function(wrap_pyfunction!(py_governance::init_otlp_tracing_py, m)?)?;
     m.add_function(wrap_pyfunction!(py_governance::shutdown_otlp_py, m)?)?;
+    m.add_function(wrap_pyfunction!(py_compat::serve_openai_py, m)?)?;
+    m.add_function(wrap_pyfunction!(py_compat::shutdown_compat_py, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
