@@ -95,11 +95,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `src/budget_redis.rs` for the `format_day_key` pure function (date
   format stability + Unicode tenant IDs).
 
+- **Python facade for Phase-4 Rust additions** (Phase 4.G): wires
+  `WebSocketTransport`, `GrpcTransport`, `CatalogueVerifier`, and
+  `RedisBudgetBackend` through to Pythonic surfaces.
+  - `tako.mcp.WebSocket(url)` and `tako.mcp.Grpc(endpoint)` join the
+    existing `Stdio` / `Http` transport classes; both run the
+    `initialize` → `initialized` MCP handshake at construction time and
+    plug into the orchestrator's heterogeneous `mcp_servers=[...]`
+    arg via the extended
+    `crates/tako-py/src/py_mcp.rs::extract_transport_handle`.
+  - `tako.sigstore.CatalogueVerifier(pem)` (or
+    `.from_pem_path(path)`) verifies a cosign-signed manifest and
+    returns a `tako.sigstore.Catalogue` whose `.tools` are typed
+    `tako.ToolSchema` objects ready to feed into a registry.
+  - `tako.budget.RedisBackend(url, key_prefix=..., ttl_secs=...)`
+    exposes the multi-process Redis budget backend with awaitable
+    `current_usage(tenant_id) -> TenantUsage` and
+    `record(tenant_id, usd, tokens) -> None` methods.
+- New `tako-py` Cargo features: `ws`, `grpc`, `sigstore`, `redis` —
+  each forwards to the matching feature on the underlying crate. The
+  abi3 wheel is built with the desired subset, e.g.
+  `maturin develop --features "ws grpc sigstore redis"`.
+- New `crates/tako-py/src/{py_sigstore,py_runtime}.rs` modules;
+  `py_mcp.rs` extended with `PyWebSocket` + `PyGrpc`.
+- Python additions: new `python/tako/sigstore.py` module exporting
+  `Catalogue` + `CatalogueVerifier`; `python/tako/budget.py` extended
+  with `RedisBackend` + `TenantUsage`; `python/tako/mcp.py` extended
+  with `WebSocket` + `Grpc`; `python/tako/_native.pyi` stubs updated.
+- Tests in `tests/python/test_phase4_facades.py` (8 cases): each
+  block auto-skips when its underlying class isn't on `_native` (so
+  feature-stripped builds stay green). Sigstore tests use the
+  `cryptography` Python library to generate an ECDSA-P256 keypair at
+  test time and round-trip a signed manifest; Redis tests auto-skip
+  when `REDIS_URL` is unset.
+- `pyproject.toml` adds `cryptography>=43` to the `dev` extra (used
+  only by the sigstore facade test; the runtime depends on neither).
+
 ### Notes
 
-- PyO3 + Python facade for `WebSocketTransport`, `GrpcTransport`,
-  `CatalogueVerifier`, and `RedisBudgetBackend` is intentionally
-  deferred to a later sub-phase; all four remain Rust-only for now.
+- The Python facade for `RedisBudgetBackend` exposes the backend as a
+  standalone class with `record` / `current_usage`. Wiring it through
+  `tako.Client` / `tako.SingleAgent` so the orchestrator
+  automatically consults it is deferred — no current Python orchestrator
+  surface accepts a `BudgetBackend` arg.
 
 ## [0.4.0] - 2026-04-29
 

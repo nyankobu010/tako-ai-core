@@ -37,4 +37,23 @@ class Http(_TransportBase):
         self._native = _native.StreamableHttp(url, headers=headers, timeout_secs=timeout_secs)
 
 
-__all__ = ["Http", "Stdio"]
+class WebSocket(_TransportBase):
+    """MCP WebSocket transport. Bidirectional JSON-RPC over a single
+    ``ws://`` or ``wss://`` connection. Available when the wheel was built
+    with the ``ws`` Cargo feature (raises ``AttributeError`` otherwise)."""
+
+    def __init__(self, url: str) -> None:
+        self._native = _native.WebSocket(url)
+
+
+class Grpc(_TransportBase):
+    """MCP gRPC transport. JSON-RPC frames carried over a single bidi
+    streaming RPC. Endpoint is ``http://host:port`` (plaintext) or
+    ``https://host:port`` (rustls + webpki-roots). Available when the
+    wheel was built with the ``grpc`` Cargo feature."""
+
+    def __init__(self, endpoint: str) -> None:
+        self._native = _native.Grpc(endpoint)
+
+
+__all__ = ["Grpc", "Http", "Stdio", "WebSocket"]

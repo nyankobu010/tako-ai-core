@@ -125,6 +125,38 @@ class StreamableHttp:
         timeout_secs: int | None = ...,
     ) -> None: ...
 
+class WebSocket:
+    """Available when the wheel is built with the ``ws`` feature."""
+
+    def __init__(self, url: str) -> None: ...
+
+class Grpc:
+    """Available when the wheel is built with the ``grpc`` feature."""
+
+    def __init__(self, endpoint: str) -> None: ...
+
+class CatalogueVerifier:
+    """Available when the wheel is built with the ``sigstore`` feature."""
+
+    def __init__(self, pem: bytes) -> None: ...
+    @staticmethod
+    def from_pem_path(path: str) -> CatalogueVerifier: ...
+    def verify(
+        self, manifest: bytes, signature: bytes
+    ) -> tuple[str | None, str]: ...
+
+class RedisBudgetBackend:
+    """Available when the wheel is built with the ``redis`` feature."""
+
+    def __init__(
+        self,
+        url: str,
+        key_prefix: str | None = ...,
+        ttl_secs: int | None = ...,
+    ) -> None: ...
+    def current_usage(self, tenant_id: str) -> Awaitable[tuple[float, int]]: ...
+    def record(self, tenant_id: str, usd: float, tokens: int) -> Awaitable[None]: ...
+
 class Orchestrator:
     def __init__(
         self,

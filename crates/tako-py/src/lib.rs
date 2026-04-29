@@ -23,8 +23,12 @@ mod py_orchestrator;
 mod py_provider;
 mod py_python_provider;
 mod py_router;
+#[cfg(feature = "redis")]
+mod py_runtime;
 mod py_secrets;
 mod py_self_caller;
+#[cfg(feature = "sigstore")]
+mod py_sigstore;
 mod py_trinity;
 mod py_vertex;
 
@@ -50,7 +54,15 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_router::PyOnnxRouter>()?;
     m.add_class::<py_mcp::PyStdio>()?;
     m.add_class::<py_mcp::PyStreamableHttp>()?;
+    #[cfg(feature = "ws")]
+    m.add_class::<py_mcp::PyWebSocket>()?;
+    #[cfg(feature = "grpc")]
+    m.add_class::<py_mcp::PyGrpc>()?;
     m.add_class::<py_governance::PyBudget>()?;
+    #[cfg(feature = "sigstore")]
+    m.add_class::<py_sigstore::PyCatalogueVerifier>()?;
+    #[cfg(feature = "redis")]
+    m.add_class::<py_runtime::PyRedisBudgetBackend>()?;
     m.add_class::<py_secrets::PyVaultResolver>()?;
     m.add_class::<py_secrets::PyAzureKeyVaultResolver>()?;
     m.add_class::<py_secrets::PyGcpSecretManagerResolver>()?;
