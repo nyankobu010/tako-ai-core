@@ -22,6 +22,14 @@ thiserror          = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }
 sha2               = "0.10"
+regex              = { workspace = true }
+# Optional ONNX dependency for `OnnxRouter`. Enable via `--features onnx`.
+ort                = { workspace = true, optional = true }
+ndarray            = { workspace = true, optional = true }
+
+[features]
+default = []
+onnx    = ["dep:ort", "dep:ndarray"]
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }

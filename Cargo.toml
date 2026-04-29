@@ -97,6 +97,10 @@ aws-sdk-secretsmanager  = { version = "1.83", default-features = false, features
 # encoding (Phase 2.5 cloud resolvers + Bedrock binary blobs)
 base64                  = "0.22"
 
+# ML inference (Phase 3 Trinity router; OnnxRouter behind `onnx` feature)
+ort                     = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "ndarray"] }
+ndarray                 = "0.16"
+
 # Test-time only (dev-deps in member crates)
 tokio-test         = "0.4"
 wiremock           = "0.6"
