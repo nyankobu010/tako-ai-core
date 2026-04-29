@@ -110,11 +110,7 @@ impl SecretResolver for AwsSecretsManagerResolver {
             req = req.version_id(v);
         }
         let out = req.send().await.map_err(|e| {
-            TakoError::provider(
-                "aws-secrets-manager",
-                secret_id.to_string(),
-                format!("{e}"),
-            )
+            TakoError::provider("aws-secrets-manager", secret_id.to_string(), format!("{e}"))
         })?;
 
         if let Some(s) = out.secret_string() {

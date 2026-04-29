@@ -3,13 +3,15 @@
 > Per spec §19 rule 1: this is the rolling project plan that future Claude
 > Code sessions read on entry. Update it as phases land or scope shifts.
 >
-> **Done**: Phase 1 (foundation, v0.1.0) + Phase 2 with bundled
-> Phase 1.5 (orchestration, v0.2.0). See [PLAN_PHASE2.md](PLAN_PHASE2.md)
-> and [CHANGELOG.md](CHANGELOG.md).
+> **Done**:
+> - Phase 1 (foundation, v0.1.0) — see [CHANGELOG.md](CHANGELOG.md) `## [0.1.0]`
+> - Phase 2 + bundled Phase 1.5 (orchestration, v0.2.0) — see
+>   [PLAN_PHASE2.md](PLAN_PHASE2.md) and `## [0.2.0]`
+> - Phase 2.5 (cloud breadth + carry-overs, v0.3.0) — see
+>   [PLAN_PHASE25.md](PLAN_PHASE25.md) and `## [0.3.0]`
 >
-> **Next**: Phase 2.5 — Azure OpenAI + Vertex providers, Vault / cloud
-> secret resolvers, full mkdocs nav. Or skip ahead to Phase 3 (Trinity
-> learned routing). Plan when starting.
+> **Next**: Phase 3 — Trinity learned router (rule + ONNX), training
+> harness, SelfCaller bounded recursion, eval harness. Plan when starting.
 
 ## Phase 1: Foundation
 

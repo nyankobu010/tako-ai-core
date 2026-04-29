@@ -81,9 +81,9 @@ impl AzureOpenAiBuilder {
         let deployment = self.deployment.ok_or_else(|| {
             TakoError::Invalid("AzureOpenAiBuilder: deployment is required".into())
         })?;
-        let endpoint = self.endpoint.ok_or_else(|| {
-            TakoError::Invalid("AzureOpenAiBuilder: endpoint is required".into())
-        })?;
+        let endpoint = self
+            .endpoint
+            .ok_or_else(|| TakoError::Invalid("AzureOpenAiBuilder: endpoint is required".into()))?;
         let api_key = self
             .api_key
             .ok_or_else(|| TakoError::Invalid("AzureOpenAiBuilder: api_key is required".into()))?;

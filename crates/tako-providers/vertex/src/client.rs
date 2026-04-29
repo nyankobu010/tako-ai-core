@@ -99,7 +99,9 @@ impl VertexBuilder {
             access_token
         };
 
-        let location = self.location.unwrap_or_else(|| DEFAULT_LOCATION.to_string());
+        let location = self
+            .location
+            .unwrap_or_else(|| DEFAULT_LOCATION.to_string());
         let timeout = self.timeout.unwrap_or(Duration::from_secs(120));
 
         let mut headers = HeaderMap::new();
@@ -163,10 +165,7 @@ impl VertexProvider {
     fn base_endpoint(&self) -> String {
         match &self.inner.endpoint_url {
             Some(u) => u.trim_end_matches('/').to_string(),
-            None => format!(
-                "https://{}-aiplatform.googleapis.com",
-                self.inner.location
-            ),
+            None => format!("https://{}-aiplatform.googleapis.com", self.inner.location),
         }
     }
 

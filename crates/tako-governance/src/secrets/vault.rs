@@ -99,7 +99,9 @@ impl SecretResolver for VaultResolver {
             .map_err(|e| TakoError::Transport(e.to_string()))?;
         let status = resp.status();
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(TakoError::NotFound(format!("vault secret `{key}` not found")));
+            return Err(TakoError::NotFound(format!(
+                "vault secret `{key}` not found"
+            )));
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();

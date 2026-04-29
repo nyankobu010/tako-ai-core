@@ -114,9 +114,7 @@ async fn chat_completions_stream(
     // don't yet implement event streaming. The wire format is identical
     // either way (chunks + `data: [DONE]`), so the OpenAI SDK can't tell
     // the difference.
-    let mut native = orch
-        .stream(&principal, OrchInput::from_user(prompt))
-        .await;
+    let mut native = orch.stream(&principal, OrchInput::from_user(prompt)).await;
     let head = native.next().await;
     let event_stream: futures::stream::BoxStream<'static, Result<OrchEvent, tako_core::TakoError>> =
         match head {
@@ -186,7 +184,10 @@ fn emulated_text_then_final(
             let final_evt = OrchEvent::Final { output };
             let mut events: Vec<Result<OrchEvent, tako_core::TakoError>> = Vec::new();
             if !text.is_empty() {
-                events.push(Ok(OrchEvent::AssistantText { step: 0, delta: text }));
+                events.push(Ok(OrchEvent::AssistantText {
+                    step: 0,
+                    delta: text,
+                }));
             }
             events.push(Ok(final_evt));
             futures::stream::iter(events).boxed()

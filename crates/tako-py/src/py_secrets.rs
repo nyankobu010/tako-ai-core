@@ -17,7 +17,11 @@ use tako_governance::{
 
 use crate::py_provider::map_err;
 
-fn run_resolve<'py, R>(py: Python<'py>, resolver: Arc<R>, key: String) -> PyResult<Bound<'py, PyAny>>
+fn run_resolve<'py, R>(
+    py: Python<'py>,
+    resolver: Arc<R>,
+    key: String,
+) -> PyResult<Bound<'py, PyAny>>
 where
     R: SecretResolver + ?Sized + 'static,
 {
@@ -55,7 +59,11 @@ impl PyVaultResolver {
     }
 }
 
-#[pyclass(name = "AzureKeyVaultResolver", module = "tako._native", from_py_object)]
+#[pyclass(
+    name = "AzureKeyVaultResolver",
+    module = "tako._native",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyAzureKeyVaultResolver {
     inner: Arc<AzureKeyVaultResolver>,
@@ -85,7 +93,11 @@ impl PyAzureKeyVaultResolver {
     }
 }
 
-#[pyclass(name = "GcpSecretManagerResolver", module = "tako._native", from_py_object)]
+#[pyclass(
+    name = "GcpSecretManagerResolver",
+    module = "tako._native",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyGcpSecretManagerResolver {
     inner: Arc<GcpSecretManagerResolver>,
@@ -115,7 +127,11 @@ impl PyGcpSecretManagerResolver {
     }
 }
 
-#[pyclass(name = "AwsSecretsManagerResolver", module = "tako._native", from_py_object)]
+#[pyclass(
+    name = "AwsSecretsManagerResolver",
+    module = "tako._native",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyAwsSecretsManagerResolver {
     inner: Arc<AwsSecretsManagerResolver>,
