@@ -6,8 +6,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use sha2::{Digest, Sha256};
 use tako_core::{
-    ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal, Role, TakoError, Usage,
+    ChatRequest, ContentPart, FinishReason, LlmProvider, Message, PolicyContext, PolicyDecision,
+    PolicyEngine, PolicyStage, Principal, Role, TakoError, Usage,
 };
 use tako_mcp::ToolRegistry;
 use tracing::{Instrument, info_span};
@@ -26,6 +28,9 @@ pub struct SingleAgent {
     /// constructs (temperature, max_tokens). Tools and stream are managed
     /// by the orchestrator itself.
     defaults: ChatDefaults,
+    /// Optional policy engine consulted at PreChat / PreTool stages.
+    /// `None` is equivalent to AllowAll (zero overhead).
+    policy: Option<Arc<dyn PolicyEngine>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -55,6 +60,7 @@ pub struct SingleAgentBuilder {
     tools: Option<Arc<ToolRegistry>>,
     max_steps: Option<u32>,
     defaults: ChatDefaults,
+    policy: Option<Arc<dyn PolicyEngine>>,
 }
 
 impl std::fmt::Debug for SingleAgentBuilder {
@@ -93,6 +99,14 @@ impl SingleAgentBuilder {
         self
     }
 
+    /// Attach a policy engine consulted before each provider call
+    /// (PreChat) and before each tool invocation (PreTool). A
+    /// `Deny` decision is propagated as `TakoError::PolicyDenied`.
+    pub fn policy(mut self, policy: Arc<dyn PolicyEngine>) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
     pub fn build(self) -> Result<SingleAgent, TakoError> {
         Ok(SingleAgent {
             provider: self.provider.ok_or_else(|| {
@@ -101,6 +115,7 @@ impl SingleAgentBuilder {
             tools: self.tools.unwrap_or_else(|| Arc::new(ToolRegistry::new())),
             max_steps: self.max_steps.unwrap_or(DEFAULT_MAX_STEPS),
             defaults: self.defaults,
+            policy: self.policy,
         })
     }
 }
@@ -201,9 +216,33 @@ impl Orchestrator for SingleAgent {
                 }
 
                 // Execute each tool call in order; append results as a single
-                // user-role message containing all ToolResult parts.
+                // user-role message containing all ToolResult parts. PreTool
+                // policy is consulted per call.
                 let mut tool_results: Vec<ContentPart> = Vec::with_capacity(tool_calls.len());
                 for (id, name, args) in tool_calls {
+                    if let Some(engine) = &self.policy {
+                        let ctx = PolicyContext {
+                            stage: PolicyStage::PreTool,
+                            model: model.clone(),
+                            messages_hash: hash_messages(&messages),
+                            tools: vec![name.clone()],
+                            tool_args_hash: Some(hash_value(&args)),
+                            response_hash: None,
+                        };
+                        match engine.evaluate(principal, ctx).await? {
+                            PolicyDecision::Deny { reason } => {
+                                return Err(TakoError::PolicyDenied(format!(
+                                    "tool `{name}`: {reason}"
+                                )));
+                            }
+                            PolicyDecision::RequireApproval { reason } => {
+                                return Err(TakoError::PolicyDenied(format!(
+                                    "tool `{name}` requires approval: {reason}"
+                                )));
+                            }
+                            _ => {}
+                        }
+                    }
                     let result = match self.tools.invoke(principal, &name, args).await {
                         Ok(v) => ContentPart::ToolResult {
                             id,
@@ -260,4 +299,31 @@ impl Orchestrator for SingleAgent {
             ))
         }))
     }
+}
+
+fn hash_messages(messages: &[Message]) -> String {
+    let mut hasher = Sha256::new();
+    for m in messages {
+        hasher.update(format!("{:?}", m.role).as_bytes());
+        for c in &m.content {
+            hasher.update(serde_json::to_string(c).unwrap_or_default().as_bytes());
+        }
+        hasher.update(b"|");
+    }
+    hex_digest(hasher.finalize().as_slice())
+}
+
+fn hash_value(v: &serde_json::Value) -> String {
+    let s = serde_json::to_string(v).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    hex_digest(hasher.finalize().as_slice())
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
 }

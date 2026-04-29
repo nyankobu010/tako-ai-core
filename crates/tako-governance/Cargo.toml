@@ -27,7 +27,10 @@ anyhow             = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }
 regex              = { workspace = true }
+regorus            = { workspace = true }
 sha2               = "0.10"
+hex                = "0.4"
+chrono             = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }

@@ -12,8 +12,10 @@
 
 pub mod otel;
 pub mod pii;
+pub mod policy;
 pub mod secrets;
 
 pub use otel::{TracerGuard, TracingConfig, init_otlp_tracing, init_tracing};
 pub use pii::{ContentTransform, PiiHit, PiiKind, apply, detect};
+pub use policy::{AuditLog, OpaBundle};
 pub use secrets::{EnvResolver, SecretResolver, SecretString};
