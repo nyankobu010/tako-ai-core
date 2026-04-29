@@ -51,3 +51,10 @@ tonic              = { workspace = true }
 tonic-prost        = { workspace = true }
 prost              = { workspace = true }
 tokio-stream       = { workspace = true, features = ["net"] }
+# Generate self-signed CA + leaf certs at test time for the mTLS gRPC
+# coverage; matches the test-only cert generation in tako-governance.
+rcgen              = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+time               = "0.3"
+# Explicit rustls crypto provider so the mTLS tests can pin one when
+# both `aws-lc-rs` (via rcgen) and `ring` (via tonic) end up linked in.
+rustls             = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
