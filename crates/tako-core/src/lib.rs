@@ -13,7 +13,10 @@ pub mod traits;
 pub mod types;
 
 pub use error::{ProviderErrorDetails, TakoError};
-pub use traits::{LlmProvider, McpTransport, PolicyEngine, Router, Tool};
+pub use traits::{
+    AlwaysConfident, ConfidenceGuard, ConstantConfidence, LlmProvider, McpTransport, PolicyEngine,
+    Router, Tool,
+};
 pub use types::{
     Budget, BudgetUsage, Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart,
     FinishReason, Message, PolicyContext, PolicyDecision, PolicyStage, Principal, RetryAfter, Role,
