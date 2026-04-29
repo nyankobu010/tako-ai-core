@@ -9,7 +9,9 @@ use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use tako_core::LlmProvider;
 use tako_orchestrator::{Conductor, OrchInput, Orchestrator};
+use tako_runtime::BudgetTracker;
 
+use crate::py_governance::PyBudget;
 use crate::py_provider::{ProviderHandle, map_err};
 
 #[pyclass(name = "Conductor", module = "tako._native", skip_from_py_object)]
@@ -37,7 +39,17 @@ impl PyConductor {
     /// `{role: provider}`) accept the usual provider classes
     /// (OpenAI, Anthropic, Bedrock, FakeProvider, PythonProvider).
     #[new]
-    #[pyo3(signature = (coordinator, workers, max_steps=6, max_fanout=4, worker_timeout_secs=120, fail_fast=false))]
+    #[pyo3(signature = (
+        coordinator,
+        workers,
+        max_steps=6,
+        max_fanout=4,
+        worker_timeout_secs=120,
+        fail_fast=false,
+        budget=None,
+        budget_backend=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         coordinator: Py<PyAny>,
@@ -46,6 +58,8 @@ impl PyConductor {
         max_fanout: usize,
         worker_timeout_secs: u64,
         fail_fast: bool,
+        budget: Option<PyBudget>,
+        budget_backend: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         let coord_handle = extract_provider(py, &coordinator)?;
         let mut builder = Conductor::builder()
@@ -57,6 +71,17 @@ impl PyConductor {
         for (name, w) in workers {
             let h = extract_provider(py, &w)?;
             builder = builder.worker(name, h.inner);
+        }
+        if budget.is_some() || budget_backend.is_some() {
+            let budget_inner = budget.map(|b| b.inner).unwrap_or_default();
+            let backend = if let Some(obj) = budget_backend {
+                crate::py_runtime::extract_budget_backend(py, &obj)?
+            } else {
+                Arc::new(tako_runtime::InMemoryBudgetBackend::new())
+                    as Arc<dyn tako_runtime::BudgetBackend>
+            };
+            let tracker = Arc::new(BudgetTracker::new(backend, budget_inner));
+            builder = builder.budget(tracker);
         }
         let cond = builder.build().map_err(map_err)?;
         Ok(Self {

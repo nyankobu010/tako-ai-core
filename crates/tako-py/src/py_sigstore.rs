@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use tako_governance::sigstore::{Catalogue, CatalogueVerifier, IdentityPolicy, KeylessVerifier};
+use tako_governance::sigstore::{
+    Catalogue, CatalogueVerifier, IdentityPolicy, KeylessVerifier, TrustRoot,
+};
 
 use crate::py_provider::map_err;
 
@@ -87,23 +89,49 @@ impl std::fmt::Debug for PyKeylessVerifier {
 
 #[pymethods]
 impl PyKeylessVerifier {
-    /// Build a verifier from an `IdentityPolicy`.
+    /// Build a verifier from an `IdentityPolicy` plus optional
+    /// chain-of-trust and Rekor-SET enforcement.
     ///
     /// `issuer` is the expected OIDC issuer URI from the leaf cert's
     /// Fulcio extension. `san` is matched against the cert's SAN — by
     /// default an exact-string match; set `san_is_regex=True` to treat
     /// `san` as an anchored regex pattern.
+    ///
+    /// `trust_root` is an optional `tako._native.TrustRoot` instance.
+    /// When set, every cert in the bundle's `chain_pem` plus the leaf
+    /// is signature-validated and must terminate at one of the trust
+    /// root's roots. Without `trust_root`, chain validation is skipped
+    /// (v0.6.0 behaviour).
+    ///
+    /// `rekor_public_key_pem` is an optional PEM (typically Rekor's
+    /// public-good ECDSA-P256 key). When set and the bundle carries a
+    /// `rekor` field, the SET is verified against the key.
     #[new]
-    #[pyo3(signature = (issuer, san, *, san_is_regex=false))]
-    fn new(issuer: &str, san: &str, san_is_regex: bool) -> PyResult<Self> {
+    #[pyo3(signature = (issuer, san, *, san_is_regex=false, trust_root=None, rekor_public_key_pem=None))]
+    fn new(
+        py: Python<'_>,
+        issuer: &str,
+        san: &str,
+        san_is_regex: bool,
+        trust_root: Option<Py<PyAny>>,
+        rekor_public_key_pem: Option<Vec<u8>>,
+    ) -> PyResult<Self> {
         let policy = if san_is_regex {
             IdentityPolicy::regex(issuer, san).map_err(map_err)?
         } else {
             IdentityPolicy::exact(issuer, san)
         };
-        Ok(Self {
-            inner: Arc::new(KeylessVerifier::new(policy)),
-        })
+        let mut v = KeylessVerifier::new(policy);
+        if let Some(tr) = trust_root {
+            let tr_ref: PyRef<'_, PyTrustRoot> = tr.extract(py).map_err(|_| {
+                PyValueError::new_err("trust_root must be a tako._native.TrustRoot")
+            })?;
+            v = v.with_trust_root((*tr_ref.inner).clone());
+        }
+        if let Some(pem) = rekor_public_key_pem {
+            v = v.with_rekor_key(&pem).map_err(map_err)?;
+        }
+        Ok(Self { inner: Arc::new(v) })
     }
 
     /// Verify a tako keyless bundle and return `(server, tools_json)`.
@@ -119,5 +147,44 @@ impl PyKeylessVerifier {
 
     fn __repr__(&self) -> String {
         "KeylessVerifier(...)".to_string()
+    }
+}
+
+/// Operator-pinned set of trust anchors (root + intermediate CAs).
+/// Build with `TrustRoot(roots_pem, intermediates_pem=None)` or
+/// `TrustRoot.from_paths(roots_path, intermediates_path=None)`.
+#[pyclass(name = "TrustRoot", module = "tako._native")]
+pub struct PyTrustRoot {
+    inner: Arc<TrustRoot>,
+}
+
+impl std::fmt::Debug for PyTrustRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PyTrustRoot").finish_non_exhaustive()
+    }
+}
+
+#[pymethods]
+impl PyTrustRoot {
+    #[new]
+    #[pyo3(signature = (roots_pem, intermediates_pem=None))]
+    fn new(roots_pem: &[u8], intermediates_pem: Option<&[u8]>) -> PyResult<Self> {
+        let tr = TrustRoot::from_pem(roots_pem, intermediates_pem).map_err(map_err)?;
+        Ok(Self {
+            inner: Arc::new(tr),
+        })
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (roots_path, intermediates_path=None))]
+    fn from_paths(roots_path: &str, intermediates_path: Option<&str>) -> PyResult<Self> {
+        let tr = TrustRoot::from_paths(roots_path, intermediates_path).map_err(map_err)?;
+        Ok(Self {
+            inner: Arc::new(tr),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        "TrustRoot(...)".to_string()
     }
 }

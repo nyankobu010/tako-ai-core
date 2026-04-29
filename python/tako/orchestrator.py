@@ -120,6 +120,8 @@ class Conductor:
         max_fanout: int = 4,
         worker_timeout_secs: int = 120,
         fail_fast: bool = False,
+        budget: Any = None,
+        budget_backend: Any = None,
     ) -> None:
         if not hasattr(coordinator, "_handle"):
             raise TypeError("coordinator must be a tako.providers.* instance")
@@ -128,6 +130,8 @@ class Conductor:
             if not hasattr(w, "_handle"):
                 raise TypeError(f"workers[{name!r}] must be a tako.providers.* instance")
             worker_handles[name] = w._handle
+        budget_native = budget._native if budget is not None else None
+        backend_native = budget_backend._native if budget_backend is not None else None
         self._inner = _native.Conductor(
             coordinator._handle,
             worker_handles,
@@ -135,6 +139,8 @@ class Conductor:
             max_fanout=max_fanout,
             worker_timeout_secs=worker_timeout_secs,
             fail_fast=fail_fast,
+            budget=budget_native,
+            budget_backend=backend_native,
         )
 
     async def run(
@@ -173,6 +179,8 @@ class Trinity:
         router: Any,
         *,
         max_steps: int = 8,
+        budget: Any = None,
+        budget_backend: Any = None,
     ) -> None:
         if not hasattr(router, "_native"):
             raise TypeError("router must be a tako.routers.* instance")
@@ -183,7 +191,15 @@ class Trinity:
             if not hasattr(p, "_handle"):
                 raise TypeError(f"roles[{name!r}] must be a tako.providers.* instance")
             ordered.append((name, p._handle))
-        self._inner = _native.Trinity(ordered, router._native, max_steps=max_steps)
+        budget_native = budget._native if budget is not None else None
+        backend_native = budget_backend._native if budget_backend is not None else None
+        self._inner = _native.Trinity(
+            ordered,
+            router._native,
+            max_steps=max_steps,
+            budget=budget_native,
+            budget_backend=backend_native,
+        )
 
     async def run(
         self,

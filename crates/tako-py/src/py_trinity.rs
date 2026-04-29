@@ -6,8 +6,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use tako_orchestrator::{OrchInput, Orchestrator, Trinity};
+use tako_runtime::BudgetTracker;
 
 use crate::py_conductor::extract_any_provider;
+use crate::py_governance::PyBudget;
 use crate::py_router::extract_router;
 
 #[pyclass(name = "Trinity", module = "tako._native", skip_from_py_object)]
@@ -34,12 +36,14 @@ impl PyTrinity {
     /// `roles` is a dict mapping `role_name -> provider`. `router` is one
     /// of `tako._native.RegexRouter` or `tako._native.OnnxRouter`.
     #[new]
-    #[pyo3(signature = (roles, router, max_steps=8))]
+    #[pyo3(signature = (roles, router, max_steps=8, budget=None, budget_backend=None))]
     fn new(
         py: Python<'_>,
         roles: Vec<(String, Py<PyAny>)>,
         router: Py<PyAny>,
         max_steps: u32,
+        budget: Option<PyBudget>,
+        budget_backend: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         let mut builder = Trinity::builder()
             .router(extract_router(py, &router)?)
@@ -47,6 +51,17 @@ impl PyTrinity {
         for (name, p) in roles {
             let prov = extract_any_provider(py, &p)?;
             builder = builder.role(name, prov);
+        }
+        if budget.is_some() || budget_backend.is_some() {
+            let budget_inner = budget.map(|b| b.inner).unwrap_or_default();
+            let backend = if let Some(obj) = budget_backend {
+                crate::py_runtime::extract_budget_backend(py, &obj)?
+            } else {
+                Arc::new(tako_runtime::InMemoryBudgetBackend::new())
+                    as Arc<dyn tako_runtime::BudgetBackend>
+            };
+            let tracker = Arc::new(BudgetTracker::new(backend, budget_inner));
+            builder = builder.budget(tracker);
         }
         let trinity = builder
             .build()

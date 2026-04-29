@@ -94,14 +94,11 @@ class KeylessVerifier:
     Operators produce it from ``cosign sign-blob`` output (see the
     ``examples/16_sigstore_keyless.py`` recipe).
 
-    .. note::
-
-        The v0.6.0 keyless verifier ships **leaf-cert + identity-policy +
-        signature** verification. Chain-of-trust validation against the
-        Fulcio root and Rekor SET verification are tracked as follow-up
-        work; operators are expected to validate those pieces with
-        ``cosign verify-blob`` at deploy time and ship a pre-validated
-        bundle.
+    Optional ``trust_root`` and ``rekor_public_key_pem`` kwargs (Phase 6,
+    v0.7.0) extend the v0.6.0 leaf-cert + identity check with full
+    chain-of-trust validation against an operator-pinned Fulcio root and
+    Rekor SET verification against an operator-pinned Rekor public key.
+    Both default to ``None`` so existing v0.6.0 callers keep working.
     """
 
     _native: Any
@@ -112,11 +109,16 @@ class KeylessVerifier:
         san: str,
         *,
         san_is_regex: bool = False,
+        trust_root: TrustRoot | None = None,
+        rekor_public_key_pem: bytes | None = None,
     ) -> None:
+        tr_native = trust_root._native if trust_root is not None else None
         self._native = _native.KeylessVerifier(
             issuer,
             san,
             san_is_regex=san_is_regex,
+            trust_root=tr_native,
+            rekor_public_key_pem=rekor_public_key_pem,
         )
 
     def verify_bundle(self, manifest: bytes, bundle: bytes) -> Catalogue:
@@ -131,4 +133,55 @@ class KeylessVerifier:
         return repr(self._native)
 
 
-__all__ = ["Catalogue", "CatalogueVerifier", "KeylessVerifier"]
+class TrustRoot:
+    """Operator-pinned trust anchors for chain-of-trust validation.
+
+    Build from inline PEM bytes:
+
+    .. code-block:: python
+
+        tr = tako.sigstore.TrustRoot(roots_pem, intermediates_pem)
+
+    or from filesystem paths:
+
+    .. code-block:: python
+
+        tr = tako.sigstore.TrustRoot.from_paths(
+            "fulcio.crt.pem",
+            "fulcio_intermediate.crt.pem",
+        )
+
+    Pass the result to :class:`KeylessVerifier` via the ``trust_root=``
+    kwarg. The verifier walks the bundle's leaf + intermediates chain
+    upward and requires it to terminate at one of the pinned roots.
+    """
+
+    _native: Any
+
+    def __init__(
+        self,
+        roots_pem: bytes,
+        intermediates_pem: bytes | None = None,
+    ) -> None:
+        self._native = _native.TrustRoot(roots_pem, intermediates_pem)
+
+    @classmethod
+    def from_paths(
+        cls,
+        roots_path: str,
+        intermediates_path: str | None = None,
+    ) -> TrustRoot:
+        """Load both PEM blocks from filesystem paths.
+
+        ``intermediates_path`` may be ``None`` when the Fulcio deployment
+        issues directly from a root.
+        """
+        instance = cls.__new__(cls)
+        instance._native = _native.TrustRoot.from_paths(roots_path, intermediates_path)
+        return instance
+
+    def __repr__(self) -> str:
+        return repr(self._native)
+
+
+__all__ = ["Catalogue", "CatalogueVerifier", "KeylessVerifier", "TrustRoot"]

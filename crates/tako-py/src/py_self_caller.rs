@@ -11,8 +11,10 @@ use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use tako_core::ConfidenceGuard;
 use tako_orchestrator::{LlmJudgeGuard, OrchInput, Orchestrator, RuleBasedGuard, SelfCaller};
+use tako_runtime::BudgetTracker;
 
 use crate::py_conductor::{PyConductor, extract_any_provider};
+use crate::py_governance::PyBudget;
 use crate::py_orchestrator::PyOrchestrator;
 use crate::py_trinity::PyTrinity;
 
@@ -61,12 +63,34 @@ impl std::fmt::Debug for PyLlmJudgeGuard {
 impl PyLlmJudgeGuard {
     /// Build an LLM-judge guard. `judge` is any tako provider (OpenAI,
     /// Anthropic, ...). `rubric` is the system-style prompt the judge
-    /// scores against.
+    /// scores against. Optionally accepts `budget=` and
+    /// `budget_backend=` kwargs to meter the judge's own provider call
+    /// — distinct from the inner orchestrator's budget which covers
+    /// regular execution.
     #[new]
-    fn new(py: Python<'_>, judge: Py<PyAny>, rubric: String) -> PyResult<Self> {
+    #[pyo3(signature = (judge, rubric, budget=None, budget_backend=None))]
+    fn new(
+        py: Python<'_>,
+        judge: Py<PyAny>,
+        rubric: String,
+        budget: Option<PyBudget>,
+        budget_backend: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
         let provider = extract_any_provider(py, &judge)?;
+        let mut guard = LlmJudgeGuard::new(provider, rubric);
+        if budget.is_some() || budget_backend.is_some() {
+            let budget_inner = budget.map(|b| b.inner).unwrap_or_default();
+            let backend = if let Some(obj) = budget_backend {
+                crate::py_runtime::extract_budget_backend(py, &obj)?
+            } else {
+                Arc::new(tako_runtime::InMemoryBudgetBackend::new())
+                    as Arc<dyn tako_runtime::BudgetBackend>
+            };
+            let tracker = Arc::new(BudgetTracker::new(backend, budget_inner));
+            guard = guard.with_budget(tracker);
+        }
         Ok(Self {
-            inner: Arc::new(LlmJudgeGuard::new(provider, rubric)) as Arc<dyn ConfidenceGuard>,
+            inner: Arc::new(guard) as Arc<dyn ConfidenceGuard>,
         })
     }
 }

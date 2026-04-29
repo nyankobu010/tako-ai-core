@@ -162,10 +162,26 @@ class KeylessVerifier:
         san: str,
         *,
         san_is_regex: bool = False,
+        trust_root: TrustRoot | None = ...,
+        rekor_public_key_pem: bytes | None = ...,
     ) -> None: ...
     def verify_bundle(
         self, manifest: bytes, bundle: bytes
     ) -> tuple[str | None, str]: ...
+
+class TrustRoot:
+    """Available when the wheel is built with the ``sigstore`` feature."""
+
+    def __init__(
+        self,
+        roots_pem: bytes,
+        intermediates_pem: bytes | None = ...,
+    ) -> None: ...
+    @staticmethod
+    def from_paths(
+        roots_path: str,
+        intermediates_path: str | None = ...,
+    ) -> TrustRoot: ...
 
 class InMemoryBudgetBackend:
     def __init__(self) -> None: ...
@@ -214,6 +230,8 @@ class Trinity:
         roles: list[tuple[str, Any]],
         router: Any,
         max_steps: int = ...,
+        budget: Any | None = ...,
+        budget_backend: Any | None = ...,
     ) -> None: ...
     def run(
         self,
@@ -258,7 +276,13 @@ class RuleBasedGuard:
     ) -> None: ...
 
 class LlmJudgeGuard:
-    def __init__(self, judge: Any, rubric: str) -> None: ...
+    def __init__(
+        self,
+        judge: Any,
+        rubric: str,
+        budget: Any | None = ...,
+        budget_backend: Any | None = ...,
+    ) -> None: ...
 
 class RegexRouter:
     def __init__(self) -> None: ...
@@ -275,6 +299,8 @@ class Conductor:
         max_fanout: int = ...,
         worker_timeout_secs: int = ...,
         fail_fast: bool = ...,
+        budget: Any | None = ...,
+        budget_backend: Any | None = ...,
     ) -> None: ...
     def run(
         self,

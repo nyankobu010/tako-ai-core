@@ -32,12 +32,31 @@ class LlmJudge(_GuardBase):
     Asks ``judge`` (any tako provider) to score the candidate answer
     against ``rubric`` and reply with a single decimal in ``[0, 1]``.
     Anything unparseable falls back to ``0.5``.
+
+    Optional ``budget`` and ``budget_backend`` kwargs meter the judge's
+    own provider call. This is independent of the inner orchestrator's
+    budget, which covers regular execution; the judge's call goes
+    out-of-band so it needs its own hook to be metered.
     """
 
-    def __init__(self, judge: Any, rubric: str) -> None:
+    def __init__(
+        self,
+        judge: Any,
+        rubric: str,
+        *,
+        budget: Any = None,
+        budget_backend: Any = None,
+    ) -> None:
         if not hasattr(judge, "_handle"):
             raise TypeError("judge must be a tako.providers.* instance")
-        self._native = _native.LlmJudgeGuard(judge._handle, rubric)
+        budget_native = budget._native if budget is not None else None
+        backend_native = budget_backend._native if budget_backend is not None else None
+        self._native = _native.LlmJudgeGuard(
+            judge._handle,
+            rubric,
+            budget=budget_native,
+            budget_backend=backend_native,
+        )
 
 
 __all__ = ["LlmJudge", "RuleBased"]
