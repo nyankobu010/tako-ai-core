@@ -1,4 +1,5 @@
-//! Bindings for `tako_governance::CatalogueVerifier` (Phase 4.G).
+//! Bindings for `tako_governance::CatalogueVerifier` (Phase 4.G) and
+//! `tako_governance::KeylessVerifier` (Phase 5.A).
 //!
 //! Gated behind the `sigstore` Cargo feature; the underlying crate dep
 //! arrives via `tako-governance/sigstore` only when this feature is
@@ -9,7 +10,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use tako_governance::sigstore::{Catalogue, CatalogueVerifier};
+use tako_governance::sigstore::{Catalogue, CatalogueVerifier, IdentityPolicy, KeylessVerifier};
 
 use crate::py_provider::map_err;
 
@@ -62,5 +63,61 @@ impl PyCatalogueVerifier {
 
     fn __repr__(&self) -> String {
         "CatalogueVerifier(...)".to_string()
+    }
+}
+
+/// Verifies cosign keyless-style bundles against a pinned identity
+/// policy (OIDC issuer + SAN match).
+///
+/// Construct with `KeylessVerifier(issuer, san, *, san_is_regex=False)`.
+/// Call `.verify_bundle(manifest, bundle)` where `bundle` is a JSON
+/// payload of shape `{"leaf_cert_pem": "...", "signature_b64": "..."}`.
+/// Returns a `(server: Optional[str], tools_json: str)` tuple matching
+/// `CatalogueVerifier.verify`.
+#[pyclass(name = "KeylessVerifier", module = "tako._native")]
+pub struct PyKeylessVerifier {
+    inner: Arc<KeylessVerifier>,
+}
+
+impl std::fmt::Debug for PyKeylessVerifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PyKeylessVerifier").finish_non_exhaustive()
+    }
+}
+
+#[pymethods]
+impl PyKeylessVerifier {
+    /// Build a verifier from an `IdentityPolicy`.
+    ///
+    /// `issuer` is the expected OIDC issuer URI from the leaf cert's
+    /// Fulcio extension. `san` is matched against the cert's SAN — by
+    /// default an exact-string match; set `san_is_regex=True` to treat
+    /// `san` as an anchored regex pattern.
+    #[new]
+    #[pyo3(signature = (issuer, san, *, san_is_regex=false))]
+    fn new(issuer: &str, san: &str, san_is_regex: bool) -> PyResult<Self> {
+        let policy = if san_is_regex {
+            IdentityPolicy::regex(issuer, san).map_err(map_err)?
+        } else {
+            IdentityPolicy::exact(issuer, san)
+        };
+        Ok(Self {
+            inner: Arc::new(KeylessVerifier::new(policy)),
+        })
+    }
+
+    /// Verify a tako keyless bundle and return `(server, tools_json)`.
+    fn verify_bundle(&self, manifest: &[u8], bundle: &[u8]) -> PyResult<(Option<String>, String)> {
+        let cat: Catalogue = self
+            .inner
+            .verify_bundle(manifest, bundle)
+            .map_err(map_err)?;
+        let tools_json = serde_json::to_string(&cat.tools)
+            .map_err(|e| PyValueError::new_err(format!("serialise tools: {e}")))?;
+        Ok((cat.server, tools_json))
+    }
+
+    fn __repr__(&self) -> String {
+        "KeylessVerifier(...)".to_string()
     }
 }

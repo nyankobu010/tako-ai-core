@@ -145,6 +145,20 @@ class CatalogueVerifier:
         self, manifest: bytes, signature: bytes
     ) -> tuple[str | None, str]: ...
 
+class KeylessVerifier:
+    """Available when the wheel is built with the ``sigstore`` feature."""
+
+    def __init__(
+        self,
+        issuer: str,
+        san: str,
+        *,
+        san_is_regex: bool = False,
+    ) -> None: ...
+    def verify_bundle(
+        self, manifest: bytes, bundle: bytes
+    ) -> tuple[str | None, str]: ...
+
 class RedisBudgetBackend:
     """Available when the wheel is built with the ``redis`` feature."""
 
