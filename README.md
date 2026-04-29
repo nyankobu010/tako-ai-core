@@ -105,14 +105,19 @@ result = orch.run_sync("Quick question: ...")
 
 ## Roadmap
 
-- **Phase 1 — Foundation** *(in progress)*: traits, runtime, two providers,
+- **Phase 1 — Foundation** *(done, v0.1.0)*: traits, runtime, two providers,
   MCP basics, `SingleAgent`, OTel, PyO3 wheel, CI green.
-- **Phase 2 — Orchestration**: `Conductor`, OPA enforcement, OpenAI-compat
-  server, Bedrock / Vertex / Azure providers, Vault / cloud secrets.
-- **Phase 3 — Learned coordination**: `Trinity` router with ONNX, training
-  harness, `SelfCaller` recursion, eval harness.
-- **Phase 4 — Search & scale**: AB-MCTS with verifiers, Mistral / Ollama,
-  WebSocket / gRPC MCP, Sigstore verification, Redis budget backend.
+- **Phase 2 — Orchestration** *(done, v0.2.0)*: `Conductor`, OPA enforcement,
+  OpenAI-compat server, Bedrock provider.
+- **Phase 2.5 — Cloud breadth** *(done, v0.3.0)*: Azure OpenAI / Vertex
+  providers, Bedrock streaming, OpenAI-compat SSE, cloud secret resolvers,
+  full mkdocs nav.
+- **Phase 3 — Learned coordination** *(done, v0.4.0)*: `Trinity` router
+  (rule + ONNX), training harness, `SelfCaller` recursion, eval harness,
+  native orchestrator streaming.
+- **Phase 4 — Search & scale** *(next)*: AB-MCTS with verifiers,
+  Mistral / Ollama, WebSocket / gRPC MCP, Sigstore verification, Redis
+  budget backend.
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 

@@ -9,6 +9,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.4.0] - 2026-04-29
+
+Phase 3 — Learned coordination. Adds the Trinity router (rule-based +
+ONNX), SelfCaller bounded-recursion wrapper, a Python training harness
++ eval harness, and replaces the Phase-2 streaming stubs in
+`SingleAgent` and `Conductor` with native orchestrator-level streaming.
+
+### Added
+
+- **`Router` trait impls** in `tako-orchestrator`:
+  - `RegexRouter`: rule-based default. Featurises the most-recent user
+    message via the new shared `tako_orchestrator::features` module
+    (16-dim `f32` vector) and routes through built-in code/math/fallback
+    rules. `RegexRouter::builder()` accepts custom rule chains.
+  - `OnnxRouter`: feature-gated behind the `onnx` Cargo feature
+    (default off). Loads an ONNX classifier via `ort` 2.0.0-rc.10 with
+    `load-dynamic` so the wheel stays slim. Featuriser parity with
+    Python is asserted by `tests/python/test_features_parity.py`.
+
+- **`Trinity` orchestrator** (`tako_orchestrator::Trinity`): per-turn
+  role + model selection via a `Router`. Reuses the
+  `HashMap<String, Arc<dyn LlmProvider>>` worker-pool shape from
+  `Conductor` but with single-role-per-turn dispatch. PyO3 binding
+  `tako._native.Trinity` + facade `tako.Trinity`.
+
+- **`SelfCaller` orchestrator** (`tako_orchestrator::SelfCaller`):
+  bounded-recursion wrapper over any `Arc<dyn Orchestrator>`. After
+  each inner run, scores the output via `ConfidenceGuard::evaluate`;
+  if below `min_confidence` AND depth `< max_depth`, recurses with a
+  revision prompt appended. Depth tracked in
+  `Principal.metadata["tako.recursion.depth"]` so accidental infinite
+  loops are impossible.
+  - `ConfidenceGuard` trait lives in `tako-core` alongside
+    `AlwaysConfident` / `ConstantConfidence` test fixtures.
+  - Guard impls in `tako-orchestrator`: `RuleBasedGuard` (regex +
+    min-length) and `LlmJudgeGuard` (LLM-as-judge with parseable
+    decimal output).
+  - PyO3 bindings `tako._native.{SelfCaller, RuleBasedGuard,
+    LlmJudgeGuard}` + Python facade `tako.SelfCaller` and
+    `tako.guards.{RuleBased, LlmJudge}`.
+
+- **Native orchestrator streaming** (carry-over from Phase 2.5):
+  `SingleAgent::stream` and `Conductor::stream` now emit real
+  `OrchEvent` streams instead of returning `Phase 2 stub` errors.
+  `SingleAgent` forwards provider deltas as `OrchEvent::AssistantText`
+  when the underlying provider's `supports_streaming` is true and
+  falls back to `chat()` + one synthetic `AssistantText` otherwise.
+  `Conductor` emits one `AssistantText` per coordinator turn plus
+  `worker:<role>`-shaped `ToolCallStart` / `ToolCallResult` events for
+  each dispatched worker. The `tako-compat` SSE emulation fallback is
+  retained as a safety net for third-party orchestrators only.
+
+- **Composable `Router` on `SingleAgent`**: new builder methods
+  `.candidate(p)` and `.router(r)` enable per-step model selection over
+  `[primary, ...candidates]` without role-switching. Backwards-compatible
+  — without a router, the primary provider is used unconditionally.
+
+- **Trinity training harness** (`python/tako/training/`):
+  - `tako.training.features` — Python mirror of the Rust featuriser;
+    parity asserted by a corpus test.
+  - `tako.training.trinity.TrinityTrainer` — 2-layer MLP fit via numpy
+    SGD. `fit_jsonl(path)` reads
+    `{"prompt": ..., "label": ...}` rows; `export_onnx(path)` emits
+    the model in the shape `OnnxRouter` consumes
+    (`features:[1,16] → logits:[1,K]`).
+  - CLI: `python -m tako.training.trinity --rollouts r.jsonl --out m.onnx`.
+  - `numpy` and `onnx` are guarded by the new `tako[training]` extra so
+    the base wheel stays slim.
+
+- **Eval harness** (`python/tako/eval/`):
+  - `Eval(orch, dataset, k=, concurrency=).run()` returns an
+    `EvalReport` Pydantic model with pass-rate, p50/p95 latency, and
+    per-task breakdowns. Phase-3 DoD requires "10-task synthetic
+    benchmark + JSON report" — see
+    `python/tako/eval/datasets/synthetic.jsonl` (math + factual + code
+    mix).
+  - `load_dataset("swe_bench_lite" | "gpqa_diamond")` raises
+    `NotImplementedError` with explicit "Phase 4" pointers; no model
+    weights or proprietary data committed.
+  - CLI: `python -m tako.eval --orch module:fn --dataset synthetic --k 1 --out report.json`.
+
+- **`tako._native.featurise_text(text)`** helper exposed for the
+  parity test (Rust featuriser callable from Python).
+
+- **Examples**: `13_trinity_router.py`, `14_self_caller.py`,
+  `15_eval_harness.py`.
+
+- **Docs**: new `concepts/routing.md`, `concepts/self_caller.md`,
+  `recipes/trinity.md`, `recipes/self_caller.md`,
+  `recipes/eval_harness.md`. `concepts/orchestrators.md` extended with
+  Trinity + SelfCaller sections. mkdocs nav updated.
+
+### Changed
+
+- Workspace package version: `0.3.0` → `0.4.0` across `Cargo.toml`,
+  `pyproject.toml`, `python/tako/__init__.py`, `tests/python/test_smoke.py`.
+- Workspace deps added: `ort` 2.0.0-rc.10 (default features off, `load-dynamic`
+  + `ndarray`), `ndarray` 0.16. `tako-orchestrator` exposes them behind the
+  `onnx` feature; `tako-py` forwards the feature.
+- `tako-orchestrator` adds an `async-stream` 0.3 dep for the streaming
+  generator helpers.
+- `pyproject.toml` adds `[project.optional-dependencies] training = [...]`
+  for the training harness's `numpy` + `onnx` deps.
+- `Conductor::stream` extracts the worker-dispatch loop into a
+  free-function `dispatch_workers_static` so both `run` and `stream`
+  share one implementation.
+- `tako._native.Orchestrator(...)` constructor adds optional
+  `candidates=` and `router=` kwargs for the SingleAgent router opt-in.
+- `tako._native.Trinity` accepts `roles` as a `list[tuple[str, Any]]`
+  to preserve insertion order across the FFI boundary (HashMap iteration
+  on the Rust side is otherwise nondeterministic).
+
+### Deprecated
+
+- (none)
+
+### Removed
+
+- `SingleAgent::stream` and `Conductor::stream` `"Phase 2"` error stubs
+  — both now stream natively.
+
+### Fixed
+
+- `tako-orchestrator/src/single.rs` and `conductor.rs` model lookup
+  now happens per-step (previously cached at the top of `run`),
+  enabling per-step provider routing.
+
+### Security
+
+- (none)
+
 ## [0.3.0] - 2026-04-29
 
 Phase 2.5 — cloud breadth + carry-overs. Adds Azure OpenAI and Vertex AI
@@ -248,7 +379,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TODO(<org>)/tako-ai-core/releases/tag/v0.1.0
