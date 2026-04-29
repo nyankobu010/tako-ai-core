@@ -37,3 +37,11 @@ tako-providers-http-generic = { workspace = true }
 tako-providers-bedrock      = { workspace = true }
 tako-providers-vertex       = { workspace = true }
 tako-compat                 = { workspace = true }
+regex                       = { workspace = true }
+
+[features]
+default = []
+# Forwards the `onnx` Cargo feature through to tako-orchestrator so the
+# OnnxRouter pyclass becomes available. Off by default to keep wheels
+# slim; turn on with `maturin build --features onnx`.
+onnx    = ["tako-orchestrator/onnx"]

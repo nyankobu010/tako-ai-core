@@ -131,6 +131,8 @@ class Orchestrator:
         provider: Any,
         max_steps: int = ...,
         mcp_servers: list[Any] | None = ...,
+        candidates: list[Any] | None = ...,
+        router: Any | None = ...,
     ) -> None: ...
     def run(
         self,
@@ -144,6 +146,64 @@ class Orchestrator:
         tenant_id: str | None = ...,
         user_id: str | None = ...,
     ) -> str: ...
+
+class Trinity:
+    def __init__(
+        self,
+        roles: list[tuple[str, Any]],
+        router: Any,
+        max_steps: int = ...,
+    ) -> None: ...
+    def run(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> Awaitable[str]: ...
+    def run_sync(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> str: ...
+
+class SelfCaller:
+    def __init__(
+        self,
+        inner: Any,
+        confidence: Any,
+        max_depth: int = ...,
+        min_confidence: float = ...,
+        revision_prompt: str | None = ...,
+    ) -> None: ...
+    def run(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> Awaitable[str]: ...
+    def run_sync(
+        self,
+        prompt: str,
+        tenant_id: str | None = ...,
+        user_id: str | None = ...,
+    ) -> str: ...
+
+class RuleBasedGuard:
+    def __init__(
+        self,
+        min_chars: int = ...,
+        pattern: str | None = ...,
+    ) -> None: ...
+
+class LlmJudgeGuard:
+    def __init__(self, judge: Any, rubric: str) -> None: ...
+
+class RegexRouter:
+    def __init__(self) -> None: ...
+
+class OnnxRouter:
+    def __init__(self, path: str) -> None: ...
 
 class Conductor:
     def __init__(
@@ -192,3 +252,4 @@ def serve_openai_py(
     models: list[str] | None = ...,
 ) -> str: ...
 def shutdown_compat_py() -> None: ...
+def featurise_text(text: str) -> list[float]: ...

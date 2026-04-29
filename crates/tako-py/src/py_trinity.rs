@@ -1,0 +1,95 @@
+//! `PyTrinity` — wraps `tako_orchestrator::Trinity`.
+
+use std::sync::Arc;
+
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+use pyo3_async_runtimes::tokio::future_into_py;
+use tako_orchestrator::{OrchInput, Orchestrator, Trinity};
+
+use crate::py_conductor::extract_any_provider;
+use crate::py_router::extract_router;
+
+#[pyclass(name = "Trinity", module = "tako._native", skip_from_py_object)]
+pub struct PyTrinity {
+    pub(crate) inner: Arc<Trinity>,
+}
+
+impl PyTrinity {
+    pub(crate) fn inner_arc(&self) -> Arc<dyn Orchestrator> {
+        Arc::clone(&self.inner) as Arc<dyn Orchestrator>
+    }
+}
+
+impl std::fmt::Debug for PyTrinity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PyTrinity").finish_non_exhaustive()
+    }
+}
+
+#[pymethods]
+impl PyTrinity {
+    /// Build a Trinity orchestrator.
+    ///
+    /// `roles` is a dict mapping `role_name -> provider`. `router` is one
+    /// of `tako._native.RegexRouter` or `tako._native.OnnxRouter`.
+    #[new]
+    #[pyo3(signature = (roles, router, max_steps=8))]
+    fn new(
+        py: Python<'_>,
+        roles: Vec<(String, Py<PyAny>)>,
+        router: Py<PyAny>,
+        max_steps: u32,
+    ) -> PyResult<Self> {
+        let mut builder = Trinity::builder()
+            .router(extract_router(py, &router)?)
+            .max_steps(max_steps);
+        for (name, p) in roles {
+            let prov = extract_any_provider(py, &p)?;
+            builder = builder.role(name, prov);
+        }
+        let trinity = builder
+            .build()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self {
+            inner: Arc::new(trinity),
+        })
+    }
+
+    #[pyo3(signature = (prompt, tenant_id=None, user_id=None))]
+    fn run<'py>(
+        &self,
+        py: Python<'py>,
+        prompt: String,
+        tenant_id: Option<String>,
+        user_id: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        let principal = crate::conv::principal_from(tenant_id.as_deref(), user_id.as_deref());
+        future_into_py(py, async move {
+            let out = inner
+                .run(&principal, OrchInput::from_user(prompt))
+                .await
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            Ok(out.text)
+        })
+    }
+
+    #[pyo3(signature = (prompt, tenant_id=None, user_id=None))]
+    fn run_sync(
+        &self,
+        py: Python<'_>,
+        prompt: String,
+        tenant_id: Option<String>,
+        user_id: Option<String>,
+    ) -> PyResult<String> {
+        let inner = Arc::clone(&self.inner);
+        let principal = crate::conv::principal_from(tenant_id.as_deref(), user_id.as_deref());
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let out = py.detach(move || {
+            rt.block_on(async move { inner.run(&principal, OrchInput::from_user(prompt)).await })
+        });
+        let out = out.map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(out.text)
+    }
+}

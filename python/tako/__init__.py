@@ -7,7 +7,7 @@ compiled Rust extension `tako._native`. End users should import from
 
 from __future__ import annotations
 
-from . import compat, mcp, orchestrator, providers, secrets, tracing
+from . import compat, guards, mcp, orchestrator, providers, routers, secrets, tracing
 from .budget import Budget
 from .client import Client
 from .models import (
@@ -19,7 +19,7 @@ from .models import (
     ToolSchema,
     Usage,
 )
-from .orchestrator import Conductor, SingleAgent
+from .orchestrator import Conductor, SelfCaller, SingleAgent, Trinity
 
 __all__ = [
     "Budget",
@@ -30,13 +30,17 @@ __all__ = [
     "ContentPart",
     "Message",
     "Role",
+    "SelfCaller",
     "SingleAgent",
     "ToolSchema",
+    "Trinity",
     "Usage",
     "compat",
+    "guards",
     "mcp",
     "orchestrator",
     "providers",
+    "routers",
     "secrets",
     "tracing",
 ]

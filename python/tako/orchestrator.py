@@ -29,6 +29,10 @@ class SingleAgent:
     ``mcp_servers`` accepts ``tako.mcp.Stdio`` / ``tako.mcp.Http`` instances;
     their tools are discovered via MCP's ``tools/list`` at construction time
     and merged into the orchestrator's tool registry.
+
+    To enable per-step provider routing, pass ``router=`` (one of the
+    classes in :mod:`tako.routers`) along with ``candidates=[...]``. The
+    router picks among ``[provider, *candidates]`` at each step.
     """
 
     def __init__(
@@ -37,6 +41,8 @@ class SingleAgent:
         *,
         max_steps: int = 8,
         mcp_servers: list[Any] | None = None,
+        candidates: list[_ProviderBase] | None = None,
+        router: Any | None = None,
     ) -> None:
         if not hasattr(provider, "_handle"):
             raise TypeError(
@@ -50,8 +56,19 @@ class SingleAgent:
                         "mcp_servers entries must be tako.mcp.Stdio or tako.mcp.Http instances"
                     )
                 native_servers.append(s._native)
+        cand_handles: list[Any] = []
+        if candidates:
+            for c in candidates:
+                if not hasattr(c, "_handle"):
+                    raise TypeError("candidates entries must be tako.providers.* instances")
+                cand_handles.append(c._handle)
+        router_native = router._native if router is not None else None
         self._inner = _native.Orchestrator(
-            provider._handle, max_steps, mcp_servers=native_servers or None
+            provider._handle,
+            max_steps,
+            mcp_servers=native_servers or None,
+            candidates=cand_handles or None,
+            router=router_native,
         )
 
     async def run(
@@ -131,8 +148,108 @@ class Conductor:
         return _Result(text)
 
 
+class Trinity:
+    """Router-driven multi-role orchestrator (Phase 3, arXiv:2512.04695).
+
+    A :class:`Router` picks one role from a pool of
+    ``role_name -> provider`` per turn. Combine with
+    :class:`tako.routers.RegexRouter` for a rule-based default or
+    :class:`tako.routers.OnnxRouter` for a learned classifier.
+    """
+
+    def __init__(
+        self,
+        roles: dict[str, _ProviderBase],
+        router: Any,
+        *,
+        max_steps: int = 8,
+    ) -> None:
+        if not hasattr(router, "_native"):
+            raise TypeError("router must be a tako.routers.* instance")
+        # Pass roles as an ordered list of (name, handle) so the Rust side
+        # honours insertion order (HashMap iteration is otherwise random).
+        ordered: list[tuple[str, Any]] = []
+        for name, p in roles.items():
+            if not hasattr(p, "_handle"):
+                raise TypeError(f"roles[{name!r}] must be a tako.providers.* instance")
+            ordered.append((name, p._handle))
+        self._inner = _native.Trinity(ordered, router._native, max_steps=max_steps)
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> _Result:
+        text = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(text)
+
+    def run_sync(
+        self,
+        prompt: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> _Result:
+        text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(text)
+
+
+class SelfCaller:
+    """Bounded-recursion wrapper over any orchestrator (Phase 3).
+
+    After the wrapped orchestrator emits a result, ``confidence``
+    (a :class:`tako.guards.RuleBased` or :class:`tako.guards.LlmJudge`)
+    scores it on ``[0, 1]``. If the score is below ``min_confidence``
+    AND recursion depth is below ``max_depth``, the inner orchestrator
+    is re-invoked with ``revision_prompt`` appended to the conversation.
+    """
+
+    def __init__(
+        self,
+        inner: SingleAgent | Conductor | Trinity,
+        confidence: Any,
+        *,
+        max_depth: int = 3,
+        min_confidence: float = 0.7,
+        revision_prompt: str | None = None,
+    ) -> None:
+        if not hasattr(confidence, "_native"):
+            raise TypeError("confidence must be a tako.guards.* instance")
+        if not hasattr(inner, "_inner"):
+            raise TypeError("inner must be a tako.SingleAgent / Conductor / Trinity")
+        self._inner = _native.SelfCaller(
+            inner._inner,
+            confidence._native,
+            max_depth=max_depth,
+            min_confidence=min_confidence,
+            revision_prompt=revision_prompt,
+        )
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> _Result:
+        text = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(text)
+
+    def run_sync(
+        self,
+        prompt: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> _Result:
+        text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(text)
+
+
 # Re-export so callers can write `tako.orchestrator.SingleAgent(...)`.
-__all__ = ["Conductor", "SingleAgent"]
+__all__ = ["Conductor", "SelfCaller", "SingleAgent", "Trinity"]
 
 
 def __getattr__(name: str) -> Any:
