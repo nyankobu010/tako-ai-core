@@ -11,6 +11,7 @@
 //! across module boundaries still see the same depth counter.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -401,6 +402,14 @@ impl ConfidenceGuard for RuleBasedGuard {
 /// LLM-as-judge guard: ask another provider to score the output 0..1.
 /// The judge prompt asks for a single decimal between 0 and 1. Anything
 /// unparseable falls back to `0.5`.
+///
+/// **Streaming**: by default, `evaluate_streaming` returns `Ok(None)` so
+/// the judge is consulted only after the inner iteration's full text is
+/// buffered (see [`ConfidenceGuard::evaluate_streaming`]). Per-delta
+/// judge calls would be a cost disaster. Operators can opt in to
+/// per-N-delta evaluation by setting both [`LlmJudgeGuard::with_streaming_min_chars`]
+/// (default `usize::MAX`, i.e. disabled) and
+/// [`LlmJudgeGuard::with_streaming_every_n`] (default `1`).
 pub struct LlmJudgeGuard {
     judge: Arc<dyn LlmProvider>,
     rubric: String,
@@ -411,6 +420,19 @@ pub struct LlmJudgeGuard {
     /// orchestrator's own budget; this hook covers the judge's
     /// independent provider call.
     budget: Option<Arc<BudgetTracker>>,
+    /// Streaming opt-in: minimum cumulative chars buffered before
+    /// `evaluate_streaming` will call the judge. Default `usize::MAX`
+    /// (disabled — preserves the v0.9.0 default `Ok(None)` behaviour).
+    streaming_min_chars: usize,
+    /// Streaming throttle: call the judge only every N invocations of
+    /// `evaluate_streaming` that pass the `min_chars` threshold.
+    /// Default 1.
+    streaming_every_n: u32,
+    /// Monotonic counter incremented on every `evaluate_streaming` call
+    /// that passes `min_chars`. Used with `streaming_every_n` to gate
+    /// the judge invocation. Held in an `Arc<AtomicU32>` because the
+    /// trait method takes `&self`.
+    streaming_call_count: Arc<AtomicU32>,
 }
 
 impl std::fmt::Debug for LlmJudgeGuard {
@@ -427,6 +449,9 @@ impl LlmJudgeGuard {
             judge,
             rubric: rubric.into(),
             budget: None,
+            streaming_min_chars: usize::MAX,
+            streaming_every_n: 1,
+            streaming_call_count: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -438,11 +463,30 @@ impl LlmJudgeGuard {
         self.budget = Some(t);
         self
     }
-}
 
-#[async_trait]
-impl ConfidenceGuard for LlmJudgeGuard {
-    async fn evaluate(&self, principal: &Principal, text: &str) -> Result<f32, TakoError> {
+    /// Streaming opt-in: minimum cumulative chars buffered before the
+    /// streaming hook will call the judge. Default `usize::MAX`
+    /// (streaming disabled — `evaluate_streaming` returns `Ok(None)`).
+    /// Set this to a finite value to enable per-N-delta judging.
+    pub fn with_streaming_min_chars(mut self, n: usize) -> Self {
+        self.streaming_min_chars = n;
+        self
+    }
+
+    /// Streaming throttle: call the judge only every N invocations of
+    /// `evaluate_streaming` that pass the `min_chars` threshold.
+    /// Default 1 (every passing call). Setting `n = 0` is treated as
+    /// `n = 1` (no throttling).
+    pub fn with_streaming_every_n(mut self, n: u32) -> Self {
+        self.streaming_every_n = n.max(1);
+        self
+    }
+
+    /// Shared judge-call body used by both `evaluate` and
+    /// `evaluate_streaming`. Builds the rubric prompt, runs the budget
+    /// pre-check / record cycle if a tracker is attached, calls
+    /// `judge.chat`, and parses the decimal response.
+    async fn run_judge(&self, principal: &Principal, text: &str) -> Result<f32, TakoError> {
         let prompt = format!(
             "{}\n\nThe candidate answer is:\n---\n{}\n---\n\nReply with ONLY a decimal between 0 \
              and 1 representing your confidence in the answer's quality. No other text.",
@@ -473,6 +517,34 @@ impl ConfidenceGuard for LlmJudgeGuard {
             .collect::<Vec<_>>()
             .join("");
         Ok(parse_confidence(&raw).unwrap_or(0.5))
+    }
+}
+
+#[async_trait]
+impl ConfidenceGuard for LlmJudgeGuard {
+    async fn evaluate(&self, principal: &Principal, text: &str) -> Result<f32, TakoError> {
+        self.run_judge(principal, text).await
+    }
+
+    /// Phase 9.A streaming opt-in. Returns `Ok(None)` (skip — keep
+    /// streaming) when the partial is below `streaming_min_chars` or
+    /// the throttle counter says "skip this delta". Otherwise calls the
+    /// judge exactly as `evaluate` would and returns `Ok(Some(score))`.
+    /// Streaming remains opt-in: with the default `streaming_min_chars
+    /// = usize::MAX` no judge call is ever made.
+    async fn evaluate_streaming(
+        &self,
+        principal: &Principal,
+        partial: &str,
+    ) -> Result<Option<f32>, TakoError> {
+        if partial.len() < self.streaming_min_chars {
+            return Ok(None);
+        }
+        let n = self.streaming_call_count.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % self.streaming_every_n != 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.run_judge(principal, partial).await?))
     }
 }
 

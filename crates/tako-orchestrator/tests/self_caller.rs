@@ -573,3 +573,78 @@ mod streaming_guard {
         assert_eq!(recursion_events, 1);
     }
 }
+
+mod streaming_judge {
+    //! Phase 9.A — streaming opt-in for `LlmJudgeGuard`.
+    //!
+    //! Exercises the new `with_streaming_min_chars` /
+    //! `with_streaming_every_n` builders and the `evaluate_streaming`
+    //! override that gates per-N-delta judge calls behind explicit
+    //! opt-in (default `usize::MAX` keeps the v0.9.0 `Ok(None)` behaviour).
+    use super::*;
+    use tako_orchestrator::LlmJudgeGuard;
+
+    /// Scripted-decimal judge: every `chat` call returns the next
+    /// queued text wrapped as `Stop`. Tests assert on `calls` to
+    /// confirm gating.
+    fn judge_with_scores(scores: Vec<&str>) -> Arc<FakeProvider> {
+        let responses = scores.into_iter().map(assistant).collect();
+        Arc::new(FakeProvider::new("fake:judge", responses))
+    }
+
+    #[tokio::test]
+    async fn opt_in_calls_judge_once_when_partial_crosses_threshold() {
+        let judge = judge_with_scores(vec!["0.7"]);
+        let g = LlmJudgeGuard::new(judge.clone(), "rate it").with_streaming_min_chars(20);
+        let p = Principal::anonymous();
+        // Below threshold: no judge call.
+        assert_eq!(g.evaluate_streaming(&p, "tiny").await.unwrap(), None);
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 0);
+        // Crosses threshold (20+ chars): judge runs and returns 0.7.
+        let partial = "this is more than twenty characters long";
+        assert!(partial.len() >= 20);
+        let score = g.evaluate_streaming(&p, partial).await.unwrap();
+        assert_eq!(score, Some(0.7));
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn default_streaming_min_chars_means_no_judge_calls() {
+        // No streaming kwargs → streaming_min_chars defaults to
+        // usize::MAX → judge is never invoked from evaluate_streaming.
+        let judge = judge_with_scores(vec!["0.9", "0.9", "0.9"]);
+        let g = LlmJudgeGuard::new(judge.clone(), "rate it");
+        let p = Principal::anonymous();
+        for partial in ["a", "ab", "very long text".repeat(100).as_str()] {
+            let r = g.evaluate_streaming(&p, partial).await.unwrap();
+            assert_eq!(r, None);
+        }
+        assert_eq!(
+            judge.calls.load(Ordering::SeqCst),
+            0,
+            "default streaming impl must not call the judge"
+        );
+        // The buffered `evaluate` path still works as before.
+        let _ = g.evaluate(&p, "any text").await.unwrap();
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn every_n_throttle_skips_until_counter_aligns() {
+        // streaming_min_chars=10, streaming_every_n=3 → 6 over-threshold
+        // partials produce judge calls at counts 3 and 6 only.
+        let judge = judge_with_scores(vec!["0.4", "0.5"]);
+        let g = LlmJudgeGuard::new(judge.clone(), "rate it")
+            .with_streaming_min_chars(10)
+            .with_streaming_every_n(3);
+        let p = Principal::anonymous();
+        let mut results: Vec<Option<f32>> = Vec::new();
+        for _ in 0..6 {
+            let r = g.evaluate_streaming(&p, "0123456789ABCDE").await.unwrap();
+            results.push(r);
+        }
+        // Counts 1, 2 → None; 3 → Some(0.4); 4, 5 → None; 6 → Some(0.5).
+        assert_eq!(results, vec![None, None, Some(0.4), None, None, Some(0.5)]);
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 2);
+    }
+}
