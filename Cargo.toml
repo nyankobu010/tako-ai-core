@@ -9,6 +9,7 @@ members = [
   "crates/tako-providers/http-generic",
   "crates/tako-providers/bedrock",
   "crates/tako-providers/vertex",
+  "crates/tako-providers/mistral",
   "crates/tako-mcp",
   "crates/tako-orchestrator",
   "crates/tako-governance",
@@ -118,6 +119,7 @@ tako-providers-azure-openai = { path = "crates/tako-providers/azure-openai", ver
 tako-providers-http-generic = { path = "crates/tako-providers/http-generic", version = "0.4.0" }
 tako-providers-bedrock      = { path = "crates/tako-providers/bedrock",      version = "0.4.0" }
 tako-providers-vertex       = { path = "crates/tako-providers/vertex",       version = "0.4.0" }
+tako-providers-mistral      = { path = "crates/tako-providers/mistral",      version = "0.4.0" }
 tako-compat                 = { path = "crates/tako-compat",                 version = "0.4.0" }
 
 [profile.release]
