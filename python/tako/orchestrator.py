@@ -273,6 +273,25 @@ class SelfCaller:
         text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
         return _Result(text)
 
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> Any:
+        """Async-iterable stream of orchestrator events (Phase 7).
+
+        ``async for event in self_caller.stream(prompt): ...`` yields
+        :class:`tako._native.OrchEvent` instances whose ``kind`` is one
+        of ``"step_start" | "assistant_text" | "tool_call_start" |
+        "tool_call_result" | "final"``. Inner ``final`` events from
+        intermediate recursion iterations are absorbed by the
+        confidence loop; the stream emits exactly one outer ``final``
+        event when an iteration is accepted (or ``max_depth`` is hit).
+        """
+        return await self._inner.stream(prompt, tenant_id=tenant_id, user_id=user_id)
+
 
 # Re-export so callers can write `tako.orchestrator.SingleAgent(...)`.
 __all__ = ["Conductor", "SelfCaller", "SingleAgent", "Trinity"]

@@ -15,6 +15,7 @@ use tako_runtime::BudgetTracker;
 
 use crate::py_conductor::{PyConductor, extract_any_provider};
 use crate::py_governance::PyBudget;
+use crate::py_orch_event::PyOrchEventStream;
 use crate::py_orchestrator::PyOrchestrator;
 use crate::py_trinity::PyTrinity;
 
@@ -181,6 +182,29 @@ impl PySelfCaller {
         });
         let out = out.map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(out.text)
+    }
+
+    /// Async-iterable stream of [`PyOrchEvent`]s
+    /// (kinds: `step_start`, `assistant_text`, `tool_call_start`,
+    /// `tool_call_result`, `final`).
+    ///
+    /// Inner `final` events are absorbed by the recursion loop; the
+    /// stream yields exactly one outer `final` event when the
+    /// confidence guard accepts an output (or `max_depth` is hit).
+    #[pyo3(signature = (prompt, tenant_id=None, user_id=None))]
+    fn stream<'py>(
+        &self,
+        py: Python<'py>,
+        prompt: String,
+        tenant_id: Option<String>,
+        user_id: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        let principal = crate::conv::principal_from(tenant_id.as_deref(), user_id.as_deref());
+        future_into_py(py, async move {
+            let s = inner.stream(&principal, OrchInput::from_user(prompt)).await;
+            Ok(PyOrchEventStream::new(s))
+        })
     }
 }
 

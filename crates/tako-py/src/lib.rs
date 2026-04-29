@@ -19,6 +19,7 @@ mod py_compat;
 mod py_conductor;
 mod py_governance;
 mod py_mcp;
+mod py_orch_event;
 mod py_orchestrator;
 mod py_provider;
 mod py_python_provider;
@@ -48,6 +49,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_self_caller::PySelfCaller>()?;
     m.add_class::<py_self_caller::PyRuleBasedGuard>()?;
     m.add_class::<py_self_caller::PyLlmJudgeGuard>()?;
+    m.add_class::<py_orch_event::PyOrchEvent>()?;
+    m.add_class::<py_orch_event::PyOrchEventStream>()?;
     m.add_class::<py_router::PyRegexRouter>()?;
     #[cfg(feature = "onnx")]
     m.add_class::<py_router::PyOnnxRouter>()?;
