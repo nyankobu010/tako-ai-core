@@ -9,6 +9,139 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.8.0] - 2026-04-29
+
+Phase 7 — production hardening, continued. Closes the two follow-ups
+flagged in `## [0.7.0]`'s release notes plus the cosign protobuf-bundle
+ergonomics carry-over tracked since v0.6.0.
+
+### Added
+
+- **Rekor inclusion-proof (Merkle audit-path) verification**
+  (Phase 7.A): extends the v0.7.0 Rekor SET check.
+  - New `tako_governance::sigstore::RekorInclusionProof
+    { hashes_hex, tree_size, log_index, root_hash_hex }` struct.
+    `RekorEntry` gains an optional `inclusion_proof:
+    Option<RekorInclusionProof>` field (serde-default `None`, so
+    v0.7.0 bundles deserialize unchanged).
+  - New private `verify_rekor_inclusion(entry, proof)` runs after
+    the SET check in `verify_bundle` when the entry carries a proof
+    and a Rekor key is pinned. Algorithm: RFC 6962 §2.1.1 audit-path
+    verification — leaf hash `SHA256(0x00 || canonicalized_body)`,
+    internal hash `SHA256(0x01 || left || right)`, walk bottom-up
+    per the bit-pattern of `(log_index, tree_size)`, assert the
+    final hash equals the pinned `root_hash_hex`.
+  - 3 new Rust integration tests in
+    `crates/tako-governance/tests/sigstore.rs::inclusion_proof`:
+    round-trip against a runtime-built 5-leaf Merkle tree (covers
+    both the mid-tree and right-edge audit-path branches), tampered
+    audit-path-hash rejected, mutated `root_hash_hex` rejected.
+  - No Python facade change required — the proof is pure data
+    inside the bundle JSON; serde handles the new field
+    automatically.
+  - **Out of scope (Phase 8 candidate)**: Rekor checkpoint
+    (`SignedNote`) verification — orthogonal to the audit path
+    itself.
+
+- **Native `SelfCaller::stream` implementation** (Phase 7.B):
+  replaces the Phase 4 stub at `crates/tako-orchestrator/src/
+  self_caller.rs:192-202` (the only orchestrator's `stream` method
+  that was still returning a placeholder error).
+  - Mirrors the `Trinity::stream` pattern: clones owned state up
+    front, builds an `async_stream::try_stream!` block. Each
+    recursion iteration consumes the inner orchestrator's
+    `BoxStream<OrchEvent>`, forwards every event verbatim, and
+    intercepts `OrchEvent::Final` for the confidence-guard check.
+    Only the last accepted (or max-depth) iteration's `Final` is
+    yielded; intermediate `Final` events are absorbed.
+  - The `OrchEvent` enum is intentionally left unchanged — the
+    implicit signal "more `StepStart` events after a `Final`"
+    indicates a guard rejection. A first-class
+    `OrchEvent::Recursion { depth, confidence }` variant is tracked
+    for Phase 8.
+  - 3 new Rust tests in
+    `crates/tako-orchestrator/tests/self_caller.rs`:
+    pass-through-when-confident, recurse-to-max-depth-when-guard-rejects,
+    AssistantText-deltas-arrive-before-Final.
+
+- **First streaming Python entry point**
+  (Phase 7.B continued): `tako.SelfCaller.stream(prompt, ...)`
+  becomes the project's first async-iteration surface.
+  - New `tako._native.OrchEvent` pyclass — read-only wrapper with
+    a `kind` getter
+    (`"step_start" | "assistant_text" | "tool_call_start" |
+    "tool_call_result" | "final"`) and per-variant getters
+    (`step`, `delta`, `name`, `id`, `result`, `is_error`, `text`,
+    `usage`) returning `None` when the field doesn't apply.
+  - New `tako._native.OrchEventStream` pyclass — async-iterable
+    (`__aiter__` + async `__anext__`) over a
+    `BoxStream<Result<OrchEvent>>`. The stream is parked behind a
+    `tokio::sync::Mutex` so the pyclass stays `Send + Sync`.
+  - `tako.SelfCaller.stream(...)` returns the stream so callers
+    write `async for ev in await sc.stream(prompt): ...`. Type
+    stubs added to `_native.pyi`. Future Trinity / SingleAgent
+    stream bindings can reuse the shared types verbatim.
+  - 2 new Python smoke tests in `test_self_caller_stream.py`.
+
+- **cosign protobuf-bundle adapter** (Phase 7.C):
+  `KeylessBundle::from_protobuf_bundle(bytes)` decodes a Sigstore
+  protobuf-specs `Bundle` v1 message (the wire format of `cosign
+  sign-blob --bundle out.pb`) into the JSON-shaped `KeylessBundle`
+  the rest of the verifier pipeline already consumes.
+  - Hand-rolled `prost::Message` types in
+    `crates/tako-governance/src/cosign_bundle.rs` cover only the
+    fields tako consumes. Unknown fields
+    (`timestamp_verification_data`, DSSE envelopes, `kind_version`,
+    Rekor checkpoints) decode as no-ops since prost ignores
+    unknown tags. No `sigstore-protobuf-specs` dep, no `prost-build`
+    at compile time, no `protoc` at build time.
+  - Field translation: leaf cert from
+    `verification_material.x509_certificate_chain.certificates[0]`
+    (or `.certificate` on newer cosign builds) → `leaf_cert_pem`;
+    chain → `chain_pem`; `message_signature.signature` →
+    base64 → `signature_b64`; first `tlog_entries[]` →
+    `Some(rekor)` including the inclusion proof from 7.A.
+  - Gated behind a new `sigstore-protobuf` Cargo feature
+    (depends on the existing `sigstore` feature). Default builds
+    gain neither prost nor the new module.
+  - 3 unit tests in `sigstore.rs::protobuf_tests`: round-trip,
+    single-`certificate` form, missing-signature rejection.
+
+- **Python facade**
+  (Phase 7.C continued):
+  `tako.sigstore.KeylessVerifier.verify_protobuf_bundle(manifest,
+  protobuf_bundle)` — same return shape as `verify_bundle`.
+  - Gated behind the new `sigstore-protobuf` feature on `tako-py`
+    (forwards to the same feature on `tako-governance`); the Python
+    facade raises a clear `AttributeError` when the wheel was built
+    without it.
+  - 3 new Python smoke tests in
+    `test_phase7_sigstore_protobuf.py`.
+
+### Changed
+
+- Workspace package version: `0.7.0` → `0.8.0` across
+  `Cargo.toml`, `pyproject.toml`, `python/tako/__init__.py`,
+  `tests/python/test_smoke.py`.
+- New per-phase plan docs: `PLAN_PHASE1.md` (extracted from PLAN.md
+  inline body), `PLAN_PHASE4.md` (retroactive — Phase 4 had no
+  per-phase doc), and `PLAN_PHASE7.md` (this phase). PLAN.md slimmed
+  to a phase-index table + roadmap.
+
+### Notes
+
+- **Rekor checkpoint** verification (signed note over the tree
+  head) remains out of scope — orthogonal to the audit path itself.
+  Phase 8 candidate.
+- **AB-MCTS native streaming** stays deferred to Phase 8.
+- **`OrchEvent::Recursion` variant** — defer until a concrete
+  consumer asks for it.
+- The Phase 7.B Python streaming surface is intentionally minimal
+  (events expose getters, not Python dataclasses; iteration is
+  one-shot per stream). Generalising to Trinity / SingleAgent is a
+  follow-on PR using the same `PyOrchEvent` /
+  `PyOrchEventStream` types.
+
 ## [0.7.0] - 2026-04-29
 
 Phase 6 — production hardening, continued. Closes the two follow-ups

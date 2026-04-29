@@ -25,24 +25,12 @@ synopsis and quickstart.
 | 4 — Search & scale | v0.5.0 | done (2026-04-29, retro plan) | [PLAN_PHASE4.md](PLAN_PHASE4.md) | [`## [0.5.0]`](CHANGELOG.md) |
 | 5 — Production hardening | v0.6.0 | done (2026-04-29) | [PLAN_PHASE5.md](PLAN_PHASE5.md) | [`## [0.6.0]`](CHANGELOG.md) |
 | 6 — Production hardening, continued | v0.7.0 | done (2026-04-29) | [PLAN_PHASE6.md](PLAN_PHASE6.md) | [`## [0.7.0]`](CHANGELOG.md) |
-| 7 — Sigstore + streaming closures | v0.8.0 (target) | **in progress** | [PLAN_PHASE7.md](PLAN_PHASE7.md) | (Unreleased) |
+| 7 — Sigstore + streaming closures | v0.8.0 | done (2026-04-29) | [PLAN_PHASE7.md](PLAN_PHASE7.md) | [`## [0.8.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
-
-### Phase 7 (in progress)
-
-Closes the two follow-ups flagged in Phase 6's release notes plus the
-v0.6.0 ergonomics carry-over. See [PLAN_PHASE7.md](PLAN_PHASE7.md).
-
-- **7.A** — Rekor inclusion-proof (Merkle audit-path) verification,
-  extending Phase 6.E.
-- **7.B** — `SelfCaller::stream` native implementation, closing the
-  Phase 4 stub.
-- **7.C** — cosign protobuf-bundle → `KeylessBundle` adapter behind a
-  new `sigstore-protobuf` feature flag.
 
 ### Phase 8 candidates (indicative, not yet committed)
 

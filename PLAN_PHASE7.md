@@ -1,8 +1,10 @@
 # PLAN — Phase 7 (production hardening, continued)
 
-> **Status: in progress.** Successor to [PLAN_PHASE6.md](PLAN_PHASE6.md).
-> Closes both follow-ups flagged in `## [0.7.0]`'s release notes plus
-> the cosign protobuf-bundle ergonomics carry-over tracked since v0.6.0.
+> **Status: complete (v0.8.0, 2026-04-29).** Successor to
+> [PLAN_PHASE6.md](PLAN_PHASE6.md). Closes both follow-ups flagged in
+> `## [0.7.0]`'s release notes plus the cosign protobuf-bundle
+> ergonomics carry-over tracked since v0.6.0. See
+> [`CHANGELOG.md`](CHANGELOG.md) `## [0.8.0]` for the full diff.
 
 ## Context
 
@@ -175,18 +177,18 @@ python examples/22_sigstore_protobuf.py
 
 ## Acceptance gates
 
-- [ ] `tako.sigstore.KeylessVerifier(issuer, san, rekor_public_key_pem=)`
+- [x] `tako.sigstore.KeylessVerifier(issuer, san, rekor_public_key_pem=)`
       round-trips a bundle that carries an `inclusion_proof` field;
       tampered hash fails.
-- [ ] `async for ev in tako.SelfCaller(...).stream(prompt): ...` yields
+- [x] `async for ev in tako.SelfCaller(...).stream(prompt): ...` yields
       inner `AssistantText` deltas live, then exactly one `Final` per
       recursion cycle, with the *last* `Final` being the outer caller's
       result.
-- [ ] `tako.sigstore.KeylessVerifier(...).verify_protobuf_bundle(manifest,
+- [x] `tako.sigstore.KeylessVerifier(...).verify_protobuf_bundle(manifest,
       pb_bytes)` round-trips a programmatically-built cosign `Bundle`
       proto.
-- [ ] CHANGELOG `## [0.8.0]` entry added; version bumped to 0.8.0.
-- [ ] `PLAN_PHASE7.md` written (this file); `PLAN.md` updated to the new
+- [x] CHANGELOG `## [0.8.0]` entry added; version bumped to 0.8.0.
+- [x] `PLAN_PHASE7.md` written (this file); `PLAN.md` updated to the new
       index format.
 
 ## Out of scope (intentional, with rationale)
