@@ -1,11 +1,24 @@
-//! `SecretResolver` trait + `EnvResolver` impl + redacting `SecretString`.
+//! `SecretResolver` trait, the redacting `SecretString`, and resolver
+//! implementations.
 //!
-//! Vault / AWS SM / Azure KV / GCP SM resolvers arrive in Phase 2.
+//! Phase 1 shipped [`EnvResolver`]; Phase 2.5 adds cloud-vendor resolvers:
+//! [`VaultResolver`], [`AwsSecretsManagerResolver`],
+//! [`AzureKeyVaultResolver`], [`GcpSecretManagerResolver`].
 
 use std::env;
 
 use async_trait::async_trait;
 use tako_core::TakoError;
+
+mod aws_sm;
+mod azure_kv;
+mod gcp_sm;
+mod vault;
+
+pub use aws_sm::AwsSecretsManagerResolver;
+pub use azure_kv::AzureKeyVaultResolver;
+pub use gcp_sm::GcpSecretManagerResolver;
+pub use vault::VaultResolver;
 
 /// A string we never want to print. `Debug` and `Display` both render
 /// `<redacted>`; the underlying value is accessible only via [`expose`].

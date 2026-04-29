@@ -89,9 +89,13 @@ rmcp               = { version = "1.5", features = ["client", "transport-child-p
 pyo3               = { version = "0.28", features = ["extension-module", "abi3-py310"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 
-# AWS (Phase 2 Bedrock provider)
-aws-config             = { version = "1.8", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
-aws-sdk-bedrockruntime = { version = "1.130", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
+# AWS (Phase 2 Bedrock provider, Phase 2.5 Secrets Manager resolver)
+aws-config              = { version = "1.8", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
+aws-sdk-bedrockruntime  = { version = "1.130", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
+aws-sdk-secretsmanager  = { version = "1.83", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
+
+# encoding (Phase 2.5 cloud resolvers + Bedrock binary blobs)
+base64                  = "0.22"
 
 # Test-time only (dev-deps in member crates)
 tokio-test         = "0.4"
