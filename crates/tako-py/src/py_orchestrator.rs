@@ -11,7 +11,9 @@ type PyObject = Py<PyAny>;
 use pyo3_async_runtimes::tokio::future_into_py;
 use tako_mcp::ToolRegistry;
 use tako_orchestrator::{OrchInput, Orchestrator, SingleAgent};
+use tako_runtime::BudgetTracker;
 
+use crate::py_governance::PyBudget;
 use crate::py_provider::ProviderHandle;
 
 #[pyclass(name = "Orchestrator", module = "tako._native", skip_from_py_object)]
@@ -43,13 +45,24 @@ impl PyOrchestrator {
     /// transports; their tools are discovered at construction time and
     /// merged into the orchestrator's tool registry.
     #[new]
-    #[pyo3(signature = (provider, max_steps=8, mcp_servers=None, candidates=None, router=None))]
+    #[pyo3(signature = (
+        provider,
+        max_steps=8,
+        mcp_servers=None,
+        candidates=None,
+        router=None,
+        budget=None,
+        budget_backend=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         provider: PyObject,
         max_steps: u32,
         mcp_servers: Option<Vec<PyObject>>,
         candidates: Option<Vec<PyObject>>,
         router: Option<PyObject>,
+        budget: Option<PyBudget>,
+        budget_backend: Option<PyObject>,
         py: Python<'_>,
     ) -> PyResult<Self> {
         let handle: ProviderHandle = if let Ok(p) =
@@ -108,6 +121,18 @@ impl PyOrchestrator {
         if let Some(r) = router {
             let router_arc = crate::py_router::extract_router(py, &r)?;
             builder = builder.router(router_arc);
+        }
+        if budget.is_some() || budget_backend.is_some() {
+            let budget_inner = budget.map(|b| b.inner).unwrap_or_default();
+            let backend = if let Some(obj) = budget_backend {
+                crate::py_runtime::extract_budget_backend(py, &obj)?
+            } else {
+                // Default to in-memory when only `budget=` is given.
+                Arc::new(tako_runtime::InMemoryBudgetBackend::new())
+                    as Arc<dyn tako_runtime::BudgetBackend>
+            };
+            let tracker = Arc::new(BudgetTracker::new(backend, budget_inner));
+            builder = builder.budget(tracker);
         }
         let agent = builder.build().map_err(crate::py_provider::map_err)?;
         Ok(Self {

@@ -167,6 +167,11 @@ class KeylessVerifier:
         self, manifest: bytes, bundle: bytes
     ) -> tuple[str | None, str]: ...
 
+class InMemoryBudgetBackend:
+    def __init__(self) -> None: ...
+    def current_usage(self, tenant_id: str) -> Awaitable[tuple[float, int]]: ...
+    def record(self, tenant_id: str, usd: float, tokens: int) -> Awaitable[None]: ...
+
 class RedisBudgetBackend:
     """Available when the wheel is built with the ``redis`` feature."""
 
@@ -187,6 +192,8 @@ class Orchestrator:
         mcp_servers: list[Any] | None = ...,
         candidates: list[Any] | None = ...,
         router: Any | None = ...,
+        budget: Any | None = ...,
+        budget_backend: Any | None = ...,
     ) -> None: ...
     def run(
         self,

@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from tako import _native
+from tako.budget import Budget, InMemoryBackend, RedisBackend
 from tako.providers import _ProviderBase
+
+# A budget backend acceptable to ``SingleAgent``, ``Conductor``, etc.
+_BudgetBackend = InMemoryBackend | RedisBackend
 
 
 class _Result:
@@ -43,6 +47,8 @@ class SingleAgent:
         mcp_servers: list[Any] | None = None,
         candidates: list[_ProviderBase] | None = None,
         router: Any | None = None,
+        budget: Budget | None = None,
+        budget_backend: _BudgetBackend | None = None,
     ) -> None:
         if not hasattr(provider, "_handle"):
             raise TypeError(
@@ -63,12 +69,16 @@ class SingleAgent:
                     raise TypeError("candidates entries must be tako.providers.* instances")
                 cand_handles.append(c._handle)
         router_native = router._native if router is not None else None
+        budget_native = budget._native if budget is not None else None
+        backend_native = budget_backend._native if budget_backend is not None else None
         self._inner = _native.Orchestrator(
             provider._handle,
             max_steps,
             mcp_servers=native_servers or None,
             candidates=cand_handles or None,
             router=router_native,
+            budget=budget_native,
+            budget_backend=backend_native,
         )
 
     async def run(

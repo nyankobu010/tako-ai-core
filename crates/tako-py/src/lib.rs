@@ -23,7 +23,6 @@ mod py_orchestrator;
 mod py_provider;
 mod py_python_provider;
 mod py_router;
-#[cfg(feature = "redis")]
 mod py_runtime;
 mod py_secrets;
 mod py_self_caller;
@@ -63,6 +62,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_sigstore::PyCatalogueVerifier>()?;
     #[cfg(feature = "sigstore")]
     m.add_class::<py_sigstore::PyKeylessVerifier>()?;
+    m.add_class::<py_runtime::PyInMemoryBudgetBackend>()?;
     #[cfg(feature = "redis")]
     m.add_class::<py_runtime::PyRedisBudgetBackend>()?;
     m.add_class::<py_secrets::PyVaultResolver>()?;

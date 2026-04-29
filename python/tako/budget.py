@@ -38,6 +38,34 @@ class TenantUsage:
     tokens_today: int
 
 
+class InMemoryBackend:
+    """Single-process :class:`tako_runtime::BudgetBackend`.
+
+    Tracks per-tenant cumulative spend in memory with no day rollover —
+    suitable for local dev, tests, and single-instance deployments.
+    Production deployments that span processes should use
+    :class:`RedisBackend` instead. ``current_usage`` and ``record`` are
+    coroutines so the two backends are interchangeable at the call site.
+    """
+
+    _native: Any
+
+    def __init__(self) -> None:
+        self._native = _native.InMemoryBudgetBackend()
+
+    async def current_usage(self, tenant_id: str) -> TenantUsage:
+        """Return the cumulative usage for ``tenant_id``."""
+        usd, tokens = await self._native.current_usage(tenant_id)
+        return TenantUsage(usd_today=usd, tokens_today=int(tokens))
+
+    async def record(self, tenant_id: str, usd: float, tokens: int) -> None:
+        """Record ``usd`` + ``tokens`` against ``tenant_id``."""
+        await self._native.record(tenant_id, usd, tokens)
+
+    def __repr__(self) -> str:
+        return repr(self._native)
+
+
 class RedisBackend:
     """Redis-backed :class:`tako_runtime::BudgetBackend`.
 
@@ -59,9 +87,7 @@ class RedisBackend:
         key_prefix: str | None = None,
         ttl_secs: int | None = None,
     ) -> None:
-        self._native = _native.RedisBudgetBackend(
-            url, key_prefix=key_prefix, ttl_secs=ttl_secs
-        )
+        self._native = _native.RedisBudgetBackend(url, key_prefix=key_prefix, ttl_secs=ttl_secs)
 
     async def current_usage(self, tenant_id: str) -> TenantUsage:
         """Return the day's cumulative usage for ``tenant_id``."""
@@ -76,4 +102,4 @@ class RedisBackend:
         return repr(self._native)
 
 
-__all__ = ["Budget", "RedisBackend", "TenantUsage"]
+__all__ = ["Budget", "InMemoryBackend", "RedisBackend", "TenantUsage"]
