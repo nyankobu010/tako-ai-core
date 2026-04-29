@@ -22,6 +22,7 @@ mod py_mcp;
 mod py_orchestrator;
 mod py_provider;
 mod py_python_provider;
+mod py_vertex;
 
 use pyo3::prelude::*;
 
@@ -32,6 +33,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_provider::PyFakeProvider>()?;
     m.add_class::<py_azure::PyAzureOpenAi>()?;
     m.add_class::<py_bedrock::PyBedrock>()?;
+    m.add_class::<py_vertex::PyVertex>()?;
     m.add_class::<py_python_provider::PyPythonProvider>()?;
     m.add_class::<py_orchestrator::PyOrchestrator>()?;
     m.add_class::<py_conductor::PyConductor>()?;

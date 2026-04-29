@@ -111,6 +111,45 @@ class AzureOpenAI(_ProviderBase):
         )
 
 
+class Vertex(_ProviderBase):
+    """Google Vertex AI (Gemini) provider.
+
+    Auth is intentionally deferred: pass a pre-resolved OAuth2 access token
+    (or ``"$ENV:VAR"``). The provider does not refresh tokens — for long-
+    lived processes, wire your own credential source (e.g. ``gcloud auth
+    print-access-token``, the GKE metadata server, a service account JWT
+    exchange) and rebuild the provider before tokens expire.
+
+    Example::
+
+        provider = tako.providers.Vertex(
+            project_id="my-gcp-project",
+            model="gemini-2.0-pro",
+            access_token=os.environ["VERTEX_ACCESS_TOKEN"],
+            location="us-central1",
+        )
+    """
+
+    def __init__(
+        self,
+        project_id: str,
+        model: str,
+        access_token: str,
+        *,
+        location: str | None = None,
+        endpoint_url: str | None = None,
+        timeout_secs: int | None = None,
+    ) -> None:
+        self._handle = _native.Vertex(
+            project_id,
+            model,
+            access_token,
+            location=location,
+            endpoint_url=endpoint_url,
+            timeout_secs=timeout_secs,
+        )
+
+
 class Bedrock(_ProviderBase):
     """Amazon Bedrock provider via the Converse API.
 
