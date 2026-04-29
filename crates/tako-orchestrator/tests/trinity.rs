@@ -6,12 +6,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use tako_core::{
     Capabilities, ChatChunk, ChatRequest, ChatResponse, FinishReason, LlmProvider, Message,
     Principal, TakoError, Usage,
 };
-use tako_orchestrator::{OrchInput, Orchestrator, RegexRouter, Trinity};
+use tako_orchestrator::{OrchEvent, OrchInput, Orchestrator, RegexRouter, Trinity};
 
 #[derive(Debug)]
 struct FakeProvider {
@@ -152,4 +153,147 @@ async fn trinity_errors_without_roles() {
         .router(Arc::new(RegexRouter::default()))
         .build();
     assert!(res.is_err());
+}
+
+/// Streaming-capable fake. Emits a fixed series of text deltas, then End.
+#[derive(Debug)]
+struct StreamingFake {
+    id: String,
+    capabilities: Capabilities,
+    deltas: Vec<String>,
+}
+
+impl StreamingFake {
+    fn new(id: &str, deltas: Vec<&str>) -> Self {
+        Self {
+            id: id.into(),
+            capabilities: Capabilities {
+                supports_streaming: true,
+                ..Default::default()
+            },
+            deltas: deltas.into_iter().map(String::from).collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for StreamingFake {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn capabilities(&self) -> &Capabilities {
+        &self.capabilities
+    }
+    async fn chat(&self, _p: &Principal, _r: ChatRequest) -> Result<ChatResponse, TakoError> {
+        Err(TakoError::Invalid("StreamingFake.chat not used".into()))
+    }
+    async fn stream(
+        &self,
+        _p: &Principal,
+        _r: ChatRequest,
+    ) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
+        let deltas = self.deltas.clone();
+        let s = async_stream::stream! {
+            for d in deltas {
+                yield Ok(ChatChunk::Delta { text: Some(d), tool_calls: vec![] });
+            }
+            yield Ok(ChatChunk::End {
+                finish_reason: FinishReason::Stop,
+                usage: Usage::default(),
+            });
+        };
+        Ok(Box::pin(s))
+    }
+}
+
+#[tokio::test]
+async fn trinity_stream_forwards_deltas() {
+    let code = Arc::new(StreamingFake::new(
+        "fake:code",
+        vec!["fn ", "main() ", "{}\n"],
+    ));
+    let math = Arc::new(FakeProvider::new("fake:math", vec![assistant("X")]));
+    let fb = Arc::new(FakeProvider::new("fake:fb", vec![assistant("X")]));
+    let trinity = Trinity::builder()
+        .role("code", code.clone())
+        .role("math", math.clone())
+        .role("fallback", fb.clone())
+        .router(Arc::new(RegexRouter::default()))
+        .max_steps(2)
+        .build()
+        .unwrap();
+
+    let mut stream = trinity
+        .stream(
+            &Principal::anonymous(),
+            OrchInput::from_user("Write a fn to compute fib"),
+        )
+        .await;
+
+    let mut text_deltas: Vec<String> = Vec::new();
+    let mut saw_step_start = false;
+    let mut saw_final = false;
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            OrchEvent::StepStart { .. } => {
+                saw_step_start = true;
+            }
+            OrchEvent::AssistantText { delta, .. } => {
+                text_deltas.push(delta);
+            }
+            OrchEvent::Final { output } => {
+                saw_final = true;
+                assert_eq!(output.text, "fn main() {}\n");
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_step_start, "expected at least one StepStart event");
+    assert!(saw_final, "expected a Final event");
+    assert_eq!(text_deltas, vec!["fn ", "main() ", "{}\n"]);
+}
+
+#[tokio::test]
+async fn trinity_stream_falls_back_when_no_streaming() {
+    // FakeProvider has supports_streaming=false; Trinity must fall back
+    // to chat() and emit one synthetic AssistantText.
+    let code = Arc::new(FakeProvider::new(
+        "fake:code",
+        vec![assistant("non-streamed")],
+    ));
+    let math = Arc::new(FakeProvider::new("fake:math", vec![assistant("X")]));
+    let fb = Arc::new(FakeProvider::new("fake:fb", vec![assistant("X")]));
+    let trinity = Trinity::builder()
+        .role("code", code.clone())
+        .role("math", math.clone())
+        .role("fallback", fb.clone())
+        .router(Arc::new(RegexRouter::default()))
+        .max_steps(2)
+        .build()
+        .unwrap();
+
+    let mut stream = trinity
+        .stream(
+            &Principal::anonymous(),
+            OrchInput::from_user("Write a fn to compute fib"),
+        )
+        .await;
+
+    let mut text_deltas: Vec<String> = Vec::new();
+    let mut saw_final = false;
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            OrchEvent::AssistantText { delta, .. } => {
+                text_deltas.push(delta);
+            }
+            OrchEvent::Final { output } => {
+                saw_final = true;
+                assert_eq!(output.text, "non-streamed");
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_final);
+    assert_eq!(text_deltas, vec!["non-streamed"]);
+    assert_eq!(code.calls.load(Ordering::SeqCst), 1);
 }

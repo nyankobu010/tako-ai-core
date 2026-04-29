@@ -15,15 +15,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use tako_core::{
-    ChatRequest, ContentPart, FinishReason, LlmProvider, Message, PolicyContext, PolicyDecision,
-    PolicyEngine, PolicyStage, Principal, Role, Router, TakoError, Usage,
+    ChatChunk, ChatRequest, ContentPart, FinishReason, LlmProvider, Message, PolicyContext,
+    PolicyDecision, PolicyEngine, PolicyStage, Principal, Role, Router, TakoError, ToolCallDelta,
+    Usage,
 };
 use tako_mcp::ToolRegistry;
 use tracing::{Instrument, info_span};
 
-use crate::single::{ChatDefaults, hash_messages_pub, hash_value_pub};
+use crate::single::{ChatDefaults, assemble_tool_calls_pub, hash_messages_pub, hash_value_pub};
 use crate::types::{OrchEvent, OrchInput, OrchOutput};
 use crate::{Orchestrator, OrchestratorKind};
 
@@ -338,17 +340,314 @@ impl Orchestrator for Trinity {
 
     async fn stream(
         &self,
-        _principal: &Principal,
-        _input: OrchInput,
+        principal: &Principal,
+        input: OrchInput,
     ) -> BoxStream<'static, Result<OrchEvent, TakoError>> {
-        // Delegated to `run`: emit one StepStart + one AssistantText with
-        // the full final text + Final. Trinity doesn't yet forward
-        // provider-level deltas because the routed provider varies per
-        // turn; that's a Phase 4 polish item.
-        Box::pin(futures::stream::once(async move {
-            Err(TakoError::Invalid(
-                "Trinity streaming is Phase 4; use `run` for now".into(),
-            ))
-        }))
+        let roles = self.roles.clone();
+        let role_order = self.role_order.clone();
+        let router = self.router.clone();
+        let tools = self.tools.clone();
+        let policy = self.policy.clone();
+        let defaults = self.defaults.clone();
+        let max_steps = self.max_steps;
+        let principal = principal.clone();
+
+        let s = async_stream::try_stream! {
+            let mut messages: Vec<Message> = Vec::new();
+            if let Some(sys) = input.system.clone() {
+                messages.push(Message::system(sys));
+            }
+            messages.extend(input.messages);
+
+            let candidates: Vec<String> = role_order
+                .iter()
+                .map(|r| {
+                    let pid = roles.get(r).map(|p| p.id().to_string()).unwrap_or_default();
+                    format!("{r}|{pid}")
+                })
+                .collect();
+
+            let mut total_usage = Usage::default();
+            let mut steps = 0_u32;
+            let mut final_message: Option<Message> = None;
+
+            for step in 0..max_steps {
+                yield OrchEvent::StepStart { step };
+
+                let req_for_router = ChatRequest::new("router", messages.clone());
+                let decision = router.route(&principal, &req_for_router, &candidates).await?;
+                let (role, provider) = pick_provider_static(&roles, &decision.provider_id)
+                    .ok_or_else(|| {
+                        TakoError::Invalid(format!(
+                            "Trinity: router chose unknown provider id `{}`",
+                            decision.provider_id
+                        ))
+                    })?;
+
+                let model = provider.id().split(':').nth(1).unwrap_or("").to_string();
+                let req = ChatRequest {
+                    model: model.clone(),
+                    messages: messages.clone(),
+                    tools: tools.schemas().await,
+                    temperature: defaults.temperature,
+                    max_tokens: defaults.max_tokens,
+                    stop: Vec::new(),
+                    stream: provider.capabilities().supports_streaming,
+                    metadata: Default::default(),
+                };
+
+                let span = info_span!(
+                    "tako.provider.chat",
+                    "tako.provider.id" = %provider.id(),
+                    "tako.provider.model" = %model,
+                    "tako.orchestrator.step" = step,
+                    "tako.orchestrator.role" = %role,
+                );
+
+                let (assistant, finish_reason, step_usage) = if provider
+                    .capabilities()
+                    .supports_streaming
+                {
+                    let stream_result = provider.stream(&principal, req).instrument(span).await;
+                    match stream_result {
+                        Ok(mut chunks) => {
+                            let mut text = String::new();
+                            let mut deltas: Vec<ToolCallDelta> = Vec::new();
+                            let mut finish = FinishReason::Stop;
+                            let mut usage = Usage::default();
+                            while let Some(chunk) = chunks.next().await {
+                                match chunk? {
+                                    ChatChunk::Delta { text: t, tool_calls } => {
+                                        if let Some(t) = t {
+                                            if !t.is_empty() {
+                                                yield OrchEvent::AssistantText {
+                                                    step,
+                                                    delta: t.clone(),
+                                                };
+                                                text.push_str(&t);
+                                            }
+                                        }
+                                        deltas.extend(tool_calls);
+                                    }
+                                    ChatChunk::Error { message } => {
+                                        Err(TakoError::provider(
+                                            provider.id(),
+                                            &model,
+                                            format!("stream error: {message}"),
+                                        ))?;
+                                    }
+                                    ChatChunk::End { finish_reason: fr, usage: u } => {
+                                        finish = fr;
+                                        usage = u;
+                                    }
+                                }
+                            }
+                            let mut content: Vec<ContentPart> = Vec::new();
+                            if !text.is_empty() {
+                                content.push(ContentPart::Text { text });
+                            }
+                            for tc in assemble_tool_calls_pub(deltas) {
+                                content.push(tc);
+                            }
+                            (Message { role: Role::Assistant, content }, finish, usage)
+                        }
+                        Err(_) => {
+                            // Provider claimed streaming but failed to start;
+                            // fall back to non-streaming.
+                            let req2 = ChatRequest {
+                                model: model.clone(),
+                                messages: messages.clone(),
+                                tools: tools.schemas().await,
+                                temperature: defaults.temperature,
+                                max_tokens: defaults.max_tokens,
+                                stop: Vec::new(),
+                                stream: false,
+                                metadata: Default::default(),
+                            };
+                            let resp = provider.chat(&principal, req2).await?;
+                            let text_delta = resp
+                                .message
+                                .content
+                                .iter()
+                                .filter_map(ContentPart::as_text)
+                                .collect::<Vec<_>>()
+                                .join("");
+                            if !text_delta.is_empty() {
+                                yield OrchEvent::AssistantText {
+                                    step,
+                                    delta: text_delta,
+                                };
+                            }
+                            (resp.message, resp.finish_reason, resp.usage)
+                        }
+                    }
+                } else {
+                    let req2 = ChatRequest {
+                        model: model.clone(),
+                        messages: messages.clone(),
+                        tools: tools.schemas().await,
+                        temperature: defaults.temperature,
+                        max_tokens: defaults.max_tokens,
+                        stop: Vec::new(),
+                        stream: false,
+                        metadata: Default::default(),
+                    };
+                    let resp = provider.chat(&principal, req2).instrument(span).await?;
+                    let text_delta = resp
+                        .message
+                        .content
+                        .iter()
+                        .filter_map(ContentPart::as_text)
+                        .collect::<Vec<_>>()
+                        .join("");
+                    if !text_delta.is_empty() {
+                        yield OrchEvent::AssistantText {
+                            step,
+                            delta: text_delta,
+                        };
+                    }
+                    (resp.message, resp.finish_reason, resp.usage)
+                };
+
+                steps += 1;
+                total_usage.input_tokens = total_usage
+                    .input_tokens
+                    .saturating_add(step_usage.input_tokens);
+                total_usage.output_tokens = total_usage
+                    .output_tokens
+                    .saturating_add(step_usage.output_tokens);
+
+                messages.push(assistant.clone());
+
+                let tool_calls: Vec<(String, String, serde_json::Value)> = assistant
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
+                        ContentPart::ToolCall { id, name, args } => {
+                            Some((id.clone(), name.clone(), args.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+
+                if tool_calls.is_empty()
+                    || matches!(finish_reason, FinishReason::Stop | FinishReason::Length)
+                        && tool_calls.is_empty()
+                {
+                    final_message = Some(assistant);
+                    break;
+                }
+
+                let mut tool_results: Vec<ContentPart> = Vec::with_capacity(tool_calls.len());
+                for (id, name, args) in tool_calls {
+                    if let Some(engine) = &policy {
+                        let ctx = PolicyContext {
+                            stage: PolicyStage::PreTool,
+                            model: model.clone(),
+                            messages_hash: hash_messages_pub(&messages),
+                            tools: vec![name.clone()],
+                            tool_args_hash: Some(hash_value_pub(&args)),
+                            response_hash: None,
+                        };
+                        match engine.evaluate(&principal, ctx).await? {
+                            PolicyDecision::Deny { reason } => {
+                                Err(TakoError::PolicyDenied(format!("tool `{name}`: {reason}")))?;
+                            }
+                            PolicyDecision::RequireApproval { reason } => {
+                                Err(TakoError::PolicyDenied(format!(
+                                    "tool `{name}` requires approval: {reason}"
+                                )))?;
+                            }
+                            _ => {}
+                        }
+                    }
+                    yield OrchEvent::ToolCallStart {
+                        step,
+                        name: name.clone(),
+                        id: id.clone(),
+                    };
+                    let (result_part, event_value, is_error) =
+                        match tools.invoke(&principal, &name, args).await {
+                            Ok(v) => (
+                                ContentPart::ToolResult {
+                                    id: id.clone(),
+                                    result: v.clone(),
+                                    is_error: false,
+                                },
+                                v,
+                                false,
+                            ),
+                            Err(e) => {
+                                let err = serde_json::json!({ "error": e.to_string() });
+                                (
+                                    ContentPart::ToolResult {
+                                        id: id.clone(),
+                                        result: err.clone(),
+                                        is_error: true,
+                                    },
+                                    err,
+                                    true,
+                                )
+                            }
+                        };
+                    yield OrchEvent::ToolCallResult {
+                        step,
+                        id: id.clone(),
+                        result: event_value,
+                        is_error,
+                    };
+                    tool_results.push(result_part);
+                }
+                messages.push(Message {
+                    role: Role::User,
+                    content: tool_results,
+                });
+
+                if step + 1 == max_steps {
+                    final_message = Some(assistant);
+                }
+            }
+
+            let final_message = final_message.unwrap_or_else(|| Message::assistant(""));
+            let text = final_message
+                .content
+                .iter()
+                .filter_map(ContentPart::as_text)
+                .collect::<Vec<_>>()
+                .join("");
+            yield OrchEvent::Final {
+                output: Box::new(OrchOutput {
+                    text,
+                    message: final_message,
+                    usage: total_usage,
+                    steps,
+                }),
+            };
+        };
+
+        Box::pin(s)
     }
+}
+
+/// Stream-loop variant of `Trinity::pick_provider`. Captures only owned
+/// data so it can run inside `async_stream::try_stream!` where `&self`
+/// is unavailable.
+fn pick_provider_static(
+    roles: &HashMap<String, Arc<dyn LlmProvider>>,
+    decision_id: &str,
+) -> Option<(String, Arc<dyn LlmProvider>)> {
+    if let Some((role, _pid)) = decision_id.split_once('|') {
+        if let Some(p) = roles.get(role) {
+            return Some((role.to_string(), p.clone()));
+        }
+    }
+    if let Some(p) = roles.get(decision_id) {
+        return Some((decision_id.to_string(), p.clone()));
+    }
+    for (role, p) in roles {
+        if p.id() == decision_id {
+            return Some((role.clone(), p.clone()));
+        }
+    }
+    None
 }

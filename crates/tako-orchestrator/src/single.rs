@@ -697,6 +697,10 @@ pub(crate) fn hash_messages_pub(m: &[Message]) -> String {
     hash_messages(m)
 }
 
+pub(crate) fn assemble_tool_calls_pub(deltas: Vec<ToolCallDelta>) -> Vec<ContentPart> {
+    assemble_tool_calls(deltas)
+}
+
 pub(crate) fn hash_value_pub(v: &serde_json::Value) -> String {
     hash_value(v)
 }
