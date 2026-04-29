@@ -27,6 +27,7 @@ synopsis and quickstart.
 | 6 — Production hardening, continued | v0.7.0 | done (2026-04-29) | [PLAN_PHASE6.md](PLAN_PHASE6.md) | [`## [0.7.0]`](CHANGELOG.md) |
 | 7 — Sigstore + streaming closures | v0.8.0 | done (2026-04-29) | [PLAN_PHASE7.md](PLAN_PHASE7.md) | [`## [0.8.0]`](CHANGELOG.md) |
 | 8 — Search streaming + transparency-log completeness | v0.9.0 | done (2026-04-29) | [PLAN_PHASE8.md](PLAN_PHASE8.md) | [`## [0.9.0]`](CHANGELOG.md) |
+| 9 — Cost-aware streaming guards + log freshness + protocol completeness + router-driven AB-MCTS | v0.10.0 | in progress | [PLAN_PHASE9.md](PLAN_PHASE9.md) | [`## [Unreleased]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
@@ -53,6 +54,66 @@ additive — public APIs from earlier phases never break.
   endpoints.
 - Tracing + cost rollup against multi-tenant deployments.
 - Eval-driven router fine-tuning loop (Trinity training-from-traces).
+
+### Backlog (uncommitted)
+
+Items surfaced from a 2026-04-30 audit of phase markers across the codebase.
+Not yet slotted into a phase; recorded here so they don't get lost between
+phase transitions. File/line references point at the stale marker, not at
+where the fix would land.
+
+#### Stale phase markers — promised but not delivered
+
+- [ ] **MCP Streamable HTTP — SSE upgrade + `Mcp-Session-Id` lifecycle.**
+  Comment promises Phase 2; transport still yields an empty stream.
+  [crates/tako-mcp/src/transport/streamable_http.rs:2-3](crates/tako-mcp/src/transport/streamable_http.rs#L2-L3),
+  [:154](crates/tako-mcp/src/transport/streamable_http.rs#L154).
+- [ ] **`tako-providers/http-generic` streaming.** Runtime error
+  "does not support streaming yet (Phase 2)".
+  [crates/tako-providers/http-generic/src/lib.rs:259](crates/tako-providers/http-generic/src/lib.rs#L259).
+- [ ] **Python custom provider streaming.** Runtime error
+  "Python providers do not yet support streaming (Phase 2)".
+  [crates/tako-py/src/py_python_provider.rs:154](crates/tako-py/src/py_python_provider.rs#L154).
+- [ ] **`tako-compat` real auth providers** — Vault / JWT / OIDC.
+  Only `StaticTokens` ships.
+  [crates/tako-compat/src/auth.rs:5](crates/tako-compat/src/auth.rs#L5).
+- [ ] **Vision / image content support across providers.**
+  Anthropic ([convert.rs:171](crates/tako-providers/anthropic/src/convert.rs#L171)),
+  Vertex ([convert.rs:203](crates/tako-providers/vertex/src/convert.rs#L203)),
+  Bedrock ([convert.rs:268](crates/tako-providers/bedrock/src/convert.rs#L268)).
+- [ ] **Eval harness real graders.** `swe_bench_lite` and `gpqa_diamond`
+  raise `NotImplementedError`; real SWE-Bench (apply patch + run sandboxed
+  repo tests) deferred to "a later phase".
+  [python/tako/eval/harness.py:9-10](python/tako/eval/harness.py#L9-L10),
+  [python/tako/eval/datasets/external.py:8-11](python/tako/eval/datasets/external.py#L8-L11).
+- [ ] **OTel end-to-end test against a real gRPC collector.** Full e2e
+  test deferred from Phase 1.5 acceptance criteria.
+  [tests/python/test_otlp.py:13-16](tests/python/test_otlp.py#L13-L16).
+- [ ] **Vertex deterministic-per-call placeholder logic.** Stub flagged
+  inline; revisit when usage patterns warrant.
+  [crates/tako-providers/vertex/src/convert.rs:291](crates/tako-providers/vertex/src/convert.rs#L291).
+
+#### Documentation maintenance
+
+- [ ] **Bring `README.md` feature matrix current to Phase 8.** Matrix
+  stops at Phase 6; Phase 7 (streaming closures, Rekor inclusion proof)
+  and Phase 8 (AB-MCTS streaming, `OrchEvent::VerifierScore` /
+  `Recursion`, Rekor checkpoint) are documented in `CHANGELOG.md` but
+  never reflected in the README columns.
+  [README.md](README.md) lines ~86-104.
+
+#### First-publish placeholders
+
+- [ ] **Replace `TODO(<org>)` repository URLs** at first public-org
+  publish (intentional single-point-of-edit per `PLAN_PHASE1.md` line 2).
+  [Cargo.toml:26](Cargo.toml#L26), [README.md](README.md),
+  [CONTRIBUTING.md](CONTRIBUTING.md),
+  [CHANGELOG.md:999-1008](CHANGELOG.md#L999-L1008),
+  [crates/tako-core/src/lib.rs:8-9](crates/tako-core/src/lib.rs#L8-L9).
+- [ ] **Resolve `TODO(community)` placeholders** — Discussions
+  categories, Discord/Matrix room ([README.md:135-136](README.md#L135-L136)),
+  conduct@ contact (CODE_OF_CONDUCT.md), security@ contact
+  (SECURITY.md).
 
 ## How to work this index
 
