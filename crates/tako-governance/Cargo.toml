@@ -47,9 +47,14 @@ x509-cert              = { version = "0.2", default-features = false, features =
 const-oid              = { version = "0.9", optional = true }
 pem                    = { version = "3", optional = true }
 
+# Phase 7.C cosign protobuf-bundle adapter (optional, behind
+# `sigstore-protobuf`, which itself implies `sigstore`).
+prost                  = { workspace = true, optional = true }
+
 [features]
-default  = []
-sigstore = ["dep:sigstore", "dep:x509-cert", "dep:const-oid", "dep:pem"]
+default           = []
+sigstore          = ["dep:sigstore", "dep:x509-cert", "dep:const-oid", "dep:pem"]
+sigstore-protobuf = ["sigstore", "dep:prost"]
 
 [dev-dependencies]
 tokio    = { workspace = true, features = ["full"] }

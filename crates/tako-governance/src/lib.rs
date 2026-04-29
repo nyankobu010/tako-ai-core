@@ -10,6 +10,8 @@
 //! OPA/regorus enforcement and cloud-vendor secret resolvers arrive in
 //! Phase 2.
 
+#[cfg(feature = "sigstore-protobuf")]
+pub(crate) mod cosign_bundle;
 pub mod otel;
 pub mod pii;
 pub mod policy;

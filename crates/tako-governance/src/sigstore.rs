@@ -821,6 +821,252 @@ fn verify_rekor_set(key: &CosignVerificationKey, entry: &RekorEntry) -> Result<(
 }
 
 // ---------------------------------------------------------------------------
+// cosign protobuf-bundle adapter (Phase 7.C).
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "sigstore-protobuf")]
+impl KeylessBundle {
+    /// Decode a `cosign sign-blob --bundle out.pb` payload into the
+    /// JSON-shaped [`KeylessBundle`] tako carries internally.
+    ///
+    /// Translates field-by-field:
+    ///
+    /// - `verification_material.x509_certificate_chain.certificates[0]`
+    ///   (or, on newer cosign builds, `.certificate`) → `leaf_cert_pem`
+    /// - any remaining chain certs → `chain_pem` (concatenated PEM)
+    /// - `message_signature.signature` → base64 → `signature_b64`
+    /// - first `verification_material.tlog_entries[]` → `Some(rekor)`
+    ///   with `inclusion_promise.signed_entry_timestamp` →
+    ///   `set_b64`, plus the `inclusion_proof` (when present)
+    ///   translated into a [`RekorInclusionProof`].
+    ///
+    /// Available when the `sigstore-protobuf` feature is enabled.
+    pub fn from_protobuf_bundle(bytes: &[u8]) -> Result<Self, TakoError> {
+        use crate::cosign_bundle::{Bundle, X509Certificate};
+
+        let bundle: Bundle = crate::cosign_bundle::decode(bytes)
+            .map_err(|e| TakoError::Invalid(format!("sigstore: protobuf bundle decode: {e}")))?;
+
+        let vm = bundle.verification_material.ok_or_else(|| {
+            TakoError::Invalid("sigstore: protobuf bundle missing verification_material".into())
+        })?;
+
+        // Resolve the cert chain. Newer cosign builds emit a single
+        // `certificate` (cert-of-record); older builds emit a chain.
+        // Either form maps onto `(leaf, [intermediates...])`.
+        let certs: Vec<X509Certificate> = match (vm.x509_certificate_chain, vm.certificate) {
+            (Some(chain), _) if !chain.certificates.is_empty() => chain.certificates,
+            (_, Some(single)) => vec![single],
+            _ => {
+                return Err(TakoError::Invalid(
+                    "sigstore: protobuf bundle has no x509 certificate material".into(),
+                ));
+            }
+        };
+        let leaf_cert_pem = der_to_pem(&certs[0].raw_bytes)?;
+        let chain_pem = if certs.len() > 1 {
+            let mut out = String::new();
+            for c in &certs[1..] {
+                out.push_str(&der_to_pem(&c.raw_bytes)?);
+            }
+            Some(out)
+        } else {
+            None
+        };
+
+        let sig = bundle.message_signature.ok_or_else(|| {
+            TakoError::Invalid(
+                "sigstore: protobuf bundle missing message_signature (DSSE bundles unsupported)"
+                    .into(),
+            )
+        })?;
+        if sig.signature.is_empty() {
+            return Err(TakoError::Invalid(
+                "sigstore: protobuf bundle message_signature.signature is empty".into(),
+            ));
+        }
+        let signature_b64 = B64.encode(&sig.signature);
+
+        // Pick the first tlog entry, if any. In practice cosign emits
+        // one Rekor entry per signing operation.
+        let rekor = match vm.tlog_entries.into_iter().next() {
+            Some(t) => {
+                let log_id_bytes = t
+                    .log_id
+                    .ok_or_else(|| {
+                        TakoError::Invalid(
+                            "sigstore: protobuf bundle tlog entry missing log_id".into(),
+                        )
+                    })?
+                    .key_id;
+                let promise = t.inclusion_promise.ok_or_else(|| {
+                    TakoError::Invalid(
+                        "sigstore: protobuf bundle tlog entry missing inclusion_promise (SET)"
+                            .into(),
+                    )
+                })?;
+                let inclusion_proof = t.inclusion_proof.map(|p| RekorInclusionProof {
+                    log_index: p.log_index as u64,
+                    tree_size: p.tree_size as u64,
+                    root_hash_hex: hex::encode(&p.root_hash),
+                    hashes_hex: p.hashes.iter().map(hex::encode).collect(),
+                });
+                Some(RekorEntry {
+                    log_index: t.log_index as u64,
+                    log_id: hex::encode(&log_id_bytes),
+                    integrated_time: t.integrated_time,
+                    canonicalized_body: B64.encode(&t.canonicalized_body),
+                    set_b64: B64.encode(&promise.signed_entry_timestamp),
+                    inclusion_proof,
+                })
+            }
+            None => None,
+        };
+
+        Ok(KeylessBundle {
+            leaf_cert_pem,
+            signature_b64,
+            chain_pem,
+            rekor,
+        })
+    }
+}
+
+#[cfg(feature = "sigstore-protobuf")]
+fn der_to_pem(der: &[u8]) -> Result<String, TakoError> {
+    if der.is_empty() {
+        return Err(TakoError::Invalid(
+            "sigstore: protobuf bundle cert raw_bytes is empty".into(),
+        ));
+    }
+    let p = pem::Pem::new("CERTIFICATE", der.to_vec());
+    Ok(pem::encode(&p))
+}
+
+#[cfg(all(test, feature = "sigstore-protobuf"))]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod protobuf_tests {
+    use super::*;
+    use crate::cosign_bundle::{
+        Bundle, InclusionPromise, InclusionProof, LogId, MessageSignature, TransparencyLogEntry,
+        VerificationMaterial, X509Certificate, X509CertificateChain,
+    };
+    use prost::Message as _;
+
+    /// A short DER blob that round-trips as cert-shaped bytes for the
+    /// adapter; it is **not** a valid X.509 cert (the adapter does not
+    /// parse the DER, just wraps it as PEM).
+    fn dummy_der(seed: u8) -> Vec<u8> {
+        vec![seed; 64]
+    }
+
+    fn sample_bundle() -> Bundle {
+        Bundle {
+            media_type: "application/vnd.dev.sigstore.bundle+json;version=0.2".into(),
+            verification_material: Some(VerificationMaterial {
+                x509_certificate_chain: Some(X509CertificateChain {
+                    certificates: vec![
+                        X509Certificate {
+                            raw_bytes: dummy_der(0xAA),
+                        },
+                        X509Certificate {
+                            raw_bytes: dummy_der(0xBB),
+                        },
+                    ],
+                }),
+                certificate: None,
+                tlog_entries: vec![TransparencyLogEntry {
+                    log_index: 7777,
+                    log_id: Some(LogId {
+                        key_id: vec![1, 2, 3, 4],
+                    }),
+                    integrated_time: 1_700_000_000,
+                    inclusion_promise: Some(InclusionPromise {
+                        signed_entry_timestamp: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                    }),
+                    inclusion_proof: Some(InclusionProof {
+                        log_index: 7777,
+                        root_hash: vec![0x12; 32],
+                        tree_size: 12345,
+                        hashes: vec![vec![0x34; 32], vec![0x56; 32]],
+                    }),
+                    canonicalized_body: b"rekor-body-bytes".to_vec(),
+                }],
+            }),
+            message_signature: Some(MessageSignature {
+                message_digest: None,
+                signature: vec![0x99, 0x88, 0x77, 0x66],
+            }),
+        }
+    }
+
+    #[test]
+    fn round_trips_protobuf_bundle_into_keyless_bundle() {
+        let pb = sample_bundle();
+        let bytes = pb.encode_to_vec();
+
+        let kb = KeylessBundle::from_protobuf_bundle(&bytes).unwrap();
+        assert!(kb.leaf_cert_pem.contains("BEGIN CERTIFICATE"));
+        assert!(kb.leaf_cert_pem.contains("END CERTIFICATE"));
+        // Chain PEM carries the second cert.
+        assert!(kb.chain_pem.unwrap().contains("BEGIN CERTIFICATE"));
+        assert_eq!(
+            B64.decode(&kb.signature_b64).unwrap(),
+            vec![0x99, 0x88, 0x77, 0x66]
+        );
+
+        let rekor = kb.rekor.expect("rekor entry should be carried over");
+        assert_eq!(rekor.log_index, 7777);
+        assert_eq!(rekor.log_id, "01020304");
+        assert_eq!(rekor.integrated_time, 1_700_000_000);
+        assert_eq!(rekor.canonicalized_body, B64.encode(b"rekor-body-bytes"));
+        assert_eq!(
+            B64.decode(&rekor.set_b64).unwrap(),
+            vec![0xDE, 0xAD, 0xBE, 0xEF]
+        );
+
+        let proof = rekor.inclusion_proof.expect("inclusion_proof carried over");
+        assert_eq!(proof.tree_size, 12345);
+        assert_eq!(proof.log_index, 7777);
+        assert_eq!(proof.root_hash_hex, hex::encode([0x12u8; 32]));
+        assert_eq!(proof.hashes_hex.len(), 2);
+        assert_eq!(proof.hashes_hex[0], hex::encode([0x34u8; 32]));
+    }
+
+    #[test]
+    fn rejects_protobuf_bundle_missing_signature() {
+        let mut pb = sample_bundle();
+        pb.message_signature = None;
+        let bytes = pb.encode_to_vec();
+        let err = KeylessBundle::from_protobuf_bundle(&bytes).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing message_signature"),
+            "expected a missing-signature error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn accepts_single_certificate_field() {
+        // Newer cosign bundles emit `certificate` (single cert) instead
+        // of a `x509_certificate_chain`. Adapter must handle both.
+        let mut pb = sample_bundle();
+        let vm = pb.verification_material.as_mut().unwrap();
+        vm.x509_certificate_chain = None;
+        vm.certificate = Some(X509Certificate {
+            raw_bytes: dummy_der(0xCC),
+        });
+        let bytes = pb.encode_to_vec();
+        let kb = KeylessBundle::from_protobuf_bundle(&bytes).unwrap();
+        assert!(kb.leaf_cert_pem.contains("BEGIN CERTIFICATE"));
+        assert!(
+            kb.chain_pem.is_none(),
+            "single-cert form must not synthesise a chain"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Rekor inclusion-proof verification (Phase 7.A).
 // ---------------------------------------------------------------------------
 
