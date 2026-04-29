@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 pub use tako_core::ConfidenceGuard;
 use tako_core::{ChatRequest, FinishReason, LlmProvider, Message, Principal, TakoError};
+use tako_runtime::BudgetTracker;
 use tracing::{Instrument, info_span};
 
 use crate::types::{OrchEvent, OrchInput, OrchOutput};
@@ -31,6 +32,13 @@ const DEFAULT_REVISION_PROMPT: &str = "Your previous answer scored low on the \
 /// Self-recursive wrapper over an `Arc<dyn Orchestrator>`. Trait-object form
 /// so it can hold heterogeneous wrapped orchestrators (SingleAgent, Trinity,
 /// Conductor) and remain dyn-compatible itself.
+///
+/// **Budget semantics**: `SelfCaller` itself has no provider call sites. All
+/// regular execution flows through the wrapped `inner` orchestrator and is
+/// metered through whatever budget that orchestrator was built with. The
+/// only independent provider call inside this module is
+/// [`LlmJudgeGuard::evaluate`]; its budget is configured separately via
+/// [`LlmJudgeGuard::with_budget`].
 pub struct SelfCaller {
     inner: Arc<dyn Orchestrator>,
     max_depth: u8,
@@ -240,6 +248,13 @@ impl ConfidenceGuard for RuleBasedGuard {
 pub struct LlmJudgeGuard {
     judge: Arc<dyn LlmProvider>,
     rubric: String,
+    /// Optional budget tracker consulted before each judge call
+    /// (`pre_check`) and after each call (`record`). When `None`, the
+    /// judge call is unmetered. SelfCaller does **not** carry a budget
+    /// itself: regular execution is metered through the inner
+    /// orchestrator's own budget; this hook covers the judge's
+    /// independent provider call.
+    budget: Option<Arc<BudgetTracker>>,
 }
 
 impl std::fmt::Debug for LlmJudgeGuard {
@@ -255,7 +270,17 @@ impl LlmJudgeGuard {
         Self {
             judge,
             rubric: rubric.into(),
+            budget: None,
         }
+    }
+
+    /// Attach a [`BudgetTracker`]. When set, `evaluate()` consults
+    /// `pre_check` before the judge call and `record` after, using
+    /// [`tako_core::LlmProvider::estimate_cost_usd`] for both estimates.
+    /// `BudgetExhausted` propagates as a `TakoError`.
+    pub fn with_budget(mut self, t: Arc<BudgetTracker>) -> Self {
+        self.budget = Some(t);
+        self
     }
 }
 
@@ -269,7 +294,15 @@ impl ConfidenceGuard for LlmJudgeGuard {
         );
         let model = self.judge.id().split(':').nth(1).unwrap_or("").to_string();
         let req = ChatRequest::new(model, vec![Message::user(prompt)]);
+        let estimated_usd = self.judge.estimate_cost_usd(&req);
+        if let Some(b) = self.budget.as_ref() {
+            let est_tokens = req.max_tokens.unwrap_or(0);
+            b.pre_check(principal, estimated_usd, est_tokens).await?;
+        }
         let resp = self.judge.chat(principal, req).await?;
+        if let Some(b) = self.budget.as_ref() {
+            b.record(principal, estimated_usd, resp.usage).await?;
+        }
         if !matches!(
             resp.finish_reason,
             FinishReason::Stop | FinishReason::Length | FinishReason::ToolCalls

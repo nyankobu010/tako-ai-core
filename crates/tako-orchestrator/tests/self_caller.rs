@@ -168,3 +168,55 @@ async fn self_caller_recurses_until_threshold_met() {
     assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
     assert!(out.text.contains("long enough"));
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6.C — LlmJudgeGuard budget wiring.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn llm_judge_guard_with_budget_records_judge_usage() {
+    use std::collections::BTreeMap;
+    use tako_core::Budget;
+    use tako_orchestrator::LlmJudgeGuard;
+    use tako_runtime::{BudgetBackend, BudgetTracker, InMemoryBudgetBackend};
+
+    // Judge replies with "0.9" and reports usage of (4, 2). The guard's
+    // own budget tracker should record those tokens against the
+    // tenant id passed through the principal.
+    let judge = Arc::new(FakeProvider::new(
+        "fake:judge",
+        vec![ChatResponse {
+            message: Message::assistant("0.9"),
+            finish_reason: FinishReason::Stop,
+            usage: Usage {
+                input_tokens: 4,
+                output_tokens: 2,
+            },
+            raw: Default::default(),
+        }],
+    ));
+    let backend = Arc::new(InMemoryBudgetBackend::new());
+    let tracker = Arc::new(BudgetTracker::new(
+        Arc::clone(&backend) as Arc<dyn BudgetBackend>,
+        Budget::default(),
+    ));
+
+    let guard = LlmJudgeGuard::new(judge.clone(), "rate from 0 to 1").with_budget(tracker);
+
+    let principal = Principal {
+        tenant_id: "tenant-judge".into(),
+        user_id: "u".into(),
+        roles: vec![],
+        trace_id: None,
+        metadata: BTreeMap::new(),
+    };
+    let score = guard
+        .evaluate(&principal, "candidate answer")
+        .await
+        .unwrap();
+    assert!((score - 0.9).abs() < 1e-3);
+    assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
+
+    let usage = backend.current_usage("tenant-judge").await.unwrap();
+    assert_eq!(usage.tokens_today, 6);
+}
