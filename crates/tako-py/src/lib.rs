@@ -14,6 +14,7 @@
 
 mod conv;
 mod py_bedrock;
+mod py_conductor;
 mod py_governance;
 mod py_mcp;
 mod py_orchestrator;
@@ -30,6 +31,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_bedrock::PyBedrock>()?;
     m.add_class::<py_python_provider::PyPythonProvider>()?;
     m.add_class::<py_orchestrator::PyOrchestrator>()?;
+    m.add_class::<py_conductor::PyConductor>()?;
     m.add_class::<py_mcp::PyStdio>()?;
     m.add_class::<py_mcp::PyStreamableHttp>()?;
     m.add_class::<py_governance::PyBudget>()?;
