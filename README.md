@@ -85,23 +85,23 @@ result = orch.run_sync("Quick question: ...")
 
 ## Feature matrix
 
-| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 |
-|------------------------------------|:-------:|:-------:|:-------:|:-------:|
-| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama |
-| OpenAI-compat HTTP server          |         | ✅      |         |         |
-| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC |
-| `SingleAgent` orchestrator         | ✅      |         |         |         |
-| `Conductor` orchestrator           |         | ✅      |         |         |
-| `Trinity` learned router           |         |         | ✅      |         |
-| `SelfCaller` recursion             |         |         | ✅      |         |
-| `AbMcts` tree search               |         |         |         | ✅      |
-| OPA / Rego policy enforcement      |         | ✅      |         |         |
-| PII / DLP redaction                | ✅      |         |         |         |
-| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |
-| Budgets (in-memory)                | ✅      |         |         | ➕ Redis |
-| Circuit breakers + rate limits     | ✅      |         |         |         |
-| Sigstore tool-catalogue verify     |         |         |         | ✅      |
-| Sync + async dual API              | ✅      |         |         |         |
+| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 |
+|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|
+| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | |
+| OpenAI-compat HTTP server          |         | ✅      |         |         |         |
+| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |
+| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |
+| `Conductor` orchestrator           |         | ✅      |         |         |         |
+| `Trinity` learned router           |         |         | ✅      |         |         |
+| `SelfCaller` recursion             |         |         | ✅      |         |         |
+| `AbMcts` tree search               |         |         |         | ✅      |         |
+| OPA / Rego policy enforcement      |         | ✅      |         |         |         |
+| PII / DLP redaction                | ✅      |         |         |         |         |
+| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |
+| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ orchestrator wiring |
+| Circuit breakers + rate limits     | ✅      |         |         |         |         |
+| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless |
+| Sync + async dual API              | ✅      |         |         |         |         |
 
 ## Roadmap
 
@@ -115,9 +115,13 @@ result = orch.run_sync("Quick question: ...")
 - **Phase 3 — Learned coordination** *(done, v0.4.0)*: `Trinity` router
   (rule + ONNX), training harness, `SelfCaller` recursion, eval harness,
   native orchestrator streaming.
-- **Phase 4 — Search & scale** *(next)*: AB-MCTS with verifiers,
-  Mistral / Ollama, WebSocket / gRPC MCP, Sigstore verification, Redis
-  budget backend.
+- **Phase 4 — Search & scale** *(done, v0.5.0)*: AB-MCTS with verifiers,
+  Mistral / Ollama, WebSocket / gRPC MCP, Sigstore (keyed) verification,
+  Redis budget backend.
+- **Phase 5 — Production hardening** *(done, v0.6.0)*: Sigstore keyless
+  verifier (Fulcio leaf cert + identity policy), gRPC MCP mTLS, and
+  `BudgetTracker` orchestrator wiring through `tako.SingleAgent` /
+  `tako.Client`.
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 

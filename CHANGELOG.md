@@ -9,6 +9,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.6.0] - 2026-04-29
+
+Phase 5 — production hardening. Closes the three explicit follow-ups
+flagged in `## [0.5.0]`'s release notes:
+
+### Added
+
+- **Sigstore keyless verification** (`tako_governance::KeylessVerifier`,
+  Phase 5.A): a second trust model alongside the Phase-4 keyed
+  `CatalogueVerifier`. The catalogue is signed by a short-lived
+  Fulcio-issued leaf certificate that binds the artifact to a specific
+  OIDC identity (issuer URI + SAN). Operators pin an `IdentityPolicy
+  { issuer, san_match }` (where `SanMatch::Exact` or `SanMatch::Regex`)
+  and call `verify_bundle(manifest, bundle)`; the verifier checks the
+  cert's `notBefore` / `notAfter`, the Code Signing extended key usage,
+  the OIDC issuer extension (`1.3.6.1.4.1.57264.1.1`), the SAN, and the
+  signature against the cert's public key. Returns the same
+  `Catalogue` shape as the keyed verifier so call sites are
+  interchangeable.
+- The bundle wire format (`KeylessBundle { leaf_cert_pem,
+  signature_b64 }`) is a small JSON wrapper an operator can produce
+  from `cosign sign-blob` output in a few lines of shell.
+- Trust scope for v0.6.0 is **leaf-cert + identity-policy +
+  signature**. Chain-of-trust validation against the Fulcio root and
+  Rekor SET / inclusion-proof verification are explicitly deferred —
+  the `verify_bundle` return shape is forward-compatible. This
+  intentionally avoids the heavy `sigstore` `verify` feature
+  (transitively requires `webbrowser` + `openidconnect`).
+- `tako-governance` adds direct deps on `x509-cert = "0.2"` (already
+  pulled in transitively by `sigstore`), `const-oid = "0.9"`, and
+  `pem = "3"`, all gated behind the `sigstore` feature. Test deps add
+  `rcgen` (with `aws_lc_rs` + `pem`).
+- 6 Rust tests in `crates/tako-governance/tests/sigstore.rs::keyless`
+  generate a Fulcio-style leaf cert at runtime (no fixtures committed):
+  happy path, regex SAN, wrong issuer, wrong SAN, tampered manifest,
+  malformed bundle.
+
+- **gRPC MCP mTLS** (`tako_mcp::GrpcTransport::connect_with_tls`,
+  Phase 5.B): a second constructor on the Phase-4 `GrpcTransport`
+  alongside the existing plaintext / webpki-roots `connect`. Takes
+  `(endpoint, ca_pem, client_cert_pem, client_key_pem, domain_name)`.
+  When `client_cert_pem` and `client_key_pem` are both set, the
+  transport sends a client certificate (mTLS); pass `None` for both to
+  use the custom CA without client auth. Half-pair client identities
+  raise synchronously with a clear error. The post-channel demux/spawn
+  logic is refactored into a private `from_channel` helper shared by
+  both constructors.
+- 4 Rust tests in `crates/tako-mcp/tests/grpc.rs::mtls` mint a
+  self-signed CA + server cert + client cert at runtime via `rcgen`
+  and bind an in-process `tonic::transport::Server` with
+  `ServerTlsConfig::client_ca_root`: full mTLS round-trip; server
+  rejection without a client cert; CA-only round-trip without client
+  auth; eager rejection of half-pair client identity.
+- `tako-mcp` gains a tiny dev-dep on `rustls = "0.23"` (with the
+  `aws_lc_rs` provider) so the test binary can pin a CryptoProvider —
+  both `aws-lc-rs` (via rcgen) and `ring` (via tonic) end up linked,
+  and rustls 0.23 refuses to auto-pick when both are present.
+
+- **`BudgetTracker` wired into the SingleAgent orchestrator API**
+  (Phase 5.C): closes the regression flagged in `## [0.5.0]` Phase 4.G
+  notes. `SingleAgent` and `SingleAgentBuilder` gain an optional
+  `Arc<BudgetTracker>` field plus a `.budget(...)` builder method. In
+  both `Orchestrator::run` and `::stream`, every provider call is
+  preceded by `pre_check(principal, estimated_usd, est_tokens)` and
+  followed by `record(principal, estimated_usd, usage)`. Pre-flight
+  cost uses `LlmProvider::estimate_cost_usd(&req)`; post-call cost
+  reuses the same value (per-token rates aren't yet exposed on the
+  trait). Pre-flight token estimate is `req.max_tokens.unwrap_or(0)`.
+  `BudgetExhausted` errors short-circuit the run.
+- Conductor / Trinity / SelfCaller budget wiring is intentionally
+  deferred to v0.7.0 — same pattern, no public API surface disturbed.
+
+- **Python facade for Phase-5 Rust additions**:
+  - `tako.sigstore.KeylessVerifier(issuer, san, *, san_is_regex=False)`
+    with `.verify_bundle(manifest, bundle)`. PyO3 binding
+    `tako._native.KeylessVerifier`.
+  - `tako.mcp.Grpc(endpoint, *, ca_pem=, ca_path=, client_cert_pem=,
+    client_cert_path=, client_key_pem=, client_key_path=,
+    domain_name=)` — accepts PEM either inline or from a filesystem
+    path; the two are mutually exclusive.
+  - `tako.budget.InMemoryBackend` joins `tako.budget.RedisBackend`
+    with the same `current_usage` / `record` async API. Built into
+    every wheel (no Cargo feature gate).
+  - `tako.SingleAgent(provider, *, budget=, budget_backend=)` and
+    `tako.Client(budget=, budget_backend=)` — kwargs flow through to
+    the new Rust builder method.
+- New PyO3 module pieces: `tako._native.InMemoryBudgetBackend`
+  (always present); `tako._native.KeylessVerifier` (gated on
+  `sigstore`); extended `tako._native.Grpc` constructor (gated on
+  `grpc`); extended `tako._native.Orchestrator` constructor
+  (`budget` / `budget_backend` kwargs).
+- 12 new Python smoke tests:
+  - `tests/python/test_phase5_sigstore_keyless.py` (4 cases) —
+    auto-skip without `sigstore`. Generate the leaf cert via
+    `cryptography` (already in the `dev` extra).
+  - `tests/python/test_phase5_grpc_mtls.py` (3 cases) — auto-skip
+    without `grpc`. Cover the validation rules; full mTLS round-trip
+    coverage lives in the Rust integration tests.
+  - `tests/python/test_phase5_budget_wiring.py` (5 cases) — always
+    runs; `InMemoryBackend` round-trip, kwarg acceptance, pre-check
+    short-circuit, recording usage, `Client` stashing.
+- New examples: `examples/16_sigstore_keyless.py`,
+  `examples/17_grpc_mtls.py`, `examples/18_budget_wired.py`.
+
+### Notes
+
+- Phase 5.C lands SingleAgent only. Conductor / Trinity / SelfCaller
+  budget wiring is tracked for v0.7.0; the pattern is identical and
+  the Python kwargs reuse the same `extract_budget_backend` helper.
+- The keyless verifier's bundle JSON is intentionally simpler than
+  cosign's protobuf bundle. A `--cosign-bundle` shim that converts the
+  protobuf form to `KeylessBundle` is a candidate v0.7.0 ergonomics
+  add.
+
 ## [0.5.0] - 2026-04-29
 
 Phase 4 — Search & scale. Adds AB-MCTS orchestrator with verifiers

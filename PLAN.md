@@ -16,12 +16,16 @@
 >   Sigstore tool-catalogue verification (`CatalogueVerifier`), Redis
 >   `BudgetBackend`, and the matching PyO3 + Python facade for each.
 >   See `## [0.5.0]` in [CHANGELOG.md](CHANGELOG.md).
+> - Phase 5 (production hardening, v0.6.0) — Sigstore `KeylessVerifier`
+>   (leaf cert + identity policy), gRPC mTLS (custom CAs + client
+>   certs), and `BudgetTracker` wiring through `SingleAgent` /
+>   `tako.Client`. See [PLAN_PHASE5.md](PLAN_PHASE5.md) and `## [0.6.0]`.
 >
-> **Next**: Phase 5. Likely candidates (subject to scoping when starting):
-> Sigstore keyless verification (Fulcio + Rekor offline bundle); mTLS for
-> the gRPC transport; orchestrator wiring for `BudgetBackend` (Python
-> `Client` / `SingleAgent` accept a backend arg); production hardening.
-> Open a fresh `PLAN_PHASE5.md` before writing code.
+> **Next**: Phase 6. Unscoped at the time of writing. Likely candidates:
+> Conductor / Trinity / SelfCaller budget wiring (mirror Phase 5.C);
+> Sigstore chain-of-trust + Rekor SET (extend Phase 5.A); Trinity
+> streaming (Phase 3 carry-over). Open a fresh `PLAN_PHASE6.md` before
+> writing code.
 
 ## Phase 1: Foundation
 
