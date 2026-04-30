@@ -68,14 +68,26 @@ impl PyLlmJudgeGuard {
     /// `budget_backend=` kwargs to meter the judge's own provider call
     /// — distinct from the inner orchestrator's budget which covers
     /// regular execution.
+    ///
+    /// Phase 9.A streaming opt-in: pass `streaming_min_chars=` to
+    /// enable per-N-delta judging from `evaluate_streaming` (default
+    /// `None`, i.e. streaming evaluation disabled — preserves the
+    /// v0.9.0 behaviour). Pass `streaming_every_n=` to throttle the
+    /// judge call to every Nth over-threshold partial (default `1`).
     #[new]
-    #[pyo3(signature = (judge, rubric, budget=None, budget_backend=None))]
+    #[pyo3(signature = (
+        judge, rubric,
+        budget=None, budget_backend=None,
+        streaming_min_chars=None, streaming_every_n=None,
+    ))]
     fn new(
         py: Python<'_>,
         judge: Py<PyAny>,
         rubric: String,
         budget: Option<PyBudget>,
         budget_backend: Option<Py<PyAny>>,
+        streaming_min_chars: Option<usize>,
+        streaming_every_n: Option<u32>,
     ) -> PyResult<Self> {
         let provider = extract_any_provider(py, &judge)?;
         let mut guard = LlmJudgeGuard::new(provider, rubric);
@@ -89,6 +101,12 @@ impl PyLlmJudgeGuard {
             };
             let tracker = Arc::new(BudgetTracker::new(backend, budget_inner));
             guard = guard.with_budget(tracker);
+        }
+        if let Some(n) = streaming_min_chars {
+            guard = guard.with_streaming_min_chars(n);
+        }
+        if let Some(n) = streaming_every_n {
+            guard = guard.with_streaming_every_n(n);
         }
         Ok(Self {
             inner: Arc::new(guard) as Arc<dyn ConfidenceGuard>,

@@ -358,6 +358,8 @@ class LlmJudgeGuard:
         rubric: str,
         budget: Any | None = ...,
         budget_backend: Any | None = ...,
+        streaming_min_chars: int | None = ...,
+        streaming_every_n: int | None = ...,
     ) -> None: ...
 
 class RegexRouter:

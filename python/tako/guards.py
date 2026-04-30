@@ -37,6 +37,13 @@ class LlmJudge(_GuardBase):
     own provider call. This is independent of the inner orchestrator's
     budget, which covers regular execution; the judge's call goes
     out-of-band so it needs its own hook to be metered.
+
+    Phase 9.A streaming opt-in: pass ``streaming_min_chars`` to enable
+    per-N-delta judging from the streaming hook. Default is ``None``
+    (streaming evaluation disabled — preserves the v0.9.0 behaviour
+    where the judge runs only on buffered final text). Pair with
+    ``streaming_every_n`` to throttle the judge call to every Nth
+    over-threshold partial.
     """
 
     def __init__(
@@ -46,6 +53,8 @@ class LlmJudge(_GuardBase):
         *,
         budget: Any = None,
         budget_backend: Any = None,
+        streaming_min_chars: int | None = None,
+        streaming_every_n: int | None = None,
     ) -> None:
         if not hasattr(judge, "_handle"):
             raise TypeError("judge must be a tako.providers.* instance")
@@ -56,6 +65,8 @@ class LlmJudge(_GuardBase):
             rubric,
             budget=budget_native,
             budget_backend=backend_native,
+            streaming_min_chars=streaming_min_chars,
+            streaming_every_n=streaming_every_n,
         )
 
 
