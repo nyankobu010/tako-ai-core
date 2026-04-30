@@ -565,7 +565,7 @@ impl KeylessVerifier {
         check_validity_now(&cert)?;
         check_code_signing_eku(&cert)?;
 
-        let san = extract_san_value(&cert)?;
+        let sans = extract_san_values(&cert)?;
         let issuer = extract_oidc_issuer(&cert)?;
         if issuer != self.identity.issuer {
             return Err(TakoError::Invalid(format!(
@@ -573,9 +573,18 @@ impl KeylessVerifier {
                 self.identity.issuer
             )));
         }
-        if !self.identity.san_match.matches(&san) {
+        // Phase 11.A L2 — require at least one SAN to match the
+        // identity policy. The previous implementation returned the
+        // first matching-type SAN and ignored later ones, so an
+        // attacker-injected SAN earlier in the list could either win
+        // the predicate or hide a legitimate SAN from the check.
+        let san = sans
+            .iter()
+            .find(|s| self.identity.san_match.matches(s))
+            .cloned();
+        if san.is_none() {
             return Err(TakoError::Invalid(format!(
-                "sigstore: cert SAN `{san}` does not match identity policy"
+                "sigstore: no cert SAN in {sans:?} matches identity policy"
             )));
         }
 
@@ -712,7 +721,13 @@ fn check_code_signing_eku(cert: &Certificate) -> Result<(), TakoError> {
     Ok(())
 }
 
-fn extract_san_value(cert: &Certificate) -> Result<String, TakoError> {
+/// Phase 11.A L2 — return *every* string-form SAN entry on the cert
+/// (`rfc822Name`, `uniformResourceIdentifier`, `dNSName`). Callers
+/// must check the identity policy against the full set rather than
+/// trusting the first match: a multi-SAN cert with one attacker-
+/// injected entry should not pass the predicate just because the
+/// attacker's SAN happens to sort earlier in the list.
+fn extract_san_values(cert: &Certificate) -> Result<Vec<String>, TakoError> {
     let san_pair = cert
         .tbs_certificate
         .get::<SubjectAltName>()
@@ -722,17 +737,21 @@ fn extract_san_value(cert: &Certificate) -> Result<String, TakoError> {
             "sigstore: cert missing SubjectAltName extension".into(),
         ));
     };
+    let mut out = Vec::with_capacity(san.0.len());
     for name in &san.0 {
         match name {
-            GeneralName::Rfc822Name(s) => return Ok(s.as_str().to_string()),
-            GeneralName::UniformResourceIdentifier(s) => return Ok(s.as_str().to_string()),
-            GeneralName::DnsName(s) => return Ok(s.as_str().to_string()),
+            GeneralName::Rfc822Name(s) => out.push(s.as_str().to_string()),
+            GeneralName::UniformResourceIdentifier(s) => out.push(s.as_str().to_string()),
+            GeneralName::DnsName(s) => out.push(s.as_str().to_string()),
             _ => continue,
         }
     }
-    Err(TakoError::Invalid(
-        "sigstore: cert SAN has no rfc822/URI/DNS entry".into(),
-    ))
+    if out.is_empty() {
+        return Err(TakoError::Invalid(
+            "sigstore: cert SAN has no rfc822/URI/DNS entry".into(),
+        ));
+    }
+    Ok(out)
 }
 
 fn extract_oidc_issuer(cert: &Certificate) -> Result<String, TakoError> {
@@ -746,6 +765,15 @@ fn extract_oidc_issuer(cert: &Certificate) -> Result<String, TakoError> {
             // v1 stores the issuer URI as a raw IA5String *without* the
             // surrounding ASN.1 tag — i.e. the extn_value is the bytes
             // of the URI directly.
+            //
+            // Phase 11.A L5 — note for future maintainers: this matches
+            // Fulcio's actual encoding (the Sigstore community has not
+            // changed it). If a CA ever emits the v1 extension with
+            // proper IA5String DER framing, this branch will compare
+            // DER bytes against the URI string and fail to match. If
+            // that diagnostic ever appears in the wild, drop in the
+            // `Ia5StringRef::from_der` fallback already used by the v2
+            // branch below.
             let s = std::str::from_utf8(ext.extn_value.as_bytes())
                 .map_err(|e| TakoError::Invalid(format!("sigstore: OIDC issuer (v1) utf8: {e}")))?;
             return Ok(s.to_string());
@@ -1053,13 +1081,27 @@ fn cert_eq(a: &Certificate, b: &Certificate) -> bool {
 /// `{"body":"<base64>","integratedTime":<int>,"logID":"<hex>","logIndex":<int>}`.
 /// See <https://github.com/sigstore/rekor/blob/main/pkg/types/intoto/v0.0.1/intoto_v0_0_1_schema.json>.
 fn verify_rekor_set(key: &CosignVerificationKey, entry: &RekorEntry) -> Result<(), TakoError> {
-    let canonical = format!(
-        "{{\"body\":\"{body}\",\"integratedTime\":{ts},\"logID\":\"{log_id}\",\"logIndex\":{idx}}}",
-        body = entry.canonicalized_body,
-        ts = entry.integrated_time,
-        log_id = entry.log_id,
-        idx = entry.log_index,
+    // Phase 11.A L3 — the canonical payload was previously assembled
+    // by `format!`-string concatenation, which silently relied on the
+    // input invariants (`body` is base64, `log_id` is hex,
+    // `integrated_time` is `i64`, `log_index` is `u64`) for none of
+    // them to contain a quote or backslash. A `BTreeMap` keyed by
+    // `&'static str` plus `serde_json::to_string` gives us
+    // sorted-key canonical JSON with proper escape rules out of the
+    // box, so a future RekorEntry shape change cannot resurrect a
+    // silent injection vector.
+    let mut payload: std::collections::BTreeMap<&'static str, serde_json::Value> =
+        std::collections::BTreeMap::new();
+    payload.insert("body", serde_json::Value::from(entry.canonicalized_body.clone()));
+    payload.insert(
+        "integratedTime",
+        serde_json::Value::from(entry.integrated_time),
     );
+    payload.insert("logID", serde_json::Value::from(entry.log_id.clone()));
+    payload.insert("logIndex", serde_json::Value::from(entry.log_index));
+    let canonical = serde_json::to_string(&payload).map_err(|e| {
+        TakoError::Invalid(format!("sigstore: rekor SET canonical encode: {e}"))
+    })?;
     let set_bytes = B64
         .decode(entry.set_b64.trim())
         .map_err(|e| TakoError::Invalid(format!("sigstore: rekor SET base64: {e}")))?;

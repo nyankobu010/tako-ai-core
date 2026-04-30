@@ -368,6 +368,96 @@ mod keyless {
             "expected bundle-parse error, got: {msg}"
         );
     }
+
+    /// Build a leaf cert with two URI-form SANs. Used by the L2
+    /// regressions to confirm that the predicate iterates the full
+    /// SAN set rather than trusting the first entry.
+    fn build_leaf_two_sans(issuer_uri: &str, sans: [&str; 2]) -> LeafFixture {
+        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut params = CertificateParams::default();
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-leaf-l2");
+        params.subject_alt_names = vec![
+            SanType::URI(sans[0].try_into().unwrap()),
+            SanType::URI(sans[1].try_into().unwrap()),
+        ];
+        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
+        params.not_before = OffsetDateTime::now_utc() - time::Duration::minutes(5);
+        params.not_after = OffsetDateTime::now_utc() + time::Duration::minutes(60);
+        let oid_iter: Vec<u64> = FULCIO_OIDC_ISSUER_V1.to_vec();
+        let mut oidc_ext =
+            CustomExtension::from_oid_content(&oid_iter, issuer_uri.as_bytes().to_vec());
+        oidc_ext.set_criticality(false);
+        params.custom_extensions = vec![oidc_ext];
+        let cert = params.self_signed(&key_pair).unwrap();
+        let cert_pem = cert.pem();
+        let parsed = Certificate::from_pem(&cert_pem).unwrap();
+        let spki_der = parsed
+            .tbs_certificate
+            .subject_public_key_info
+            .to_der()
+            .unwrap();
+        let signing_key =
+            CosignVerificationKey::from_der(&spki_der, &SigningScheme::ECDSA_P256_SHA256_ASN1)
+                .unwrap();
+        LeafFixture {
+            cert_pem,
+            signing_key,
+            signer_keypair: key_pair,
+        }
+    }
+
+    /// Phase 11.A L2 — when the attacker-injected SAN sorts *earlier*
+    /// in the list than the legitimate SAN, the predicate must still
+    /// match (any SAN that satisfies the policy wins). The pre-fix
+    /// implementation returned the first matching-type SAN and would
+    /// have run the predicate against `adversary@evil.example`,
+    /// failing despite a legitimate SAN being present.
+    #[test]
+    fn l2_predicate_iterates_all_sans() {
+        let manifest = sample_manifest();
+        let issuer = "https://token.actions.githubusercontent.com";
+        let legitimate =
+            "https://github.com/tako-ai/tako-ai-core/.github/workflows/release.yml@refs/heads/main";
+        let attacker = "https://github.com/attacker/repo/.github/workflows/evil.yml@refs/heads/main";
+
+        // Attacker SAN comes first in the cert's SAN list.
+        let fixture = build_leaf_two_sans(issuer, [attacker, legitimate]);
+        let bundle = build_bundle(&fixture, &manifest);
+
+        let verifier = KeylessVerifier::new(IdentityPolicy::exact(issuer, legitimate));
+        let cat = verifier.verify_bundle(&manifest, &bundle).unwrap();
+        assert_eq!(cat.tools.len(), 2);
+    }
+
+    /// Phase 11.A L2 — when *no* SAN matches the policy, the cert is
+    /// rejected with a message that includes every observed SAN so
+    /// the operator can diagnose the misconfiguration without having
+    /// to run `openssl x509`.
+    #[test]
+    fn l2_no_san_match_rejects_with_full_san_list() {
+        let manifest = sample_manifest();
+        let issuer = "https://token.actions.githubusercontent.com";
+        let san_a = "https://github.com/some-org/repo-a/.github/workflows/x.yml@refs/heads/main";
+        let san_b = "https://github.com/some-org/repo-b/.github/workflows/y.yml@refs/heads/main";
+
+        let fixture = build_leaf_two_sans(issuer, [san_a, san_b]);
+        let bundle = build_bundle(&fixture, &manifest);
+
+        // Policy that matches neither SAN.
+        let verifier = KeylessVerifier::new(IdentityPolicy::exact(
+            issuer,
+            "https://github.com/some-org/repo-c/.github/workflows/z.yml@refs/heads/main",
+        ));
+        let err = verifier.verify_bundle(&manifest, &bundle).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("no cert SAN") && msg.contains(san_a) && msg.contains(san_b),
+            "expected SAN-list rejection with both SANs, got: {msg}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
