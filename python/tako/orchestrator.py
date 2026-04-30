@@ -308,6 +308,12 @@ class AbMcts:
     await mcts.stream(prompt): ...`` yields per-rollout events of kind
     ``"step_start"``, ``"assistant_text"``, ``"verifier_score"``, and
     a terminal ``"final"`` carrying the best leaf's text.
+
+    Phase 9.D (v0.10.0): pass ``candidates=[p1, p2, ...]`` and
+    ``router=tako.RegexRouter()`` (or ``OnnxRouter``) to enable
+    router-driven branch expansion. The router runs once per rollout
+    over ``[primary, ...candidates]``; without ``router``, candidates
+    are ignored and every rollout uses the primary provider.
     """
 
     def __init__(
@@ -320,11 +326,23 @@ class AbMcts:
         max_steps_per_rollout: int = 4,
         temperature: float = 0.7,
         min_confidence: float = 0.95,
+        candidates: list[_ProviderBase] | None = None,
+        router: Any = None,
     ) -> None:
         if not hasattr(provider, "_handle"):
             raise TypeError("provider must be a tako.providers.* instance")
         if not hasattr(verifier, "_native"):
             raise TypeError("verifier must be a tako.verifiers.* instance")
+        cand_handles: list[Any] | None = None
+        if candidates is not None:
+            cand_handles = []
+            for c in candidates:
+                if not hasattr(c, "_handle"):
+                    raise TypeError("each candidate must be a tako.providers.* instance")
+                cand_handles.append(c._handle)
+        router_native: Any = None
+        if router is not None:
+            router_native = router._native if hasattr(router, "_native") else router
         self._inner = _native.AbMcts(
             provider._handle,
             verifier._native,
@@ -333,6 +351,8 @@ class AbMcts:
             max_steps_per_rollout=max_steps_per_rollout,
             temperature=temperature,
             min_confidence=min_confidence,
+            candidates=cand_handles,
+            router=router_native,
         )
 
     async def run(

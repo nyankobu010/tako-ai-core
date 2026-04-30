@@ -266,6 +266,8 @@ class AbMcts:
         max_steps_per_rollout: int = ...,
         temperature: float = ...,
         min_confidence: float = ...,
+        candidates: list[Any] | None = ...,
+        router: Any | None = ...,
     ) -> None: ...
     def run(
         self,

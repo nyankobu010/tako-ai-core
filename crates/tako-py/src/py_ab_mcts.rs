@@ -76,6 +76,13 @@ impl PyAbMcts {
     /// `provider` is any tako provider; `verifier` must be a
     /// `tako._native.RuleBasedVerifier` (further verifier types can be
     /// added in follow-on releases).
+    ///
+    /// Phase 9.D: pass `candidates=[p1, p2, ...]` to register
+    /// additional providers and `router=tako._native.RegexRouter()` (or
+    /// `OnnxRouter`) to enable router-driven branch expansion. The
+    /// router runs once per rollout (per branch expansion) over
+    /// `[primary, ...candidates]`. Without `router`, candidates are
+    /// ignored and every rollout uses the primary provider.
     #[new]
     #[pyo3(signature = (
         provider,
@@ -85,6 +92,8 @@ impl PyAbMcts {
         max_steps_per_rollout=4,
         temperature=0.7,
         min_confidence=0.95,
+        candidates=None,
+        router=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -96,17 +105,30 @@ impl PyAbMcts {
         max_steps_per_rollout: u32,
         temperature: f32,
         min_confidence: f32,
+        candidates: Option<Vec<Py<PyAny>>>,
+        router: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         let provider_arc = extract_any_provider(py, &provider)?;
         let verifier_arc = extract_any_verifier(py, &verifier)?;
-        let mcts = AbMcts::builder()
+        let mut builder = AbMcts::builder()
             .provider(provider_arc)
             .verifier(verifier_arc)
             .max_iterations(max_iterations)
             .branching_factor(branching_factor)
             .max_steps_per_rollout(max_steps_per_rollout)
             .temperature(temperature)
-            .min_confidence(min_confidence)
+            .min_confidence(min_confidence);
+        if let Some(cands) = candidates {
+            for c in cands {
+                let cand_arc = extract_any_provider(py, &c)?;
+                builder = builder.candidate(cand_arc);
+            }
+        }
+        if let Some(r) = router {
+            let router_arc = crate::py_router::extract_router(py, &r)?;
+            builder = builder.router(router_arc);
+        }
+        let mcts = builder
             .build()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
