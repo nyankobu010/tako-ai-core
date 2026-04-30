@@ -51,6 +51,12 @@ pem                    = { version = "3", optional = true }
 # `sigstore-protobuf`, which itself implies `sigstore`).
 prost                  = { workspace = true, optional = true }
 
+# Phase 11.A M1 — `JsonStateStore::save` writes via
+# `NamedTempFile::new_in(parent).persist()` for race-free atomic
+# replace. Promoted from dev-dep (where it has lived since v0.11.0
+# tests) to production.
+tempfile               = "3"
+
 [features]
 default           = []
 sigstore          = ["dep:sigstore", "dep:x509-cert", "dep:const-oid", "dep:pem"]
@@ -62,4 +68,3 @@ wiremock = { workspace = true }
 sigstore = { workspace = true }
 rcgen    = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 time     = "0.3"
-tempfile = "3"

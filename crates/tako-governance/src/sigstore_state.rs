@@ -38,10 +38,12 @@
 //! # Ok::<(), tako_core::TakoError>(())
 //! ```
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tako_core::TakoError;
+use tempfile::NamedTempFile;
 
 use crate::sigstore::KeylessVerifier;
 
@@ -92,36 +94,60 @@ impl JsonStateStore {
         }
     }
 
-    /// Persist `n` as the new `rekor_min_tree_size` value. Writes to
-    /// `<path>.tmp` first then atomically renames over `<path>` so a
-    /// crash mid-write cannot leave a corrupt or partially-written
-    /// anchor.
+    /// Persist `n` as the new `rekor_min_tree_size` value. Writes to a
+    /// per-call random tmp file in the same directory then atomically
+    /// renames over `<path>` so a crash mid-write cannot leave a
+    /// corrupt or partially-written anchor.
+    ///
+    /// Phase 11.A M1+M4 — `tempfile::NamedTempFile::new_in(parent)`
+    /// generates a randomised suffix, so two concurrent `save()` calls
+    /// on a shared `Arc<JsonStateStore>` cannot collide on the same
+    /// tmp path. Its `Drop` impl deletes the tmp on the failure path
+    /// (when `persist` is not reached), so a `rename` error never
+    /// leaves an orphan `*.tmp` file behind.
     pub fn save(&self, n: u64) -> Result<(), TakoError> {
         let body = serde_json::to_vec(&StateFile {
             rekor_min_tree_size: n,
         })
         .map_err(|e| TakoError::Invalid(format!("sigstore_state: serialise: {e}")))?;
 
-        if let Some(parent) = self.path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                TakoError::Invalid(format!(
-                    "sigstore_state: create parent {}: {e}",
-                    parent.display()
-                ))
-            })?;
-        }
-
-        let tmp = self.tmp_path();
-        std::fs::write(&tmp, &body).map_err(|e| {
-            TakoError::Invalid(format!("sigstore_state: write {}: {e}", tmp.display()))
-        })?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| {
+        let parent = self
+            .path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent).map_err(|e| {
             TakoError::Invalid(format!(
-                "sigstore_state: rename {} -> {}: {e}",
-                tmp.display(),
-                self.path.display()
+                "sigstore_state: create parent {}: {e}",
+                parent.display()
+            ))
+        })?;
+
+        let mut tmp = NamedTempFile::new_in(parent).map_err(|e| {
+            TakoError::Invalid(format!(
+                "sigstore_state: open tmp in {}: {e}",
+                parent.display()
+            ))
+        })?;
+        tmp.write_all(&body).map_err(|e| {
+            TakoError::Invalid(format!(
+                "sigstore_state: write tmp {}: {e}",
+                tmp.path().display()
+            ))
+        })?;
+        tmp.as_file_mut().sync_all().map_err(|e| {
+            TakoError::Invalid(format!(
+                "sigstore_state: fsync tmp {}: {e}",
+                tmp.path().display()
+            ))
+        })?;
+        tmp.persist(&self.path).map_err(|e| {
+            // `persist` returns the original `NamedTempFile` on Err so
+            // the `Drop` impl can clean up; we only need the message.
+            TakoError::Invalid(format!(
+                "sigstore_state: persist tmp -> {}: {}",
+                self.path.display(),
+                e.error,
             ))
         })?;
         Ok(())
@@ -141,15 +167,6 @@ impl JsonStateStore {
     /// `load`s an explicit `0` rather than a missing file).
     pub fn persist(&self, verifier: &KeylessVerifier) -> Result<(), TakoError> {
         self.save(verifier.rekor_max_tree_size())
-    }
-
-    fn tmp_path(&self) -> PathBuf {
-        let mut name = self.path.file_name().map_or_else(
-            || std::ffi::OsString::from(".tako-rekor-state"),
-            std::ffi::OsStr::to_os_string,
-        );
-        name.push(".tmp");
-        self.path.with_file_name(name)
     }
 }
 
@@ -176,15 +193,23 @@ mod tests {
 
     #[test]
     fn save_is_atomic_no_tmp_residue() {
+        // Phase 11.A M1+M4 — `NamedTempFile` generates a randomised
+        // suffix per call, so a residue check globs the parent dir
+        // for any sibling that isn't the persisted state file itself.
         let dir = tempfile::tempdir().unwrap();
         let store = JsonStateStore::new(dir.path().join("anchor.json"));
         store.save(42).unwrap();
-        let tmp = store.tmp_path();
-        assert!(
-            !tmp.exists(),
-            "tmp file should not linger after a successful save"
-        );
         assert!(store.path().exists());
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "parent dir should contain only the persisted file, found: {entries:?}"
+        );
+        assert_eq!(entries[0], store.path());
     }
 
     #[test]
