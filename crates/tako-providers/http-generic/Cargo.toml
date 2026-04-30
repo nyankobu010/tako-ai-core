@@ -22,6 +22,14 @@ serde_json         = { workspace = true }
 reqwest            = { workspace = true }
 url                = { workspace = true }
 
+# Phase 11.B — streaming. `OpenAiSse` variant uses the same SSE parser
+# the OpenAI provider relies on (`eventsource-stream`); `NdJson`
+# variant uses `LinesCodec` from `tokio-util`.
+async-stream       = "0.3"
+bytes              = { workspace = true }
+eventsource-stream = { workspace = true }
+tokio-util         = { workspace = true, features = ["codec"] }
+
 [dev-dependencies]
 wiremock           = { workspace = true }
 tokio              = { workspace = true, features = ["full"] }

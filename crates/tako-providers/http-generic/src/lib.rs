@@ -7,9 +7,16 @@
 //! `{{ request }}`, and the response extraction as a JSON Pointer to the
 //! assistant text.
 //!
-//! Phase 1 ships single-shot only. Streaming will land as a Phase 2 follow
-//! once the most common shapes (OpenAI-compatible, Anthropic-compatible,
-//! NDJSON) are catalogued.
+//! Streaming is opt-in (Phase 11.B): set
+//! [`HttpGenericConfig::stream_config`] to either
+//! [`StreamConfig::OpenAiSse`] (OpenAI-compatible `event:` + `data:`
+//! frames terminated by `[DONE]`) or [`StreamConfig::NdJson`] (one JSON
+//! frame per newline). Both variants extract the content delta, finish
+//! reason, and usage via JSON Pointer (RFC 6901), so any endpoint that
+//! emits structured frames can be configured without code changes.
+//! Tool-call delta extraction is intentionally out of scope (operator
+//! shapes vary too widely); operators streaming tool calls should use
+//! the OpenAI provider's typed parser.
 //!
 //! ```no_run
 //! use tako_providers_http_generic::{HttpGenericProvider, HttpGenericConfig};
@@ -34,13 +41,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::stream::BoxStream;
+use eventsource_stream::Eventsource;
+use futures::stream::{BoxStream, StreamExt};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use tako_core::{
     Capabilities, ChatChunk, ChatRequest, ChatResponse, ContentPart, FinishReason, LlmProvider,
     Message, Principal, Role, TakoError, Usage,
 };
+use tokio_util::codec::{FramedRead, LinesCodec};
+use tokio_util::io::StreamReader;
 
 /// Configuration for an [`HttpGenericProvider`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,6 +74,13 @@ pub struct HttpGenericConfig {
     pub capabilities: Option<Capabilities>,
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+    /// Phase 11.B — streaming wire shape. `None` (the default) means
+    /// the endpoint does not stream and `LlmProvider::stream` will
+    /// return `TakoError::Invalid`. When set, `Capabilities::supports_streaming`
+    /// is automatically `true` (unless an operator-supplied
+    /// [`HttpGenericConfig::capabilities`] overrides it).
+    #[serde(default)]
+    pub stream_config: Option<StreamConfig>,
 }
 
 impl Default for HttpGenericConfig {
@@ -77,8 +94,63 @@ impl Default for HttpGenericConfig {
             response_text_pointer: "/text".into(),
             capabilities: None,
             timeout_secs: None,
+            stream_config: None,
         }
     }
+}
+
+/// Phase 11.B — wire-format selector for [`HttpGenericProvider::stream`].
+///
+/// Both variants extract the content delta, finish reason, and usage
+/// via JSON Pointer (RFC 6901) over each parsed frame, so operators
+/// can target endpoints with arbitrary JSON shapes by tweaking the
+/// pointer strings. `tool_calls` are not extracted — operators
+/// streaming tool calls must use the OpenAI provider's typed parser.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StreamConfig {
+    /// OpenAI-compatible Server-Sent Events. Each `event:` carries a
+    /// JSON `data:` line; the stream terminates on `data: [DONE]`.
+    #[serde(rename = "openai_sse")]
+    OpenAiSse {
+        /// JSON Pointer into each parsed frame for the content delta
+        /// string. Defaults to OpenAI's `/choices/0/delta/content`.
+        #[serde(default = "default_oa_content_pointer")]
+        content_pointer: String,
+        /// JSON Pointer to the per-frame finish reason. Resolves to a
+        /// string (`"stop"` / `"length"` / etc.) on the final frame.
+        /// Defaults to `/choices/0/finish_reason`.
+        #[serde(default = "default_oa_finish_pointer")]
+        finish_reason_pointer: String,
+        /// Optional JSON Pointer to a per-frame usage object. When
+        /// resolvable, the `input_tokens` / `output_tokens` are merged
+        /// into the final `ChatChunk::End`. Defaults to
+        /// `Some("/usage")`; explicit `None` disables extraction.
+        #[serde(default = "default_oa_usage_pointer")]
+        usage_pointer: Option<String>,
+    },
+    /// Newline-delimited JSON: one full frame per `\n`. Termination on
+    /// EOF or on a frame whose `finish_reason_pointer` resolves to a
+    /// non-null string.
+    #[serde(rename = "ndjson")]
+    NdJson {
+        content_pointer: String,
+        finish_reason_pointer: String,
+        #[serde(default)]
+        usage_pointer: Option<String>,
+    },
+}
+
+fn default_oa_content_pointer() -> String {
+    "/choices/0/delta/content".into()
+}
+
+fn default_oa_finish_pointer() -> String {
+    "/choices/0/finish_reason".into()
+}
+
+fn default_oa_usage_pointer() -> Option<String> {
+    Some("/usage".into())
 }
 
 #[derive(Clone, Debug)]
@@ -123,9 +195,12 @@ impl HttpGenericProvider {
             .build()
             .map_err(|e| TakoError::Transport(e.to_string()))?;
 
+        // Phase 11.B — when the operator hasn't supplied an explicit
+        // `Capabilities`, derive `supports_streaming` from whether a
+        // `stream_config` is present. An explicit override always wins.
         let capabilities = config.capabilities.clone().unwrap_or(Capabilities {
             max_context_tokens: 32_000,
-            supports_streaming: false,
+            supports_streaming: config.stream_config.is_some(),
             supports_tools: false,
             supports_vision: false,
             supports_json_mode: false,
@@ -253,17 +328,213 @@ impl LlmProvider for HttpGenericProvider {
     async fn stream(
         &self,
         _principal: &Principal,
-        _req: ChatRequest,
+        mut req: ChatRequest,
     ) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
-        Err(TakoError::Invalid(
-            "tako-providers-http-generic does not support streaming yet (Phase 2)".into(),
-        ))
+        let cfg = self.inner.config.stream_config.clone().ok_or_else(|| {
+            TakoError::Invalid(
+                "tako-providers-http-generic: no stream_config set on this provider; \
+                 set HttpGenericConfig::stream_config to OpenAiSse or NdJson to enable streaming"
+                    .into(),
+            )
+        })?;
+        if req.model.is_empty() {
+            req.model.clone_from(&self.inner.config.model);
+        }
+        let body = render_template(&self.inner.config.body_template, &req);
+        let resp = self
+            .inner
+            .http
+            .post(&self.inner.config.url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| TakoError::Transport(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let raw = resp.text().await.unwrap_or_default();
+            return Err(TakoError::provider(
+                self.inner.config.id.clone(),
+                self.inner.config.model.clone(),
+                format!("HTTP {status}"),
+            )
+            .with_status(status.as_u16())
+            .with_raw_body(raw));
+        }
+
+        Ok(match cfg {
+            StreamConfig::OpenAiSse {
+                content_pointer,
+                finish_reason_pointer,
+                usage_pointer,
+            } => stream_openai_sse(resp, content_pointer, finish_reason_pointer, usage_pointer),
+            StreamConfig::NdJson {
+                content_pointer,
+                finish_reason_pointer,
+                usage_pointer,
+            } => stream_ndjson(resp, content_pointer, finish_reason_pointer, usage_pointer),
+        })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 11.B — JSON-pointer-based extractors shared by both stream
+// adapters. `serde_json::Value::pointer` is RFC 6901-compliant so
+// operators can target arbitrary endpoint shapes without code changes.
+// ---------------------------------------------------------------------------
+
+fn resolve_str(value: &serde_json::Value, pointer: &str) -> Option<String> {
+    value
+        .pointer(pointer)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+}
+
+fn resolve_finish(value: &serde_json::Value, pointer: &str) -> Option<FinishReason> {
+    let s = value.pointer(pointer).and_then(|v| v.as_str())?;
+    Some(match s {
+        "stop" => FinishReason::Stop,
+        "length" => FinishReason::Length,
+        "tool_calls" => FinishReason::ToolCalls,
+        "content_filter" => FinishReason::ContentFilter,
+        _ => FinishReason::Other,
+    })
+}
+
+fn resolve_usage(value: &serde_json::Value, pointer: &str) -> Option<Usage> {
+    let usage = value.pointer(pointer)?;
+    let input = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)?;
+    let output = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)?;
+    Some(Usage {
+        input_tokens: input,
+        output_tokens: output,
+    })
+}
+
+fn stream_openai_sse(
+    resp: reqwest::Response,
+    content_pointer: String,
+    finish_reason_pointer: String,
+    usage_pointer: Option<String>,
+) -> BoxStream<'static, Result<ChatChunk, TakoError>> {
+    let bytes = resp.bytes_stream();
+    let events = bytes
+        .map(|res| res.map_err(|e| std::io::Error::other(e.to_string())))
+        .eventsource();
+    let stream = async_stream::stream! {
+        let mut last_finish: Option<FinishReason> = None;
+        let mut last_usage = Usage::default();
+        let mut events = Box::pin(events);
+        while let Some(item) = events.next().await {
+            match item {
+                Err(e) => {
+                    yield Ok(ChatChunk::Error { message: format!("{e}") });
+                    last_finish = Some(FinishReason::Error);
+                    break;
+                }
+                Ok(ev) => {
+                    if ev.data == "[DONE]" {
+                        break;
+                    }
+                    let frame: serde_json::Value = match serde_json::from_str(&ev.data) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            yield Ok(ChatChunk::Error { message: format!("invalid frame: {e}") });
+                            continue;
+                        }
+                    };
+                    if let Some(reason) = resolve_finish(&frame, &finish_reason_pointer) {
+                        last_finish = Some(reason);
+                    }
+                    if let Some(ptr) = usage_pointer.as_deref()
+                        && let Some(u) = resolve_usage(&frame, ptr)
+                    {
+                        last_usage = u;
+                    }
+                    if let Some(text) = resolve_str(&frame, &content_pointer) {
+                        yield Ok(ChatChunk::Delta { text: Some(text), tool_calls: vec![] });
+                    }
+                }
+            }
+        }
+        yield Ok(ChatChunk::End {
+            finish_reason: last_finish.unwrap_or(FinishReason::Other),
+            usage: last_usage,
+        });
+    };
+    stream.boxed()
+}
+
+fn stream_ndjson(
+    resp: reqwest::Response,
+    content_pointer: String,
+    finish_reason_pointer: String,
+    usage_pointer: Option<String>,
+) -> BoxStream<'static, Result<ChatChunk, TakoError>> {
+    let byte_stream = resp
+        .bytes_stream()
+        .map(|res| res.map_err(|e| std::io::Error::other(e.to_string())));
+    let reader = StreamReader::new(byte_stream);
+    let lines = FramedRead::new(reader, LinesCodec::new());
+    let stream = async_stream::stream! {
+        let mut last_finish: Option<FinishReason> = None;
+        let mut last_usage = Usage::default();
+        let mut lines = Box::pin(lines);
+        while let Some(item) = lines.next().await {
+            let line = match item {
+                Ok(s) => s,
+                Err(e) => {
+                    yield Ok(ChatChunk::Error { message: format!("{e}") });
+                    last_finish = Some(FinishReason::Error);
+                    break;
+                }
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let frame: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(e) => {
+                    yield Ok(ChatChunk::Error { message: format!("invalid frame: {e}") });
+                    continue;
+                }
+            };
+            if let Some(reason) = resolve_finish(&frame, &finish_reason_pointer) {
+                last_finish = Some(reason);
+            }
+            if let Some(ptr) = usage_pointer.as_deref()
+                && let Some(u) = resolve_usage(&frame, ptr)
+            {
+                last_usage = u;
+            }
+            if let Some(text) = resolve_str(&frame, &content_pointer) {
+                yield Ok(ChatChunk::Delta { text: Some(text), tool_calls: vec![] });
+            }
+            // NDJSON terminates as soon as a frame's finish reason
+            // resolves — there is no `[DONE]` sentinel.
+            if last_finish.is_some() {
+                break;
+            }
+        }
+        yield Ok(ChatChunk::End {
+            finish_reason: last_finish.unwrap_or(FinishReason::Other),
+            usage: last_usage,
+        });
+    };
+    stream.boxed()
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::panic)]
 
     use super::*;
     use serde_json::json;
@@ -291,5 +562,144 @@ mod tests {
     #[test]
     fn passthrough_on_no_dollar() {
         assert_eq!(resolve_env("plain-value").unwrap(), "plain-value");
+    }
+
+    #[test]
+    fn stream_config_serialises_openai_sse_round_trip() {
+        let cfg = StreamConfig::OpenAiSse {
+            content_pointer: "/x".into(),
+            finish_reason_pointer: "/y".into(),
+            usage_pointer: Some("/z".into()),
+        };
+        let v = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(v["kind"], "openai_sse");
+        let decoded: StreamConfig = serde_json::from_value(v).unwrap();
+        match decoded {
+            StreamConfig::OpenAiSse {
+                content_pointer,
+                finish_reason_pointer,
+                usage_pointer,
+            } => {
+                assert_eq!(content_pointer, "/x");
+                assert_eq!(finish_reason_pointer, "/y");
+                assert_eq!(usage_pointer.as_deref(), Some("/z"));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn stream_config_serialises_ndjson_round_trip() {
+        let cfg = StreamConfig::NdJson {
+            content_pointer: "/text".into(),
+            finish_reason_pointer: "/done".into(),
+            usage_pointer: None,
+        };
+        let v = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(v["kind"], "ndjson");
+        let _: StreamConfig = serde_json::from_value(v).unwrap();
+    }
+
+    #[test]
+    fn default_pointers_match_openai_layout() {
+        assert_eq!(default_oa_content_pointer(), "/choices/0/delta/content");
+        assert_eq!(default_oa_finish_pointer(), "/choices/0/finish_reason");
+        assert_eq!(default_oa_usage_pointer().as_deref(), Some("/usage"));
+    }
+
+    #[test]
+    fn capability_flag_set_when_stream_config_is_some() {
+        let p = HttpGenericProvider::new(HttpGenericConfig {
+            id: "x".into(),
+            model: "m".into(),
+            url: "https://example.invalid".into(),
+            stream_config: Some(StreamConfig::OpenAiSse {
+                content_pointer: default_oa_content_pointer(),
+                finish_reason_pointer: default_oa_finish_pointer(),
+                usage_pointer: None,
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(p.capabilities().supports_streaming);
+    }
+
+    #[test]
+    fn capability_flag_unset_when_stream_config_is_none() {
+        let p = HttpGenericProvider::new(HttpGenericConfig {
+            id: "x".into(),
+            model: "m".into(),
+            url: "https://example.invalid".into(),
+            stream_config: None,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!p.capabilities().supports_streaming);
+    }
+
+    #[test]
+    fn operator_capability_override_wins_over_stream_config_inference() {
+        let p = HttpGenericProvider::new(HttpGenericConfig {
+            id: "x".into(),
+            model: "m".into(),
+            url: "https://example.invalid".into(),
+            // No stream_config — but operator forces supports_streaming.
+            stream_config: None,
+            capabilities: Some(Capabilities {
+                max_context_tokens: 1,
+                supports_streaming: true,
+                supports_tools: false,
+                supports_vision: false,
+                supports_json_mode: false,
+                usd_per_input_mtok: None,
+                usd_per_output_mtok: None,
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(p.capabilities().supports_streaming);
+    }
+
+    #[test]
+    fn resolve_str_handles_empty_and_missing() {
+        let v = serde_json::json!({"a": "hi", "b": "", "c": null});
+        assert_eq!(resolve_str(&v, "/a").as_deref(), Some("hi"));
+        assert!(resolve_str(&v, "/b").is_none());
+        assert!(resolve_str(&v, "/c").is_none());
+        assert!(resolve_str(&v, "/missing").is_none());
+    }
+
+    #[test]
+    fn resolve_finish_maps_known_strings() {
+        let v = serde_json::json!({"r": "stop"});
+        assert_eq!(resolve_finish(&v, "/r"), Some(FinishReason::Stop));
+        let v = serde_json::json!({"r": "length"});
+        assert_eq!(resolve_finish(&v, "/r"), Some(FinishReason::Length));
+        let v = serde_json::json!({"r": "weird"});
+        assert_eq!(resolve_finish(&v, "/r"), Some(FinishReason::Other));
+        let v = serde_json::json!({});
+        assert!(resolve_finish(&v, "/r").is_none());
+    }
+
+    #[test]
+    fn resolve_usage_supports_both_naming_conventions() {
+        let v = serde_json::json!({"usage": {"input_tokens": 12, "output_tokens": 7}});
+        assert_eq!(
+            resolve_usage(&v, "/usage"),
+            Some(Usage {
+                input_tokens: 12,
+                output_tokens: 7,
+            })
+        );
+        let v = serde_json::json!({"usage": {"prompt_tokens": 4, "completion_tokens": 9}});
+        assert_eq!(
+            resolve_usage(&v, "/usage"),
+            Some(Usage {
+                input_tokens: 4,
+                output_tokens: 9,
+            })
+        );
+        let v = serde_json::json!({});
+        assert!(resolve_usage(&v, "/usage").is_none());
     }
 }
