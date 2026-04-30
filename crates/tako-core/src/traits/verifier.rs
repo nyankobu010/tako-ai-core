@@ -21,6 +21,30 @@ use crate::types::Principal;
 ///
 /// Implementations should be deterministic for the same
 /// `(principal, prompt, output)` triple so that tree search converges.
+///
+/// ## Streaming-aware partial scoring (Phase 13.B, v0.14.0)
+///
+/// Optionally override [`evaluate_streaming`](Self::evaluate_streaming)
+/// to let an orchestrator emit per-delta `OrchEvent::VerifierScore`
+/// events on cumulative partial outputs — useful for cheap
+/// rule-based heuristics where evaluating each delta is essentially
+/// free (regex pass-rate, length-based scoring). The default impl
+/// returns `Ok(None)` (skip — the orchestrator only emits the
+/// authoritative synthesis-complete `score` at the end), so existing
+/// impls behave exactly as before.
+///
+/// **Cost note**: do not override `evaluate_streaming` for verifiers
+/// that make a remote call (LLM-as-judge, network classifier, etc.) —
+/// you would invoke the verifier on every assistant-text delta. The
+/// shipped [`AlwaysScore`] test fixture deliberately keeps the
+/// default `Ok(None)`.
+///
+/// **Event shape.** The same `OrchEvent::VerifierScore { step,
+/// branch, score }` event variant carries both partial and final
+/// scores. Consumers distinguish by `(step, branch)` repetition:
+/// multiple emissions on the same `(step, branch)` are streaming
+/// partials; the last emission for a given `(step, branch)` is the
+/// authoritative synthesis-complete score.
 #[async_trait]
 pub trait Verifier: Send + Sync + 'static {
     async fn score(
@@ -29,6 +53,30 @@ pub trait Verifier: Send + Sync + 'static {
         prompt: &str,
         output: &str,
     ) -> Result<f32, TakoError>;
+
+    /// Streaming-aware variant: called by streaming orchestrators
+    /// (`Trinity::stream` in Phase 13.B) after each
+    /// `OrchEvent::AssistantText` delta with the *cumulative*
+    /// assistant text accumulated so far for the current step.
+    ///
+    /// Return value:
+    /// - `Ok(None)` — skip; do not emit a partial `VerifierScore`.
+    ///   Default.
+    /// - `Ok(Some(score))` — orchestrator emits an
+    ///   `OrchEvent::VerifierScore` on the same `(step, branch)` as
+    ///   the eventual synthesis-complete final.
+    /// - `Err(_)` — fail the stream (same semantics as `score`).
+    ///
+    /// The default impl returns `Ok(None)`. Override only when
+    /// scoring partial text is essentially free (e.g. length / regex
+    /// heuristics).
+    async fn evaluate_streaming(
+        &self,
+        _principal: &Principal,
+        _partial: &str,
+    ) -> Result<Option<f32>, TakoError> {
+        Ok(None)
+    }
 }
 
 /// Returns a fixed score regardless of input. Test fixture.
