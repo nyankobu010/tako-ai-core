@@ -367,3 +367,160 @@ mod stream {
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     }
 }
+
+mod branch_routing {
+    //! Phase 9.D — AB-MCTS router-driven branch expansion tests.
+    //!
+    //! Each test exercises the optional router that picks the provider
+    //! for a single rollout (one branch expansion). Without a router,
+    //! every rollout uses the primary provider — this is the
+    //! backwards-compatibility regression guard.
+
+    use super::*;
+    use tako_core::{Router, RoutingDecision};
+
+    /// Toggle router: alternates between provider 0 and provider 1
+    /// across calls. Lets the test assert that AB-MCTS exercises both
+    /// providers across branches without depending on the prompt
+    /// content. Built around an `AtomicUsize` so the trait method
+    /// stays `&self`-immutable.
+    struct ToggleRouter {
+        ids: Vec<String>,
+        next: AtomicUsize,
+    }
+
+    impl ToggleRouter {
+        fn new(ids: Vec<&str>) -> Self {
+            Self {
+                ids: ids.into_iter().map(String::from).collect(),
+                next: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Router for ToggleRouter {
+        async fn route(
+            &self,
+            _principal: &Principal,
+            _req: &ChatRequest,
+            _candidates: &[String],
+        ) -> Result<RoutingDecision, TakoError> {
+            let i = self.next.fetch_add(1, Ordering::SeqCst);
+            let id = self.ids[i % self.ids.len()].clone();
+            Ok(RoutingDecision {
+                provider_id: id,
+                confidence: 1.0,
+                reason: None,
+            })
+        }
+    }
+
+    /// Always-fail router: surfaces a router error to verify the
+    /// caller propagates it rather than swallowing.
+    struct FailingRouter;
+
+    #[async_trait]
+    impl Router for FailingRouter {
+        async fn route(
+            &self,
+            _principal: &Principal,
+            _req: &ChatRequest,
+            _candidates: &[String],
+        ) -> Result<RoutingDecision, TakoError> {
+            Err(TakoError::Invalid("router unavailable".into()))
+        }
+    }
+
+    /// With two providers + a toggle router, both providers see at
+    /// least one rollout each across `max_iterations=4`. The picked
+    /// provider drives every step of one branch's rollout, so each
+    /// rollout's `chat` call counts toward exactly one provider.
+    #[tokio::test]
+    async fn routes_branches_across_two_providers() {
+        let p0 =
+            Arc::new(FakeProvider::new("fake:fast", vec![assistant("fast rollout")]).with_repeat());
+        let p1 =
+            Arc::new(FakeProvider::new("fake:deep", vec![assistant("deep rollout")]).with_repeat());
+        let router = Arc::new(ToggleRouter::new(vec!["fake:fast", "fake:deep"]));
+        let mcts = AbMcts::builder()
+            .provider(p0.clone())
+            .candidate(p1.clone())
+            .router(router)
+            .verifier(Arc::new(AlwaysScore(0.4)))
+            .max_iterations(4)
+            .max_steps_per_rollout(1)
+            .min_confidence(0.99)
+            .build()
+            .unwrap();
+
+        mcts.run(&Principal::anonymous(), OrchInput::from_user("anything"))
+            .await
+            .unwrap();
+        assert!(
+            p0.calls.load(Ordering::SeqCst) > 0,
+            "primary provider must see at least one rollout",
+        );
+        assert!(
+            p1.calls.load(Ordering::SeqCst) > 0,
+            "candidate provider must see at least one rollout",
+        );
+        assert_eq!(
+            p0.calls.load(Ordering::SeqCst) + p1.calls.load(Ordering::SeqCst),
+            4,
+            "every rollout's single chat call must hit exactly one provider",
+        );
+    }
+
+    /// Without a router, the candidate is registered but ignored —
+    /// every rollout uses the primary. Regression guard for the
+    /// "no router → backwards-compatible v0.9.0 behaviour" promise.
+    #[tokio::test]
+    async fn no_router_uses_primary_only() {
+        let p0 = Arc::new(FakeProvider::new("fake:p0", vec![assistant("x")]).with_repeat());
+        let p1 = Arc::new(FakeProvider::new("fake:p1", vec![assistant("x")]).with_repeat());
+        let mcts = AbMcts::builder()
+            .provider(p0.clone())
+            .candidate(p1.clone())
+            .verifier(Arc::new(AlwaysScore(0.5)))
+            .max_iterations(3)
+            .max_steps_per_rollout(1)
+            .min_confidence(0.99)
+            .build()
+            .unwrap();
+
+        mcts.run(&Principal::anonymous(), OrchInput::from_user("hi"))
+            .await
+            .unwrap();
+        assert_eq!(p0.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            p1.calls.load(Ordering::SeqCst),
+            0,
+            "candidate must not be invoked without a router",
+        );
+    }
+
+    /// A router error must propagate as a TakoError, not silently
+    /// fall back to the primary.
+    #[tokio::test]
+    async fn router_error_propagates() {
+        let p0 = Arc::new(FakeProvider::new("fake:p0", vec![assistant("x")]).with_repeat());
+        let mcts = AbMcts::builder()
+            .provider(p0)
+            .router(Arc::new(FailingRouter))
+            .verifier(Arc::new(AlwaysScore(0.5)))
+            .max_iterations(1)
+            .max_steps_per_rollout(1)
+            .build()
+            .unwrap();
+
+        let res = mcts
+            .run(&Principal::anonymous(), OrchInput::from_user("x"))
+            .await;
+        let err = res.unwrap_err();
+        assert!(
+            format!("{err}").contains("router unavailable"),
+            "expected router error to propagate, got {err}",
+        );
+    }
+}

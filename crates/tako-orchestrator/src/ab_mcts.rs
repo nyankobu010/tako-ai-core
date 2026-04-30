@@ -35,7 +35,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tako_core::{
     ChatRequest, ContentPart, FinishReason, LlmProvider, Message, PolicyContext, PolicyDecision,
-    PolicyEngine, PolicyStage, Principal, Role, TakoError, Usage, Verifier,
+    PolicyEngine, PolicyStage, Principal, Role, Router, TakoError, Usage, Verifier,
 };
 use tako_mcp::ToolRegistry;
 use tracing::{Instrument, info_span};
@@ -53,6 +53,13 @@ const DEFAULT_MIN_CONFIDENCE: f32 = 0.95;
 /// AB-MCTS orchestrator.
 pub struct AbMcts {
     provider: Arc<dyn LlmProvider>,
+    /// Phase 9.D — additional candidates considered by `router` when
+    /// picking the provider for each rollout. Empty by default.
+    candidates: Vec<Arc<dyn LlmProvider>>,
+    /// Phase 9.D — optional router consulted once per rollout to pick
+    /// the provider for that branch's expansion. When `None`, every
+    /// rollout uses `provider` (backwards-compatible v0.9.0 behaviour).
+    router: Option<Arc<dyn Router>>,
     verifier: Arc<dyn Verifier>,
     tools: Arc<ToolRegistry>,
     policy: Option<Arc<dyn PolicyEngine>>,
@@ -68,6 +75,8 @@ impl std::fmt::Debug for AbMcts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AbMcts")
             .field("provider", &self.provider.id())
+            .field("candidates", &self.candidates.len())
+            .field("router", &self.router.is_some())
             .field("max_iterations", &self.max_iterations)
             .field("branching_factor", &self.branching_factor)
             .field("max_steps_per_rollout", &self.max_steps_per_rollout)
@@ -86,6 +95,8 @@ impl AbMcts {
 #[derive(Default)]
 pub struct AbMctsBuilder {
     provider: Option<Arc<dyn LlmProvider>>,
+    candidates: Vec<Arc<dyn LlmProvider>>,
+    router: Option<Arc<dyn Router>>,
     verifier: Option<Arc<dyn Verifier>>,
     tools: Option<Arc<ToolRegistry>>,
     policy: Option<Arc<dyn PolicyEngine>>,
@@ -106,6 +117,25 @@ impl std::fmt::Debug for AbMctsBuilder {
 impl AbMctsBuilder {
     pub fn provider(mut self, p: Arc<dyn LlmProvider>) -> Self {
         self.provider = Some(p);
+        self
+    }
+
+    /// Phase 9.D — register an additional provider that the optional
+    /// `router` may pick for a rollout. Without `.router(...)`,
+    /// candidates are ignored and every rollout uses the primary
+    /// `provider` — backwards-compatible with v0.9.0.
+    pub fn candidate(mut self, p: Arc<dyn LlmProvider>) -> Self {
+        self.candidates.push(p);
+        self
+    }
+
+    /// Phase 9.D — set a `Router` consulted once per rollout (per
+    /// branch expansion) to pick the provider over
+    /// `[primary, ...candidates]`. The chosen provider drives every
+    /// step of that rollout. Different branches can land on different
+    /// providers; consistent state inside one branch is preserved.
+    pub fn router(mut self, r: Arc<dyn Router>) -> Self {
+        self.router = Some(r);
         self
     }
 
@@ -171,6 +201,8 @@ impl AbMctsBuilder {
         }
         Ok(AbMcts {
             provider,
+            candidates: self.candidates,
+            router: self.router,
             verifier,
             tools: self.tools.unwrap_or_else(|| Arc::new(ToolRegistry::new())),
             policy: self.policy,
@@ -334,6 +366,8 @@ impl Orchestrator for AbMcts {
         input: OrchInput,
     ) -> BoxStream<'static, Result<OrchEvent, TakoError>> {
         let provider = Arc::clone(&self.provider);
+        let candidates = self.candidates.clone();
+        let router = self.router.clone();
         let verifier = Arc::clone(&self.verifier);
         let tools = Arc::clone(&self.tools);
         let policy = self.policy.clone();
@@ -406,9 +440,20 @@ impl Orchestrator for AbMcts {
                 // ---- Expansion + simulation (rollout) ----
                 let parent_idx = current;
                 let parent_messages = nodes[parent_idx].messages.clone();
+                // Phase 9.D: route once per rollout in the stream
+                // path too, so streaming and run agree on per-branch
+                // provider selection.
+                let picked = pick_rollout_provider(
+                    &provider,
+                    &candidates,
+                    router.as_ref(),
+                    &principal,
+                    &parent_messages,
+                )
+                .await?;
                 let (rollout_message, rollout_text, rollout_usage, rollout_steps) =
                     rollout_static(
-                        Arc::clone(&provider),
+                        picked,
                         Arc::clone(&tools),
                         policy.clone(),
                         defaults.clone(),
@@ -562,8 +607,19 @@ impl AbMcts {
         // ---- Expansion + simulation ----
         let parent_idx = current;
         let parent_messages = nodes[parent_idx].messages.clone();
-        let (rollout_message, rollout_text, rollout_usage, rollout_steps) =
-            self.rollout(principal, parent_messages.clone()).await?;
+        // Phase 9.D: route once per rollout. The picked provider
+        // drives every step of this branch's expansion.
+        let picked = pick_rollout_provider(
+            &self.provider,
+            &self.candidates,
+            self.router.as_ref(),
+            principal,
+            &parent_messages,
+        )
+        .await?;
+        let (rollout_message, rollout_text, rollout_usage, rollout_steps) = self
+            .rollout(principal, picked, parent_messages.clone())
+            .await?;
 
         let mut child_messages = parent_messages;
         child_messages.push(rollout_message.clone());
@@ -607,13 +663,18 @@ impl AbMcts {
     /// `max_steps_per_rollout` provider turns, looping on tool calls.
     /// Returns the final assistant `Message`, its text, cumulative
     /// `Usage`, and the number of provider steps taken.
+    ///
+    /// Phase 9.D: `provider` is supplied by the caller (via
+    /// [`pick_rollout_provider`]) so different branches can use
+    /// different providers within one search.
     async fn rollout(
         &self,
         principal: &Principal,
+        provider: Arc<dyn LlmProvider>,
         messages: Vec<Message>,
     ) -> Result<(Message, String, Usage, u32), TakoError> {
         rollout_static(
-            Arc::clone(&self.provider),
+            provider,
             Arc::clone(&self.tools),
             self.policy.clone(),
             self.defaults.clone(),
@@ -624,6 +685,41 @@ impl AbMcts {
         )
         .await
     }
+}
+
+/// Phase 9.D — pick the provider for one rollout (one branch
+/// expansion). Without a router this returns `primary` unconditionally,
+/// preserving v0.9.0 behaviour. With a router, the routing context is
+/// the leaf's accumulated `messages`; the picked provider drives every
+/// step of that rollout (different branches can land on different
+/// providers). A router that returns an unknown id propagates as
+/// `TakoError::Invalid`.
+async fn pick_rollout_provider(
+    primary: &Arc<dyn LlmProvider>,
+    candidates: &[Arc<dyn LlmProvider>],
+    router: Option<&Arc<dyn Router>>,
+    principal: &Principal,
+    messages: &[Message],
+) -> Result<Arc<dyn LlmProvider>, TakoError> {
+    let Some(router) = router else {
+        return Ok(Arc::clone(primary));
+    };
+    let pool: Vec<Arc<dyn LlmProvider>> = std::iter::once(Arc::clone(primary))
+        .chain(candidates.iter().cloned())
+        .collect();
+    let candidate_ids: Vec<String> = pool.iter().map(|p| p.id().to_string()).collect();
+    // Use the leaf's accumulated conversation as the routing
+    // context; the model field is informational for the router.
+    let req = ChatRequest::new("router", messages.to_vec());
+    let decision = router.route(principal, &req, &candidate_ids).await?;
+    pool.into_iter()
+        .find(|p| p.id() == decision.provider_id)
+        .ok_or_else(|| {
+            TakoError::Invalid(format!(
+                "AbMcts router returned unknown provider id: {}",
+                decision.provider_id,
+            ))
+        })
 }
 
 /// Free-function form of [`AbMcts::rollout`]. Extracted in v0.9.0 so
