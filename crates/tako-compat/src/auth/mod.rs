@@ -36,6 +36,14 @@ mod vault;
 #[cfg(feature = "vault")]
 pub use vault::VaultAuthResolver;
 
+#[cfg(feature = "vault")]
+mod vault_token;
+#[cfg(feature = "vault")]
+pub use vault_token::{
+    AppRoleTokenProvider, DEFAULT_KUBERNETES_JWT_PATH, KubernetesTokenProvider, StaticVaultToken,
+    VaultTokenProvider,
+};
+
 /// Resolves a bearer token to the calling principal.
 #[async_trait]
 pub trait AuthResolver: Send + Sync + 'static + std::fmt::Debug {

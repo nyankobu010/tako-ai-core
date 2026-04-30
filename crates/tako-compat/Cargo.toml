@@ -36,9 +36,13 @@ vaultrs            = { version = "0.7", optional = true }
 jwt   = ["dep:jsonwebtoken"]
 # OIDC = JWT + JWKS rotation + discovery doc; reuses the JWT decoder.
 oidc  = ["jwt", "dep:reqwest"]
-vault = ["dep:vaultrs"]
+# Phase 15.B.1 — Vault providers (AppRole / Kubernetes) post directly
+# to Vault auth endpoints via reqwest, so the `vault` feature now also
+# pulls in reqwest.
+vault = ["dep:vaultrs", "dep:reqwest"]
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }
 reqwest            = { workspace = true }
 wiremock           = { workspace = true }
+tempfile           = "3"

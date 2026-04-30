@@ -27,5 +27,10 @@ pub use auth::JwtAuthResolver;
 pub use auth::OidcAuthResolver;
 #[cfg(feature = "vault")]
 pub use auth::VaultAuthResolver;
+#[cfg(feature = "vault")]
+pub use auth::{
+    AppRoleTokenProvider, DEFAULT_KUBERNETES_JWT_PATH, KubernetesTokenProvider, StaticVaultToken,
+    VaultTokenProvider,
+};
 pub use auth::{AuthResolver, StaticTokens};
 pub use server::{ServeConfig, serve_openai};
