@@ -15,14 +15,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use tako_core::{
-    ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal, Role, TakoError,
-    Usage, Verifier,
+    ChatChunk, ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal, Role,
+    TakoError, Usage, Verifier,
 };
 use tako_runtime::BudgetTracker;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, mpsc};
 use tokio::time::timeout;
 use tracing::{Instrument, info_span};
 
@@ -531,16 +532,57 @@ impl Orchestrator for Conductor {
                     };
                 }
 
-                let results = dispatch_workers_static(
-                    &workers,
-                    &principal,
+                // Phase 14.A — drive worker dispatch through an mpsc so
+                // streaming-capable workers can surface per-delta progress
+                // as `WorkerStreamEvent::Delta { branch, cumulative }`. The
+                // outer recv-loop emits `OrchEvent::VerifierScore` per
+                // delta when a verifier is attached; the synthesis-complete
+                // final score fires below on the same `(step, branch)` —
+                // identical to Phase 13.B's Trinity wiring.
+                let dispatch_count = plan.dispatch.len();
+                let (tx, mut rx) = mpsc::unbounded_channel::<WorkerStreamEvent>();
+                let dispatch_handle = tokio::spawn(dispatch_workers_streaming(
+                    workers.clone(),
+                    principal.clone(),
                     plan.dispatch.clone(),
                     Arc::clone(&semaphore),
                     step,
                     worker_timeout,
                     budget.clone(),
-                )
-                .await;
+                    tx,
+                ));
+                let mut slots: Vec<Option<WorkerResult>> = (0..dispatch_count).map(|_| None).collect();
+                let mut done_count = 0_usize;
+                while let Some(evt) = rx.recv().await {
+                    match evt {
+                        WorkerStreamEvent::Delta { branch, cumulative } => {
+                            if let Some(v) = verifier.as_ref() {
+                                if let Some(score) = v
+                                    .evaluate_streaming(&principal, &cumulative)
+                                    .await?
+                                {
+                                    yield OrchEvent::VerifierScore {
+                                        step,
+                                        branch,
+                                        score: score.clamp(0.0, 1.0),
+                                    };
+                                }
+                            }
+                        }
+                        WorkerStreamEvent::Done { branch, result } => {
+                            let i = (branch - 1) as usize;
+                            if i < slots.len() {
+                                slots[i] = Some(result);
+                            }
+                            done_count += 1;
+                            if done_count == dispatch_count {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let _ = dispatch_handle.await;
+                let results: Vec<WorkerResult> = slots.into_iter().flatten().collect();
 
                 for (idx, r) in results.iter().enumerate() {
                     let id = format!("step{step}-{idx}");
@@ -754,6 +796,240 @@ async fn dispatch_workers_static(
         }
     }
     results
+}
+
+/// Phase 14.A — events surfaced by the streaming worker dispatcher.
+///
+/// `Delta` carries the *cumulative* assistant text accumulated so far
+/// for one streaming-capable worker — the same shape passed to
+/// [`Verifier::evaluate_streaming`] in [`Trinity::stream`]. `Done`
+/// carries the final [`WorkerResult`] when the worker finishes.
+/// `branch` is the 1-based dispatch index stamped at task construction
+/// time and is permit-acquisition-order-independent.
+#[derive(Debug)]
+enum WorkerStreamEvent {
+    Delta { branch: u32, cumulative: String },
+    Done { branch: u32, result: WorkerResult },
+}
+
+/// Phase 14.A — worker fanout that can surface per-delta progress to
+/// the caller via an `mpsc::UnboundedSender<WorkerStreamEvent>`.
+///
+/// One `tokio::spawn` per worker, capped by `sem`. Streaming-capable
+/// workers (`provider.capabilities().supports_streaming == true`) drive
+/// `provider.stream(...)` and post a `Delta` per non-empty
+/// `ChatChunk::Delta { text, .. }` (with `cumulative` = the accumulated
+/// assistant text so far for that worker). Non-streaming workers — and
+/// streaming-capable workers whose `.stream()` call fails to start —
+/// fall back to `provider.chat(...)`. Either way, every worker posts
+/// exactly one terminal `Done` carrying its final [`WorkerResult`].
+///
+/// The dispatcher takes ownership of `tx`; when all spawned tasks
+/// complete it goes out of scope and the receiver's `recv().await`
+/// returns `None`.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_workers_streaming(
+    workers: HashMap<String, Arc<dyn LlmProvider>>,
+    principal: Principal,
+    plan: Vec<WorkerDispatch>,
+    sem: Arc<Semaphore>,
+    step: u32,
+    timeout_dur: Duration,
+    budget: Option<Arc<BudgetTracker>>,
+    tx: mpsc::UnboundedSender<WorkerStreamEvent>,
+) {
+    let mut handles = Vec::with_capacity(plan.len());
+    for (idx, d) in plan.into_iter().enumerate() {
+        let branch = (idx + 1) as u32;
+        let provider = workers.get(&d.worker).cloned();
+        let principal = principal.clone();
+        let sem = Arc::clone(&sem);
+        let budget = budget.clone();
+        let tx = tx.clone();
+        let span = info_span!(
+            "tako.orchestrator.dispatch",
+            "tako.orchestrator.step" = step,
+            "tako.worker.name" = %d.worker,
+            "tako.orchestrator.branch" = branch,
+        );
+        handles.push(tokio::spawn(
+            async move {
+                let outcome = run_one_worker_streaming(
+                    branch,
+                    provider,
+                    &principal,
+                    sem,
+                    timeout_dur,
+                    budget,
+                    &d.task,
+                    &d.worker,
+                    &tx,
+                )
+                .await;
+                let _ = tx.send(WorkerStreamEvent::Done {
+                    branch,
+                    result: WorkerResult {
+                        name: d.worker,
+                        task: d.task,
+                        outcome,
+                    },
+                });
+            }
+            .instrument(span),
+        ));
+    }
+    drop(tx);
+    for h in handles {
+        let _ = h.await;
+    }
+}
+
+/// Run a single worker, posting per-delta `WorkerStreamEvent::Delta`
+/// events to `tx` for streaming-capable providers and returning the
+/// final assistant text on success.
+#[allow(clippy::too_many_arguments)]
+async fn run_one_worker_streaming(
+    branch: u32,
+    provider: Option<Arc<dyn LlmProvider>>,
+    principal: &Principal,
+    sem: Arc<Semaphore>,
+    timeout_dur: Duration,
+    budget: Option<Arc<BudgetTracker>>,
+    task_text: &str,
+    worker_name: &str,
+    tx: &mpsc::UnboundedSender<WorkerStreamEvent>,
+) -> Result<String, String> {
+    let Some(provider) = provider else {
+        return Err(format!("unknown worker `{worker_name}`"));
+    };
+    let _permit = match sem.acquire_owned().await {
+        Ok(p) => p,
+        Err(_) => return Err("semaphore closed".into()),
+    };
+    let model = provider.id().split(':').nth(1).unwrap_or("").to_string();
+    let req = ChatRequest::new(model.clone(), vec![Message::user(task_text)]);
+    let estimated_usd = provider.estimate_cost_usd(&req);
+    if let Some(b) = budget.as_ref() {
+        let est_tokens = req.max_tokens.unwrap_or(0);
+        if let Err(e) = b.pre_check(principal, estimated_usd, est_tokens).await {
+            return Err(e.to_string());
+        }
+    }
+
+    if provider.capabilities().supports_streaming {
+        let stream_req = ChatRequest {
+            stream: true,
+            ..ChatRequest::new(model.clone(), vec![Message::user(task_text)])
+        };
+        match provider.stream(principal, stream_req).await {
+            Ok(mut chunks) => {
+                let mut text = String::new();
+                let mut finish = FinishReason::Stop;
+                let mut usage = Usage::default();
+                let stream_outcome = timeout(timeout_dur, async {
+                    while let Some(chunk) = chunks.next().await {
+                        match chunk {
+                            Ok(ChatChunk::Delta { text: t, .. }) => {
+                                if let Some(t) = t {
+                                    if !t.is_empty() {
+                                        text.push_str(&t);
+                                        let _ = tx.send(WorkerStreamEvent::Delta {
+                                            branch,
+                                            cumulative: text.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                            Ok(ChatChunk::End {
+                                finish_reason: fr,
+                                usage: u,
+                            }) => {
+                                finish = fr;
+                                usage = u;
+                                break;
+                            }
+                            Ok(ChatChunk::Error { message }) => {
+                                return Err(format!("stream error: {message}"));
+                            }
+                            Err(e) => return Err(e.to_string()),
+                        }
+                    }
+                    Ok(())
+                })
+                .await;
+                match stream_outcome {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => return Err(format!("worker timed out after {timeout_dur:?}")),
+                }
+                if let Some(b) = budget.as_ref() {
+                    if let Err(e) = b.record(principal, estimated_usd, usage).await {
+                        return Err(e.to_string());
+                    }
+                }
+                match finish {
+                    FinishReason::Stop | FinishReason::ToolCalls => Ok(text),
+                    other => Err(format!("worker finished with unexpected reason: {other:?}")),
+                }
+            }
+            Err(_) => {
+                run_one_worker_chat_fallback(
+                    provider.as_ref(),
+                    principal,
+                    &model,
+                    task_text,
+                    timeout_dur,
+                    budget,
+                    estimated_usd,
+                )
+                .await
+            }
+        }
+    } else {
+        run_one_worker_chat_fallback(
+            provider.as_ref(),
+            principal,
+            &model,
+            task_text,
+            timeout_dur,
+            budget,
+            estimated_usd,
+        )
+        .await
+    }
+}
+
+async fn run_one_worker_chat_fallback(
+    provider: &dyn LlmProvider,
+    principal: &Principal,
+    model: &str,
+    task_text: &str,
+    timeout_dur: Duration,
+    budget: Option<Arc<BudgetTracker>>,
+    estimated_usd: f64,
+) -> Result<String, String> {
+    let req = ChatRequest::new(model.to_string(), vec![Message::user(task_text)]);
+    match timeout(timeout_dur, provider.chat(principal, req)).await {
+        Ok(Ok(resp)) => {
+            if let Some(b) = budget.as_ref() {
+                if let Err(e) = b.record(principal, estimated_usd, resp.usage).await {
+                    return Err(e.to_string());
+                }
+            }
+            match resp.finish_reason {
+                FinishReason::Stop | FinishReason::ToolCalls => Ok(resp
+                    .message
+                    .content
+                    .iter()
+                    .filter_map(ContentPart::as_text)
+                    .collect::<Vec<_>>()
+                    .join("")),
+                other => Err(format!("worker finished with unexpected reason: {other:?}")),
+            }
+        }
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!("worker timed out after {timeout_dur:?}")),
+    }
 }
 
 fn parse_dispatch_plan(raw: &str) -> Result<DispatchPlan, String> {
