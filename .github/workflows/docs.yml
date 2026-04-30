@@ -1,4 +1,4 @@
-name: Deploy docs
+name: Build docs
 
 on:
   push:
@@ -9,16 +9,8 @@ on:
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
-# Required for actions/deploy-pages.
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-# Single in-flight deploy at a time; queue but don't cancel an in-flight deploy.
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
   build:
@@ -40,17 +32,3 @@ jobs:
 
       - name: Build site
         run: mkdocs build --strict
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
