@@ -533,8 +533,7 @@ mod streaming_verifier_emits {
             partial: &str,
         ) -> Result<Option<f32>, TakoError> {
             self.streaming_calls.fetch_add(1, Ordering::SeqCst);
-            self.last_partial_len
-                .store(partial.len(), Ordering::SeqCst);
+            self.last_partial_len.store(partial.len(), Ordering::SeqCst);
             Ok(Some(0.5))
         }
     }

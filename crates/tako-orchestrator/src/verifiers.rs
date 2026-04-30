@@ -43,6 +43,26 @@ impl Verifier for RuleBasedVerifier {
         _prompt: &str,
         output: &str,
     ) -> Result<f32, TakoError> {
+        Ok(self.score_text(output))
+    }
+
+    /// Phase 13.B — streaming-aware variant. The same length / regex
+    /// rules apply to the cumulative partial buffer; emitting on every
+    /// delta is essentially free for this verifier (no remote calls,
+    /// no allocation hot-path), so we always return `Ok(Some(score))`
+    /// rather than gating with throttling state. Mirrors the
+    /// [`crate::RuleBasedGuard`] streaming pattern shipped in Phase 8.D.
+    async fn evaluate_streaming(
+        &self,
+        _principal: &Principal,
+        partial: &str,
+    ) -> Result<Option<f32>, TakoError> {
+        Ok(Some(self.score_text(partial)))
+    }
+}
+
+impl RuleBasedVerifier {
+    fn score_text(&self, output: &str) -> f32 {
         let mut total = 1u32; // length rule always counted
         let mut passed = 0u32;
         if output.len() >= self.min_chars {
@@ -54,7 +74,7 @@ impl Verifier for RuleBasedVerifier {
                 passed += 1;
             }
         }
-        Ok(passed as f32 / total as f32)
+        passed as f32 / total as f32
     }
 }
 
@@ -150,6 +170,22 @@ mod tests {
         assert_eq!(v.score(&p, "?", "not finished").await.unwrap(), 0.5);
         // Neither passes.
         assert_eq!(v.score(&p, "?", "no").await.unwrap(), 0.0);
+    }
+
+    /// Phase 13.B — streaming variant returns `Some(score)` mirroring
+    /// `score()` semantics on the cumulative partial. Cheap-heuristic
+    /// verifiers can emit a score per delta without throttling.
+    #[tokio::test]
+    async fn rule_based_verifier_evaluate_streaming_emits_score() {
+        let v = RuleBasedVerifier::new(10);
+        let p = Principal::anonymous();
+        // Below threshold: length rule fails -> 0.0 (still emitted).
+        assert_eq!(v.evaluate_streaming(&p, "short").await.unwrap(), Some(0.0));
+        // At/above threshold: length rule passes -> 1.0.
+        assert_eq!(
+            v.evaluate_streaming(&p, "long enough!").await.unwrap(),
+            Some(1.0)
+        );
     }
 
     #[test]

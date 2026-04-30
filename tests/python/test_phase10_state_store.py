@@ -30,9 +30,11 @@ def test_save_then_load_round_trip(tmp_path: Path) -> None:
     assert store.load() == 42
 
     # Schema check: the file is the documented `rekor_min_tree_size`
-    # JSON shape, not an opaque blob.
+    # JSON shape, not an opaque blob. Phase 11.A added a `version: 1`
+    # field for forward-incompat detection; both fields are present
+    # in fresh saves.
     raw = json.loads((tmp_path / "anchor.json").read_text())
-    assert raw == {"rekor_min_tree_size": 42}
+    assert raw == {"rekor_min_tree_size": 42, "version": 1}
 
 
 def test_seed_applies_persisted_value_to_verifier(tmp_path: Path) -> None:
