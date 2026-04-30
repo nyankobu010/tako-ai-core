@@ -85,23 +85,24 @@ result = orch.run_sync("Quick question: ...")
 
 ## Feature matrix
 
-| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 |
-|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|
-| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | |
-| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |
-| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |
-| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |
-| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |
-| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |
-| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget |
-| `AbMcts` tree search               |         |         |         | ✅      |         |         |
-| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |
-| PII / DLP redaction                | ✅      |         |         |         |         |         |
-| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |
-| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge |
-| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |
-| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET |
-| Sync + async dual API              | ✅      |         |         |         |         |         |
+| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 |
+|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|
+| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | |
+| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | |
+| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         |
+| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         |
+| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         |
+| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         |
+| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | |
+| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion |
+| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta |
+| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         |
+| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         |
+| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         |
+| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | |
+| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         |
+| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor |
+| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         |
 
 ## Roadmap
 
@@ -126,6 +127,27 @@ result = orch.run_sync("Quick question: ...")
   `BudgetTracker` wired through `tako.Conductor`, `tako.Trinity`, and
   `tako.guards.LlmJudge`; `KeylessVerifier` extended with operator-pinned
   chain-of-trust validation (`TrustRoot`) and Rekor SET verification.
+- **Phase 7 — Streaming closures + Sigstore continuation** *(done, v0.8.0)*:
+  native `SelfCaller::stream` plus first Python streaming entry point
+  (`tako.SelfCaller.stream` + `tako._native.OrchEvent` /
+  `OrchEventStream`); Rekor inclusion-proof (Merkle audit-path)
+  verification; cosign protobuf-bundle adapter
+  (`KeylessBundle::from_protobuf_bundle`).
+- **Phase 8 — Search streaming + transparency-log completeness**
+  *(done, v0.9.0)*: `OrchEvent::VerifierScore` and
+  `OrchEvent::Recursion` variants on a now-`#[non_exhaustive]` enum;
+  native `AbMcts::stream` plus `tako.AbMcts(...)` Python facade
+  (closes the v0.5.0 binding gap); Rekor checkpoint (`SignedNote`)
+  verification; streaming-aware `ConfidenceGuard` with `RuleBasedGuard`
+  early-abort on `SelfCaller::stream`.
+- **Phase 9 — Cost-aware streaming guards + log freshness + protocol
+  completeness + router-driven AB-MCTS** *(done, v0.10.0)*:
+  opt-in streaming `LlmJudgeGuard` (`with_streaming_min_chars` /
+  `with_streaming_every_n` per-N-delta judging); Rekor checkpoint
+  freshness anchor (trust-on-first-use over `tree_size`); `tako-compat`
+  named `tako.verifier_score` / `tako.recursion` SSE events for
+  OpenAI-compat clients; AB-MCTS router-driven branch expansion
+  (`AbMcts::builder().candidate(p).router(r)`).
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 
