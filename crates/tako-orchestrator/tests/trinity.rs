@@ -490,3 +490,178 @@ mod verifier_emits {
         assert_eq!(count, 0);
     }
 }
+
+mod streaming_verifier_emits {
+    //! Phase 13.B — `Trinity` calls `Verifier::evaluate_streaming`
+    //! per assistant-text delta on the *cumulative* buffer when a
+    //! verifier is attached. `Ok(Some(score))` returns from the hook
+    //! produce intermediate `OrchEvent::VerifierScore` events on the
+    //! same `(step, branch)` as the eventual synthesis-complete
+    //! final. The default `Ok(None)` impl preserves Phase 10.C
+    //! behaviour byte-for-byte.
+    use super::{FakeProvider, RegexRouter, StreamingFake, Trinity, assistant};
+    use async_trait::async_trait;
+    use futures::StreamExt;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tako_core::{AlwaysScore, Principal, TakoError, Verifier};
+    use tako_orchestrator::{OrchEvent, OrchInput, Orchestrator};
+
+    /// Counts every `evaluate_streaming` invocation and returns
+    /// `Ok(Some(0.5))` so each call produces a streaming partial.
+    /// `score()` (the synthesis-complete final) returns 0.9.
+    #[derive(Default)]
+    struct CountingStreamingVerifier {
+        streaming_calls: AtomicUsize,
+        last_partial_len: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Verifier for CountingStreamingVerifier {
+        async fn score(
+            &self,
+            _principal: &Principal,
+            _prompt: &str,
+            _output: &str,
+        ) -> Result<f32, TakoError> {
+            Ok(0.9)
+        }
+
+        async fn evaluate_streaming(
+            &self,
+            _principal: &Principal,
+            partial: &str,
+        ) -> Result<Option<f32>, TakoError> {
+            self.streaming_calls.fetch_add(1, Ordering::SeqCst);
+            self.last_partial_len
+                .store(partial.len(), Ordering::SeqCst);
+            Ok(Some(0.5))
+        }
+    }
+
+    /// The cumulative buffer must grow monotonically across deltas
+    /// — the streaming hook sees an ever-longer prefix, never a
+    /// per-delta slice.
+    #[tokio::test]
+    async fn trinity_emits_per_delta_streaming_verifier_scores() {
+        // StreamingFake yields three deltas. We expect:
+        //   - 3 streaming-partial VerifierScore events (score 0.5)
+        //   - 1 synthesis-complete VerifierScore event (score 0.9)
+        // all on the same (step=0, branch=0) for the `code` role.
+        let code = Arc::new(StreamingFake::new(
+            "fake:code",
+            vec!["fn ", "main() ", "{}\n"],
+        ));
+        let math = Arc::new(FakeProvider::new("fake:math", vec![assistant("X")]));
+        let fb = Arc::new(FakeProvider::new("fake:fb", vec![assistant("X")]));
+
+        let v = Arc::new(CountingStreamingVerifier::default());
+        let trinity = Trinity::builder()
+            .role("code", code)
+            .role("math", math)
+            .role("fallback", fb)
+            .router(Arc::new(RegexRouter::default()))
+            .max_steps(1)
+            .verifier(v.clone())
+            .build()
+            .unwrap();
+
+        let mut stream = trinity
+            .stream(
+                &Principal::anonymous(),
+                OrchInput::from_user("Write a fn to compute fib"),
+            )
+            .await;
+        let mut scores: Vec<(u32, u32, f32)> = Vec::new();
+        while let Some(ev) = stream.next().await {
+            if let OrchEvent::VerifierScore {
+                step,
+                branch,
+                score,
+            } = ev.unwrap()
+            {
+                scores.push((step, branch, score));
+            }
+        }
+
+        // Three streaming partials + one synthesis-complete final = four total.
+        assert_eq!(scores.len(), 4, "got events: {scores:?}");
+        // The first three are partials (score 0.5).
+        for (step, branch, score) in &scores[..3] {
+            assert_eq!(*step, 0);
+            assert_eq!(*branch, 0);
+            assert!(
+                (*score - 0.5).abs() < 1e-6,
+                "expected partial score 0.5, got {score}"
+            );
+        }
+        // The fourth is the synthesis-complete final (score 0.9).
+        let (final_step, final_branch, final_score) = scores[3];
+        assert_eq!(final_step, 0);
+        assert_eq!(final_branch, 0);
+        assert!(
+            (final_score - 0.9).abs() < 1e-6,
+            "expected synthesis final 0.9, got {final_score}"
+        );
+
+        // The hook saw exactly one call per delta.
+        assert_eq!(v.streaming_calls.load(Ordering::SeqCst), 3);
+        // Cumulative buffer length on the last call equals
+        // `"fn " + "main() " + "{}\n"`.
+        assert_eq!(
+            v.last_partial_len.load(Ordering::SeqCst),
+            "fn main() {}\n".len()
+        );
+    }
+
+    /// Regression: a `Verifier` that does not override
+    /// `evaluate_streaming` (default `Ok(None)`) produces exactly the
+    /// existing single synthesis-complete event — byte-for-byte parity
+    /// with Phase 10.C.
+    #[tokio::test]
+    async fn trinity_default_verifier_emits_only_final_score() {
+        let code = Arc::new(StreamingFake::new(
+            "fake:code",
+            vec!["fn ", "main() ", "{}\n"],
+        ));
+        let math = Arc::new(FakeProvider::new("fake:math", vec![assistant("X")]));
+        let fb = Arc::new(FakeProvider::new("fake:fb", vec![assistant("X")]));
+
+        let trinity = Trinity::builder()
+            .role("code", code)
+            .role("math", math)
+            .role("fallback", fb)
+            .router(Arc::new(RegexRouter::default()))
+            .max_steps(1)
+            // `AlwaysScore` does NOT override `evaluate_streaming`.
+            .verifier(Arc::new(AlwaysScore(0.7)))
+            .build()
+            .unwrap();
+
+        let mut stream = trinity
+            .stream(
+                &Principal::anonymous(),
+                OrchInput::from_user("Write a fn to compute fib"),
+            )
+            .await;
+        let mut scores = Vec::new();
+        while let Some(ev) = stream.next().await {
+            if let OrchEvent::VerifierScore {
+                step,
+                branch,
+                score,
+            } = ev.unwrap()
+            {
+                scores.push((step, branch, score));
+            }
+        }
+        assert_eq!(
+            scores.len(),
+            1,
+            "default-impl Verifier must emit only the synthesis-complete final"
+        );
+        assert_eq!(scores[0].0, 0);
+        assert_eq!(scores[0].1, 0);
+        assert!((scores[0].2 - 0.7).abs() < 1e-6);
+    }
+}

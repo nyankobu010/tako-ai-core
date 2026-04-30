@@ -508,6 +508,36 @@ impl Orchestrator for Trinity {
                                                     delta: t.clone(),
                                                 };
                                                 text.push_str(&t);
+
+                                                // Phase 13.B — per-delta verifier
+                                                // hook on the cumulative buffer.
+                                                // Default trait impl returns
+                                                // Ok(None) so unmodified verifiers
+                                                // emit no streaming partials and
+                                                // behaviour is unchanged. Override
+                                                // for cheap heuristic verifiers
+                                                // (regex, length); skip for
+                                                // LLM-as-judge.
+                                                if let Some(v) = verifier.as_ref() {
+                                                    if let Some(score) = v
+                                                        .evaluate_streaming(
+                                                            &principal, &text,
+                                                        )
+                                                        .await?
+                                                    {
+                                                        let branch = role_order
+                                                            .iter()
+                                                            .position(|r| r == &role)
+                                                            .unwrap_or(0)
+                                                            as u32;
+                                                        yield OrchEvent::VerifierScore {
+                                                            step,
+                                                            branch,
+                                                            score: score
+                                                                .clamp(0.0, 1.0),
+                                                        };
+                                                    }
+                                                }
                                             }
                                         }
                                         deltas.extend(tool_calls);
