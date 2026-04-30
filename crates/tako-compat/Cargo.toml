@@ -30,12 +30,15 @@ hyper              = { workspace = true }
 jsonwebtoken       = { version = "9.3", optional = true }
 reqwest            = { workspace = true, optional = true }
 vaultrs            = { version = "0.7", optional = true }
+# Phase 15.B.2 — `url::form_urlencoded` for manual RFC 7662 body
+# construction (workspace `reqwest` is built without `urlencoded`).
+url                = { workspace = true, optional = true }
 
 [features]
 # Phase 14.B feature gates. Each enables one `AuthResolver` impl.
 jwt   = ["dep:jsonwebtoken"]
 # OIDC = JWT + JWKS rotation + discovery doc; reuses the JWT decoder.
-oidc  = ["jwt", "dep:reqwest"]
+oidc  = ["jwt", "dep:reqwest", "dep:url"]
 # Phase 15.B.1 — Vault providers (AppRole / Kubernetes) post directly
 # to Vault auth endpoints via reqwest, so the `vault` feature now also
 # pulls in reqwest.

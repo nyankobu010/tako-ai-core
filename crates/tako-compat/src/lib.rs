@@ -23,8 +23,6 @@ mod sse;
 
 #[cfg(feature = "jwt")]
 pub use auth::JwtAuthResolver;
-#[cfg(feature = "oidc")]
-pub use auth::OidcAuthResolver;
 #[cfg(feature = "vault")]
 pub use auth::VaultAuthResolver;
 #[cfg(feature = "vault")]
@@ -33,4 +31,6 @@ pub use auth::{
     VaultTokenProvider,
 };
 pub use auth::{AuthResolver, StaticTokens};
+#[cfg(feature = "oidc")]
+pub use auth::{IntrospectionConfig, OidcAuthResolver};
 pub use server::{ServeConfig, serve_openai};

@@ -4492,6 +4492,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "url",
  "vaultrs",
  "wiremock",
 ]

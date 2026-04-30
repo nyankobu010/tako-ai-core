@@ -21,8 +21,19 @@
 //! [`crate::routes::resolve_principal`]'s 401-mapping works
 //! unchanged.
 //!
-//! Out-of-scope (deferred to Phase 15+): RFC 7662 token introspection,
-//! refresh-token flows, end-session endpoint.
+//! Phase 15.B.2 — RFC 7662 token introspection is now supported as an
+//! opt-in post-signature-validation hook. Enable via
+//! [`Self::with_introspection`] (uses the
+//! `introspection_endpoint` advertised by the discovery doc; errors if
+//! the issuer doesn't advertise one) or
+//! [`Self::with_introspection_uri`] (explicit override). When enabled,
+//! every successful signature-validated token is additionally POSTed
+//! to the introspection endpoint and rejected with `TakoError::Invalid`
+//! when `active=false`.
+//!
+//! Out-of-scope (deferred to Phase 16+): refresh-token flows,
+//! end-session endpoint, `introspection_endpoint_auth_method`
+//! discovery (Phase 15.B.2 supports HTTP Basic only).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -47,6 +58,37 @@ const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(3600);
 struct DiscoveryDoc {
     jwks_uri: String,
     issuer: String,
+    /// RFC 8414 / OIDC discovery: optional URL of the issuer's
+    /// introspection endpoint (RFC 7662). When present and
+    /// [`OidcAuthResolver::with_introspection`] is called, the
+    /// resolver POSTs each token here for revocation-aware checks.
+    #[serde(default)]
+    introspection_endpoint: Option<String>,
+}
+
+/// Phase 15.B.2 — RFC 7662 token-introspection configuration.
+///
+/// When attached to an [`OidcAuthResolver`] via
+/// [`OidcAuthResolver::with_introspection`] or
+/// [`OidcAuthResolver::with_introspection_uri`], every signature-
+/// validated token is additionally POSTed to `introspect_uri` with
+/// the token in the `token` form field and `client_id` /
+/// `client_secret` carried as HTTP Basic auth. A response with
+/// `active=false` rejects the token with `TakoError::Invalid("oidc:
+/// token revoked (introspection)")`.
+#[derive(Debug, Clone)]
+pub struct IntrospectionConfig {
+    pub introspect_uri: String,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+}
+
+/// Subset of RFC 7662 introspection response. `active` is the only
+/// field we act on; others are ignored.
+#[derive(Debug, Deserialize)]
+struct IntrospectionResponse {
+    #[serde(default)]
+    active: bool,
 }
 
 /// JWKS fetched from `jwks_uri`. Validation hint: a missing-`kid`
@@ -67,6 +109,13 @@ pub struct OidcAuthResolver {
     tenant_claim: String,
     user_claim: String,
     roles_claim: String,
+    /// Phase 15.B.2 — `introspection_endpoint` advertised by the
+    /// issuer's discovery doc, captured for use by
+    /// [`Self::with_introspection`].
+    discovered_introspection_uri: Option<String>,
+    /// Phase 15.B.2 — when `Some`, every signature-validated token is
+    /// additionally POSTed for an `active=true` check.
+    introspection: Option<IntrospectionConfig>,
 }
 
 impl std::fmt::Debug for OidcAuthResolver {
@@ -120,6 +169,8 @@ impl OidcAuthResolver {
             tenant_claim: DEFAULT_TENANT_CLAIM.into(),
             user_claim: DEFAULT_USER_CLAIM.into(),
             roles_claim: DEFAULT_ROLES_CLAIM.into(),
+            discovered_introspection_uri: doc.introspection_endpoint,
+            introspection: None,
         })
     }
 
@@ -135,6 +186,104 @@ impl OidcAuthResolver {
         self.user_claim = user.into();
         self.roles_claim = roles.into();
         self
+    }
+
+    /// Phase 15.B.2 — enable RFC 7662 token introspection using the
+    /// `introspection_endpoint` advertised by the issuer's discovery
+    /// doc.
+    ///
+    /// Errors if the discovery doc did not advertise
+    /// `introspection_endpoint`. Use
+    /// [`Self::with_introspection_uri`] to bypass discovery and supply
+    /// an explicit URL.
+    ///
+    /// `client_secret` is sent over HTTP Basic auth alongside
+    /// `client_id`. Pass `None` for public clients (rare).
+    pub fn with_introspection(
+        mut self,
+        client_id: impl Into<String>,
+        client_secret: Option<String>,
+    ) -> Result<Self, TakoError> {
+        let uri = self.discovered_introspection_uri.clone().ok_or_else(|| {
+            TakoError::Invalid(
+                "oidc: issuer did not advertise `introspection_endpoint`; \
+                 use `with_introspection_uri` for explicit URI"
+                    .into(),
+            )
+        })?;
+        self.introspection = Some(IntrospectionConfig {
+            introspect_uri: uri,
+            client_id: client_id.into(),
+            client_secret,
+        });
+        Ok(self)
+    }
+
+    /// Phase 15.B.2 — enable RFC 7662 token introspection with an
+    /// explicit endpoint URL (bypasses discovery). Infallible.
+    pub fn with_introspection_uri(
+        mut self,
+        uri: impl Into<String>,
+        client_id: impl Into<String>,
+        client_secret: Option<String>,
+    ) -> Self {
+        self.introspection = Some(IntrospectionConfig {
+            introspect_uri: uri.into(),
+            client_id: client_id.into(),
+            client_secret,
+        });
+        self
+    }
+
+    /// Phase 15.B.2 — POST the token to the introspection endpoint
+    /// and confirm `active=true`. Returns `Err` with a
+    /// `TakoError::Invalid("oidc: token revoked ...")` payload when
+    /// the issuer rejects the token.
+    async fn introspect(&self, token: &str) -> Result<(), TakoError> {
+        let Some(cfg) = &self.introspection else {
+            return Ok(());
+        };
+        // Workspace reqwest is configured without the `urlencoded`
+        // feature; build the form body manually via `url`'s
+        // `form_urlencoded`. This is what reqwest's `.form()` does
+        // internally.
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("token", token)
+            .append_pair("token_type_hint", "access_token")
+            .finish();
+        let req = self
+            .http
+            .post(&cfg.introspect_uri)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(body);
+        let req = if let Some(secret) = &cfg.client_secret {
+            req.basic_auth(&cfg.client_id, Some(secret))
+        } else {
+            req.basic_auth(&cfg.client_id, None::<&str>)
+        };
+        let resp = req.send().await.map_err(|e| {
+            TakoError::Transport(format!("oidc: introspect POST {}: {e}", cfg.introspect_uri))
+        })?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(TakoError::Invalid(format!(
+                "oidc: introspect endpoint returned {status}: {body}"
+            )));
+        }
+        let parsed: IntrospectionResponse = resp
+            .json()
+            .await
+            .map_err(|e| TakoError::Invalid(format!("oidc: introspect response parse: {e}")))?;
+        if !parsed.active {
+            return Err(TakoError::Invalid(
+                "oidc: token revoked (introspection `active=false`)".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Returns a JWKS guaranteed to be no older than `refresh_interval`.
@@ -269,30 +418,221 @@ impl AuthResolver for OidcAuthResolver {
         // missing `kid` or signature mismatch, force-refresh once and
         // retry. The retry handles the documented JWKS-rotation race.
         let jwks = self.jwks(false).await?;
-        match self.validate_against(token, &jwks).await {
-            Ok(p) => Ok(p),
+        let principal = match self.validate_against(token, &jwks).await {
+            Ok(p) => p,
             Err(TakoError::Invalid(msg))
                 if msg.contains("InvalidSignature")
                     || msg.contains("no JWK in cache matches")
                     || msg.contains("InvalidKid") =>
             {
                 let fresh = self.jwks(true).await?;
-                self.validate_against(token, &fresh).await
+                self.validate_against(token, &fresh).await?
             }
-            Err(other) => Err(other),
-        }
+            Err(other) => return Err(other),
+        };
+
+        // Phase 15.B.2 — when introspection is configured, fail-closed
+        // on `active=false`. No-op when introspection is not enabled.
+        self.introspect(token).await?;
+
+        Ok(principal)
     }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use jsonwebtoken::jwk::JwkSet;
+    use serde_json::json;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
     use super::*;
 
     fn assert_send_sync<T: Send + Sync + 'static>() {}
 
+    /// Construct a minimal `OidcAuthResolver` for testing without
+    /// hitting a live OIDC discovery endpoint.
+    fn test_resolver(http: Client, issuer: &str) -> OidcAuthResolver {
+        OidcAuthResolver {
+            issuer: issuer.into(),
+            audience: "test-audience".into(),
+            jwks_uri: format!("{issuer}/jwks"),
+            http,
+            cache: Arc::new(RwLock::new(Some(CachedJwks {
+                jwks: JwkSet { keys: vec![] },
+                fetched_at: Instant::now(),
+            }))),
+            refresh_interval: DEFAULT_REFRESH_INTERVAL,
+            tenant_claim: DEFAULT_TENANT_CLAIM.into(),
+            user_claim: DEFAULT_USER_CLAIM.into(),
+            roles_claim: DEFAULT_ROLES_CLAIM.into(),
+            discovered_introspection_uri: None,
+            introspection: None,
+        }
+    }
+
     #[test]
     fn oidc_resolver_is_send_sync() {
         assert_send_sync::<OidcAuthResolver>();
+    }
+
+    #[test]
+    fn introspection_config_is_clone_debug() {
+        let cfg = IntrospectionConfig {
+            introspect_uri: "https://issuer/introspect".into(),
+            client_id: "id".into(),
+            client_secret: Some("secret".into()),
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.introspect_uri, cfg.introspect_uri);
+        let _ = format!("{cfg:?}");
+    }
+
+    #[test]
+    fn with_introspection_errors_when_no_endpoint_advertised() {
+        let http = Client::new();
+        let r = test_resolver(http, "https://issuer.example");
+        // No `introspection_endpoint` was discovered — `with_introspection`
+        // must fail-closed.
+        let err = r.with_introspection("client-id", None).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("introspection_endpoint"),
+            "expected fail-closed error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn with_introspection_succeeds_when_discovery_advertised_endpoint() {
+        let http = Client::new();
+        let mut r = test_resolver(http, "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        let r = r
+            .with_introspection("client-id", Some("secret".into()))
+            .unwrap();
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(cfg.introspect_uri, "https://issuer.example/introspect");
+        assert_eq!(cfg.client_id, "client-id");
+        assert_eq!(cfg.client_secret.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn with_introspection_uri_bypasses_discovery() {
+        let http = Client::new();
+        let r = test_resolver(http, "https://issuer.example");
+        // No `introspection_endpoint` from discovery — explicit URI
+        // must still work.
+        let r = r.with_introspection_uri("https://override/introspect", "client-id", None);
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(cfg.introspect_uri, "https://override/introspect");
+        assert!(cfg.client_secret.is_none());
+    }
+
+    #[tokio::test]
+    async fn introspect_active_true_returns_ok() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let r = test_resolver(Client::new(), "https://issuer.example").with_introspection_uri(
+            format!("{}/introspect", server.uri()),
+            "client",
+            Some("secret".into()),
+        );
+        r.introspect("any-token").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn introspect_active_false_returns_invalid_revoked() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": false })))
+            .mount(&server)
+            .await;
+
+        let r = test_resolver(Client::new(), "https://issuer.example").with_introspection_uri(
+            format!("{}/introspect", server.uri()),
+            "client",
+            None,
+        );
+        let err = r.introspect("any-token").await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("revoked"), "got: {msg}");
+        assert!(msg.contains("introspection"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn introspect_carries_basic_auth_with_secret() {
+        let server = MockServer::start().await;
+        // Authorization: Basic base64("client:secret") =
+        //   "Basic Y2xpZW50OnNlY3JldA=="
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .and(header("Authorization", "Basic Y2xpZW50OnNlY3JldA=="))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let r = test_resolver(Client::new(), "https://issuer.example").with_introspection_uri(
+            format!("{}/introspect", server.uri()),
+            "client",
+            Some("secret".into()),
+        );
+        r.introspect("any-token").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn introspect_propagates_5xx_as_invalid() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("oops"))
+            .mount(&server)
+            .await;
+
+        let r = test_resolver(Client::new(), "https://issuer.example").with_introspection_uri(
+            format!("{}/introspect", server.uri()),
+            "client",
+            None,
+        );
+        let err = r.introspect("any-token").await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("500"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn introspect_no_op_when_disabled() {
+        // `introspection.is_none()` — `introspect()` must succeed
+        // without making any HTTP call.
+        let r = test_resolver(Client::new(), "https://issuer.example");
+        r.introspect("any-token").await.unwrap();
+    }
+
+    #[test]
+    fn discovery_doc_parses_optional_introspection_endpoint() {
+        let with_endpoint: DiscoveryDoc = serde_json::from_value(json!({
+            "issuer": "https://issuer.example",
+            "jwks_uri": "https://issuer.example/jwks",
+            "introspection_endpoint": "https://issuer.example/introspect",
+        }))
+        .unwrap();
+        assert_eq!(
+            with_endpoint.introspection_endpoint.as_deref(),
+            Some("https://issuer.example/introspect"),
+        );
+
+        let without: DiscoveryDoc = serde_json::from_value(json!({
+            "issuer": "https://issuer.example",
+            "jwks_uri": "https://issuer.example/jwks",
+        }))
+        .unwrap();
+        assert!(without.introspection_endpoint.is_none());
     }
 }

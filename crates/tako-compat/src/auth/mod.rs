@@ -29,7 +29,7 @@ pub use jwt::JwtAuthResolver;
 #[cfg(feature = "oidc")]
 mod oidc;
 #[cfg(feature = "oidc")]
-pub use oidc::OidcAuthResolver;
+pub use oidc::{IntrospectionConfig, OidcAuthResolver};
 
 #[cfg(feature = "vault")]
 mod vault;
