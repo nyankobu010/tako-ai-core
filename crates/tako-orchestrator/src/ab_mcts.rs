@@ -30,17 +30,19 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tako_core::{
-    ChatRequest, ContentPart, FinishReason, LlmProvider, Message, PolicyContext, PolicyDecision,
-    PolicyEngine, PolicyStage, Principal, Role, Router, TakoError, Usage, Verifier,
+    ChatChunk, ChatRequest, ContentPart, FinishReason, LlmProvider, Message, PolicyContext,
+    PolicyDecision, PolicyEngine, PolicyStage, Principal, Role, Router, TakoError, ToolCallDelta,
+    Usage, Verifier,
 };
 use tako_mcp::ToolRegistry;
 use tracing::{Instrument, info_span};
 
-use crate::single::{ChatDefaults, hash_messages_pub, hash_value_pub};
+use crate::single::{ChatDefaults, assemble_tool_calls_pub, hash_messages_pub, hash_value_pub};
 use crate::types::{OrchEvent, OrchInput, OrchOutput};
 use crate::{Orchestrator, OrchestratorKind};
 
@@ -348,13 +350,28 @@ impl Orchestrator for AbMcts {
     ///
     /// Per iteration of the AB-MCTS search loop, the stream emits:
     /// 1. [`OrchEvent::StepStart`] with `step = iteration_index`.
-    /// 2. Exactly one [`OrchEvent::AssistantText`] carrying the full
-    ///    rollout text — the rollout helper itself is non-streaming
-    ///    (each rollout may invoke tool calls across multiple
-    ///    provider turns; per-token interleaving across competing
-    ///    branches is out of scope for v0.9.0).
-    /// 3. [`OrchEvent::VerifierScore`] with the rollout's branch
-    ///    index (the leaf node id) and verifier score in `[0, 1]`.
+    /// 2. The rollout's assistant-text payload as one or more
+    ///    [`OrchEvent::AssistantText`] events. When the rollout's
+    ///    picked provider advertises `Capabilities::supports_streaming`
+    ///    (Phase 15.A), the **final assistant turn** of the rollout is
+    ///    delivered as a sequence of per-delta `AssistantText` events;
+    ///    intermediate tool-call turns inside the rollout still execute
+    ///    via `provider.chat()` and do not surface deltas (per-token
+    ///    interleaving across competing rollout steps is out of scope).
+    ///    Non-streaming providers fall back to exactly one
+    ///    full-rollout-text `AssistantText` — byte-for-byte parity with
+    ///    v0.15.0.
+    /// 3. Optional per-delta [`OrchEvent::VerifierScore`] events on the
+    ///    rollout's `(step, branch)` when the configured `Verifier`
+    ///    overrides [`Verifier::evaluate_streaming`] (Phase 13.B). The
+    ///    default impl returns `Ok(None)` so unmodified verifiers
+    ///    produce zero partials. Override only for cheap heuristic
+    ///    verifiers (regex / length); LLM-as-judge per-delta is too
+    ///    expensive.
+    /// 4. One synthesis-complete [`OrchEvent::VerifierScore`] with the
+    ///    rollout's `branch = leaf_idx` and final verifier score in
+    ///    `[0, 1]`. Partials and the final share the same
+    ///    `(step, branch)`.
     ///
     /// After all iterations (or after early-stop on
     /// `score >= min_confidence`), the stream emits exactly one
@@ -451,9 +468,63 @@ impl Orchestrator for AbMcts {
                     &parent_messages,
                 )
                 .await?;
-                let (rollout_message, rollout_text, rollout_usage, rollout_steps) =
-                    rollout_static(
-                        picked,
+                // Phase 15.A — branch ID is stamped before the leaf is
+                // inserted so per-delta partials and the eventual
+                // synthesis-complete final share the same
+                // `(step, branch)`. The leaf will land at exactly this
+                // index because `nodes` is not mutated during the
+                // rollout.
+                let leaf_idx = nodes.len();
+                let branch = leaf_idx as u32;
+
+                let rollout_result: Result<
+                    (Message, String, Usage, u32),
+                    TakoError,
+                > = if picked.capabilities().supports_streaming {
+                    let (tx, mut rx) =
+                        tokio::sync::mpsc::unbounded_channel::<OrchEvent>();
+                    let mut rollout_fut = Box::pin(rollout_static_streaming(
+                        Arc::clone(&picked),
+                        Arc::clone(&tools),
+                        policy.clone(),
+                        defaults.clone(),
+                        max_steps_per_rollout,
+                        temperature,
+                        principal.clone(),
+                        parent_messages.clone(),
+                        Arc::clone(&verifier),
+                        iteration,
+                        branch,
+                        tx,
+                    ));
+                    // Drive the rollout future and forward its events
+                    // concurrently. Events arrive over the mpsc; the
+                    // rollout's final tuple comes back as the future's
+                    // resolved value.
+                    loop {
+                        tokio::select! {
+                            biased;
+                            evt = rx.recv() => {
+                                match evt {
+                                    Some(e) => yield e,
+                                    None => break Err(TakoError::Invalid(
+                                        "AbMcts: rollout channel closed".into(),
+                                    )),
+                                }
+                            }
+                            out = &mut rollout_fut => {
+                                // Rollout finished; drain any remaining
+                                // buffered events before breaking.
+                                while let Ok(e) = rx.try_recv() {
+                                    yield e;
+                                }
+                                break out;
+                            }
+                        }
+                    }
+                } else {
+                    let out = rollout_static(
+                        Arc::clone(&picked),
                         Arc::clone(&tools),
                         policy.clone(),
                         defaults.clone(),
@@ -462,18 +533,22 @@ impl Orchestrator for AbMcts {
                         &principal,
                         parent_messages.clone(),
                     )
-                    .await?;
-
-                // Forward the rollout's full text as a single
-                // AssistantText delta. Per-token streaming inside a
-                // multi-step rollout is deferred (would need to thread
-                // `provider.stream` through the tool-call loop).
-                if !rollout_text.is_empty() {
-                    yield OrchEvent::AssistantText {
-                        step: iteration,
-                        delta: rollout_text.clone(),
-                    };
-                }
+                    .await;
+                    // Forward the rollout's full text as a single
+                    // AssistantText delta — byte-for-byte parity with
+                    // v0.15.0 for non-streaming providers.
+                    if let Ok(ref t) = out
+                        && !t.1.is_empty()
+                    {
+                        yield OrchEvent::AssistantText {
+                            step: iteration,
+                            delta: t.1.clone(),
+                        };
+                    }
+                    out
+                };
+                let (rollout_message, rollout_text, rollout_usage, rollout_steps) =
+                    rollout_result?;
 
                 let mut child_messages = parent_messages;
                 child_messages.push(rollout_message.clone());
@@ -494,14 +569,14 @@ impl Orchestrator for AbMcts {
                     output_message: Some(rollout_message),
                     rollout_steps,
                 };
-                let leaf_idx = nodes.len();
+                debug_assert_eq!(nodes.len(), leaf_idx);
                 nodes.push(leaf);
                 nodes[parent_idx].children.push(leaf_idx);
                 path.push(leaf_idx);
 
                 yield OrchEvent::VerifierScore {
                     step: iteration,
-                    branch: leaf_idx as u32,
+                    branch,
                     score,
                 };
 
@@ -835,6 +910,259 @@ async fn rollout_static(
         });
 
         if step + 1 == max_steps_per_rollout {
+            last_assistant = Some(assistant);
+        }
+    }
+
+    let final_message = last_assistant.unwrap_or_else(|| Message::assistant(""));
+    let text = final_message
+        .content
+        .iter()
+        .filter_map(ContentPart::as_text)
+        .collect::<Vec<_>>()
+        .join("");
+    Ok((final_message, text, total_usage, steps))
+}
+
+/// Phase 15.A — streaming variant of [`rollout_static`].
+///
+/// Mirrors the Phase 13.B Trinity precedent: when the picked provider
+/// advertises `Capabilities::supports_streaming`, every provider turn
+/// in the rollout (tool-call turns and the final assistant turn alike)
+/// goes through `provider.stream()`, assembling tool calls from
+/// `ToolCallDelta`s exactly like `Trinity::stream`. Per-delta
+/// assistant text is forwarded as `OrchEvent::AssistantText` and
+/// [`Verifier::evaluate_streaming`] is called on the cumulative buffer
+/// for the entire rollout — partials and the eventual
+/// synthesis-complete final share the same `(step, branch)`. The
+/// caller's recv-loop forwards events out of `AbMcts::stream`'s
+/// `try_stream!` block.
+///
+/// Events are pushed through `event_tx`; the rollout's final tuple is
+/// the function's `Ok` return value.
+///
+/// On stream-startup failure, falls back to `provider.chat()` for the
+/// remaining turns of this rollout — mirroring Trinity's degraded
+/// path.
+#[allow(clippy::too_many_arguments)]
+async fn rollout_static_streaming(
+    provider: Arc<dyn LlmProvider>,
+    tools: Arc<ToolRegistry>,
+    policy: Option<Arc<dyn PolicyEngine>>,
+    defaults: ChatDefaults,
+    max_steps_per_rollout: u32,
+    temperature: f32,
+    principal: Principal,
+    mut messages: Vec<Message>,
+    verifier: Arc<dyn Verifier>,
+    step: u32,
+    branch: u32,
+    event_tx: tokio::sync::mpsc::UnboundedSender<OrchEvent>,
+) -> Result<(Message, String, Usage, u32), TakoError> {
+    let mut total_usage = Usage::default();
+    let mut steps = 0u32;
+    let mut last_assistant: Option<Message> = None;
+    let model = provider.id().split(':').nth(1).unwrap_or("").to_string();
+    // Cumulative assistant-text buffer across all turns of this rollout
+    // — verifier sees the same byte stream the eventual synthesis-
+    // complete `score()` call sees, just incrementally.
+    let mut cumulative_text = String::new();
+
+    for inner_step in 0..max_steps_per_rollout {
+        let req = ChatRequest {
+            model: model.clone(),
+            messages: messages.clone(),
+            tools: tools.schemas().await,
+            temperature: Some(temperature),
+            max_tokens: defaults.max_tokens,
+            stop: Vec::new(),
+            stream: true,
+            metadata: Default::default(),
+        };
+        let span = info_span!(
+            "tako.provider.chat",
+            "tako.provider.id" = %provider.id(),
+            "tako.provider.model" = %model,
+            "tako.orchestrator.step" = inner_step,
+        );
+
+        let stream_result = provider.stream(&principal, req).instrument(span).await;
+        let (assistant, finish_reason, step_usage) = match stream_result {
+            Ok(mut chunks) => {
+                let mut text = String::new();
+                let mut deltas: Vec<ToolCallDelta> = Vec::new();
+                let mut finish = FinishReason::Stop;
+                let mut usage = Usage::default();
+                while let Some(chunk) = chunks.next().await {
+                    match chunk? {
+                        ChatChunk::Delta {
+                            text: t,
+                            tool_calls,
+                        } => {
+                            if let Some(t) = t
+                                && !t.is_empty()
+                            {
+                                let _ = event_tx.send(OrchEvent::AssistantText {
+                                    step,
+                                    delta: t.clone(),
+                                });
+                                text.push_str(&t);
+                                cumulative_text.push_str(&t);
+                                // Phase 15.A — per-delta verifier hook on
+                                // the rollout's cumulative buffer. Default
+                                // trait impl returns Ok(None); override only
+                                // for cheap heuristics.
+                                if let Some(score) = verifier
+                                    .evaluate_streaming(&principal, &cumulative_text)
+                                    .await?
+                                {
+                                    let _ = event_tx.send(OrchEvent::VerifierScore {
+                                        step,
+                                        branch,
+                                        score: score.clamp(0.0, 1.0),
+                                    });
+                                }
+                            }
+                            deltas.extend(tool_calls);
+                        }
+                        ChatChunk::Error { message } => {
+                            return Err(TakoError::provider(
+                                provider.id(),
+                                &model,
+                                format!("stream error: {message}"),
+                            ));
+                        }
+                        ChatChunk::End {
+                            finish_reason: fr,
+                            usage: u,
+                        } => {
+                            finish = fr;
+                            usage = u;
+                        }
+                    }
+                }
+                let mut content: Vec<ContentPart> = Vec::new();
+                if !text.is_empty() {
+                    content.push(ContentPart::Text { text });
+                }
+                for tc in assemble_tool_calls_pub(deltas) {
+                    content.push(tc);
+                }
+                (
+                    Message {
+                        role: Role::Assistant,
+                        content,
+                    },
+                    finish,
+                    usage,
+                )
+            }
+            Err(_) => {
+                // Provider advertised streaming but failed to start.
+                // Fall back to non-streaming `chat()` for this turn —
+                // emit the full assistant text as a single delta so the
+                // caller still sees the payload.
+                let req2 = ChatRequest {
+                    model: model.clone(),
+                    messages: messages.clone(),
+                    tools: tools.schemas().await,
+                    temperature: Some(temperature),
+                    max_tokens: defaults.max_tokens,
+                    stop: Vec::new(),
+                    stream: false,
+                    metadata: Default::default(),
+                };
+                let resp = provider.chat(&principal, req2).await?;
+                let text_payload = resp
+                    .message
+                    .content
+                    .iter()
+                    .filter_map(ContentPart::as_text)
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !text_payload.is_empty() {
+                    let _ = event_tx.send(OrchEvent::AssistantText {
+                        step,
+                        delta: text_payload.clone(),
+                    });
+                    cumulative_text.push_str(&text_payload);
+                }
+                (resp.message, resp.finish_reason, resp.usage)
+            }
+        };
+
+        steps += 1;
+        total_usage.input_tokens = total_usage
+            .input_tokens
+            .saturating_add(step_usage.input_tokens);
+        total_usage.output_tokens = total_usage
+            .output_tokens
+            .saturating_add(step_usage.output_tokens);
+
+        messages.push(assistant.clone());
+
+        let tool_calls: Vec<(String, String, serde_json::Value)> = assistant
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                ContentPart::ToolCall { id, name, args } => {
+                    Some((id.clone(), name.clone(), args.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+
+        if tool_calls.is_empty()
+            || matches!(finish_reason, FinishReason::Stop | FinishReason::Length)
+                && tool_calls.is_empty()
+        {
+            last_assistant = Some(assistant);
+            break;
+        }
+
+        let mut tool_results: Vec<ContentPart> = Vec::with_capacity(tool_calls.len());
+        for (id, name, args) in tool_calls {
+            if let Some(engine) = &policy {
+                let ctx = PolicyContext {
+                    stage: PolicyStage::PreTool,
+                    model: model.clone(),
+                    messages_hash: hash_messages_pub(&messages),
+                    tools: vec![name.clone()],
+                    tool_args_hash: Some(hash_value_pub(&args)),
+                    response_hash: None,
+                };
+                match engine.evaluate(&principal, ctx).await? {
+                    PolicyDecision::Deny { reason } => {
+                        return Err(TakoError::PolicyDenied(format!("tool `{name}`: {reason}")));
+                    }
+                    PolicyDecision::RequireApproval { reason } => {
+                        return Err(TakoError::PolicyDenied(format!(
+                            "tool `{name}` requires approval: {reason}"
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+            let result = match tools.invoke(&principal, &name, args).await {
+                Ok(v) => ContentPart::ToolResult {
+                    id,
+                    result: v,
+                    is_error: false,
+                },
+                Err(e) => ContentPart::ToolResult {
+                    id,
+                    result: serde_json::json!({ "error": e.to_string() }),
+                    is_error: true,
+                },
+            };
+            tool_results.push(result);
+        }
+        messages.push(Message {
+            role: Role::User,
+            content: tool_results,
+        });
+
+        if inner_step + 1 == max_steps_per_rollout {
             last_assistant = Some(assistant);
         }
     }
