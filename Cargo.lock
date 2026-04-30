@@ -4381,6 +4381,7 @@ version = "0.12.0"
 dependencies = [
  "async-stream",
  "async-trait",
+ "eventsource-stream",
  "futures",
  "prost",
  "protoc-bin-vendored",
@@ -4400,6 +4401,7 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "url",
+ "wiremock",
 ]
 
 [[package]]
