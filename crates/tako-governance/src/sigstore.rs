@@ -514,14 +514,18 @@ impl KeylessVerifier {
     /// stored in an `Arc<AtomicU64>` so this remains race-free under
     /// concurrent verifies.
     pub fn set_rekor_min_tree_size(&self, n: u64) {
-        self.rekor_min_tree_size.store(n, Ordering::Relaxed);
+        // Phase 11.A H1 — `Release` pairs with the `Acquire` load in
+        // `verify_bundle`'s freshness-anchor advance, establishing a
+        // happens-before edge across threads that share the verifier.
+        self.rekor_min_tree_size.store(n, Ordering::Release);
     }
 
     /// Phase 9.B — read the current high-water mark on the Rekor
     /// checkpoint freshness anchor. Returns `0` when no checkpoint
     /// has been observed and no seed value was set.
     pub fn rekor_max_tree_size(&self) -> u64 {
-        self.rekor_min_tree_size.load(Ordering::Relaxed)
+        // Phase 11.A H1 — `Acquire` symmetrical with `set_…`'s `Release`.
+        self.rekor_min_tree_size.load(Ordering::Acquire)
     }
 
     /// Verify a keyless bundle and return the parsed [`Catalogue`].
@@ -614,15 +618,34 @@ impl KeylessVerifier {
                 // across verify calls on this verifier. A smaller
                 // value means the operator is being shown a stale or
                 // forked tree.
-                let prev = self.rekor_min_tree_size.load(Ordering::Relaxed);
-                if checkpoint.tree_size < prev {
-                    return Err(TakoError::Invalid(format!(
-                        "sigstore: rekor checkpoint tree_size {} < previously observed {}",
-                        checkpoint.tree_size, prev,
-                    )));
+                //
+                // Phase 11.A H1 — race-free advance via
+                // `compare_exchange_weak`. The previous load + compare
+                // + `fetch_max` triple opened a TOCTOU window where
+                // thread A could read `prev = 10`, yield, and then
+                // accept a checkpoint with `tree_size = 15` after
+                // thread B had already advanced the anchor to 20.
+                // The CAS loop re-reads on every retry so the rollback
+                // check is always against the latest observed value.
+                let mut prev = self.rekor_min_tree_size.load(Ordering::Acquire);
+                loop {
+                    if checkpoint.tree_size < prev {
+                        return Err(TakoError::Invalid(format!(
+                            "sigstore: rekor checkpoint tree_size {} < previously observed {}",
+                            checkpoint.tree_size, prev,
+                        )));
+                    }
+                    let next = checkpoint.tree_size.max(prev);
+                    match self.rekor_min_tree_size.compare_exchange_weak(
+                        prev,
+                        next,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => break,
+                        Err(observed) => prev = observed,
+                    }
                 }
-                self.rekor_min_tree_size
-                    .fetch_max(checkpoint.tree_size, Ordering::Relaxed);
             }
         }
 
