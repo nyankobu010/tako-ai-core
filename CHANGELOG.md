@@ -9,6 +9,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.10.0] - 2026-04-30
+
+Phase 9 — cost-aware streaming guards + transparency-log freshness +
+protocol completeness + router-driven AB-MCTS. Closes the four
+"Phase 9 candidate" follow-ups flagged in `## [0.9.0]`'s release
+notes. Plan: [PLAN_PHASE9.md](PLAN_PHASE9.md).
+
+### Added
+
+- **Streaming-aware `LlmJudgeGuard`** (Phase 9.A): the v0.9.0
+  `LlmJudgeGuard` deliberately kept the default
+  `evaluate_streaming → Ok(None)` because per-delta judge calls are
+  too costly to make default. Phase 9.A adds an explicit opt-in:
+  - Two new builder methods at
+    [crates/tako-orchestrator/src/self_caller.rs](crates/tako-orchestrator/src/self_caller.rs) —
+    `with_streaming_min_chars(usize)` and
+    `with_streaming_every_n(u32)`. Default `min_chars = usize::MAX`
+    keeps streaming evaluation disabled (preserves v0.9.0 behaviour).
+  - The `evaluate_streaming` override returns `Ok(None)` when
+    `partial.len() < min_chars` or when an internal
+    `Arc<AtomicU32>` counter says "skip this delta". Otherwise
+    runs the same `pre_check → chat → record → parse_confidence`
+    body as `evaluate` and returns `Ok(Some(score))`. Counter is
+    interior so the trait method stays `&self`-immutable.
+  - Refactor: judge-call body lifts into a private `run_judge`
+    helper shared by `evaluate` and `evaluate_streaming`.
+  - PyO3: `tako._native.LlmJudgeGuard.__init__` gains
+    `streaming_min_chars=` and `streaming_every_n=` kwargs;
+    forwarded through `tako.guards.LlmJudge`. Type stubs in
+    `_native.pyi` updated.
+  - 3 new Rust integration tests in
+    `crates/tako-orchestrator/tests/self_caller.rs::streaming_judge`:
+    opt-in basic flow (single judge call when partial crosses
+    threshold), default-no-streaming (zero judge calls), every-N
+    counting (six over-threshold partials → 2 judge calls). 2 new
+    Python smoke tests in `tests/python/test_phase9_streaming_judge.py`.
+
+- **Rekor checkpoint freshness anchor** (Phase 9.B): closes the
+  third leg of the transparency-log story alongside Phase 6's SET
+  check, Phase 7's inclusion proof, and Phase 8's checkpoint
+  signature. Phase 9 adds a trust-on-first-use guard over the
+  checkpoint's `tree_size`:
+  - New field on `KeylessVerifier`:
+    `rekor_min_tree_size: Arc<AtomicU64>` — high-water mark of the
+    largest `tree_size` observed on this verifier instance. After
+    each successful checkpoint signature + root-hash check,
+    `verify_bundle` asserts `checkpoint.tree_size >= prev` and
+    atomically advances the mark via `fetch_max`. A smaller value
+    is rejected with `TakoError::Invalid(...)` containing the
+    rollback details.
+  - Two new public methods at
+    [crates/tako-governance/src/sigstore.rs](crates/tako-governance/src/sigstore.rs) —
+    `with_rekor_min_tree_size(u64)` (seed from a persisted state
+    file at startup) and `rekor_max_tree_size() -> u64` (read back
+    after each verify to write out). Persistence layer is
+    intentionally out-of-band; verifier itself is in-memory.
+  - PyO3: `tako._native.KeylessVerifier.__init__` gains
+    `rekor_min_tree_size=` kwarg; new method
+    `rekor_max_tree_size()` returns `int`. Forward through
+    `tako.sigstore.KeylessVerifier`. Type stubs updated.
+  - 3 new Rust tests in
+    `crates/tako-governance/tests/sigstore.rs::checkpoint_freshness`:
+    monotonic ascent (5 → 7 advances mark), rollback rejected
+    (post-10 verify of 5 fails with clear error and leaves mark
+    unchanged), seed-enforced-from-construction (post-seed-10
+    verify of 5 fails on first observation). 2 Python smoke tests.
+    The existing `checkpoint` mod's helpers were promoted to
+    `pub(super)` for reuse.
+
+- **Named `tako.*` SSE events for `VerifierScore` + `Recursion`**
+  (Phase 9.C): the Phase 8 enum variants had no path to OpenAI-compat
+  clients; the wildcard arm in
+  [crates/tako-compat/src/sse.rs](crates/tako-compat/src/sse.rs)
+  silently dropped them. Phase 9.C wires them to the SSE
+  sidechannel that OpenAI clients ignore per the SSE spec
+  (unknown `event:` lines):
+  - New public function `event_to_tako_extensions(&OrchEvent) ->
+    Vec<(&'static str, String)>` returns
+    `("tako.verifier_score", json_payload)` for `VerifierScore`
+    and `("tako.recursion", json_payload)` for `Recursion`. All
+    other variants return `Vec::new()` — keeps the OpenAI mapping
+    in `event_to_payloads` pure.
+  - The route stream builder at
+    [crates/tako-compat/src/routes.rs](crates/tako-compat/src/routes.rs)
+    now emits each named extension via
+    `SseEvent::default().event(name).data(payload)` BEFORE the
+    related OpenAI `data:` chunk for the same `OrchEvent`, so a
+    verifier score is observable ahead of any text frame.
+  - 3 new unit tests in `sse.rs::tests` covering the
+    VerifierScore / Recursion shapes plus a wildcard regression
+    (opaque variants emit no extension). 1 new integration test in
+    `tests/server.rs::stream_emits_named_tako_extension_for_verifier_score`
+    asserting the wire format includes
+    `event: tako.verifier_score\ndata: {...}\n\n` ahead of the
+    OpenAI assistant-text chunk via a `ScriptedOrchestrator`
+    fixture. The OpenAI SDK conformance test continues to pass.
+
+- **AB-MCTS router-driven branch expansion** (Phase 9.D): closes
+  the most design-heavy Phase 9 candidate. AB-MCTS held a single
+  `provider: Arc<dyn LlmProvider>` and used it for every rollout;
+  Phase 9 mirrors the SingleAgent `.candidate(p)` + `.router(r)`
+  pattern, with the router running **once per rollout** (per
+  branch expansion) — the natural granularity for an MCTS search
+  tree.
+  - New builder methods on `AbMctsBuilder` at
+    [crates/tako-orchestrator/src/ab_mcts.rs](crates/tako-orchestrator/src/ab_mcts.rs):
+    `.candidate(Arc<dyn LlmProvider>)` (additional providers the
+    router may pick) and `.router(Arc<dyn Router>)`. Without
+    `router`, candidates are ignored and every rollout uses the
+    primary provider — backwards-compatible v0.9.0 behaviour
+    (regression-tested).
+  - New free helper `pick_rollout_provider` shared by `iterate`
+    (the run path) and `stream`, mirroring Phase 8's
+    `rollout_static` extraction pattern. Reuses the existing
+    `tako_core::Router` trait verbatim — no new types.
+  - PyO3: `tako._native.AbMcts.__init__` gains optional
+    `candidates=` (list of provider `Py<PyAny>`) and `router=` (a
+    `tako._native.RegexRouter` or `OnnxRouter`). Forward through
+    `tako.AbMcts(...)` with type-checking on candidates. Type
+    stubs updated.
+  - 3 new Rust tests in
+    `crates/tako-orchestrator/tests/ab_mcts.rs::branch_routing`:
+    a `ToggleRouter` alternates across two providers and both
+    counters end > 0; a no-router build leaves the candidate's
+    counter at 0; a `FailingRouter`'s `Err(...)` propagates from
+    `AbMcts::run`. 3 Python smoke tests covering kwarg acceptance,
+    type rejection, and the no-router regression.
+
+### Changed
+
+- **README feature matrix + roadmap brought current to Phase 9**
+  (Phase 9.E). Matrix had been stuck at Phase 6 since v0.7.0
+  (Phases 7–9 lived only in CHANGELOG/PLAN). Adds Phase 7 / 8 / 9
+  columns, a new "Streaming guards" row tracking the
+  `evaluate_streaming` surface, and Phase 7 / 8 / 9 bullets in the
+  Roadmap section.
+- Workspace package version: `0.9.0` → `0.10.0` across
+  `Cargo.toml`, `pyproject.toml`,
+  `python/tako/__init__.py`,
+  `tests/python/test_smoke.py`.
+- New per-phase plan doc: `PLAN_PHASE9.md`. PLAN.md index row for
+  Phase 9 flipped to `done (2026-04-30)`; Phase 10 candidate stub
+  added.
+
+### Notes
+
+- **On-disk `JsonStateStore` for Rekor freshness** is intentionally
+  out of scope: the 9.B API surface is forward-compatible with a
+  follow-on helper. Operators today seed/persist around
+  `rekor_max_tree_size()` from their own state layer.
+- **Streaming `tako-compat` extension events for tool-call
+  lifecycle** are tracked for Phase 10 — the 9.C plumbing
+  trivially generalises but no consumer needs them yet.
+- **Per-step routing inside an AB-MCTS rollout** stays out of
+  scope — branch-level is the right granularity; per-step would
+  silently mask branch routing signals and break the "consistent
+  provider state inside one branch" invariant.
+
 ## [0.9.0] - 2026-04-29
 
 Phase 8 — search streaming + transparency-log completeness. Closes
@@ -996,7 +1154,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.6.0...v0.7.0

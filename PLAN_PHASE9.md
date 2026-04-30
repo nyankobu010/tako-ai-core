@@ -1,6 +1,6 @@
 # PLAN — Phase 9 (cost-aware streaming guards + transparency-log freshness + protocol completeness + router-driven AB-MCTS)
 
-> **Status: in progress.** Successor to [PLAN_PHASE8.md](PLAN_PHASE8.md).
+> **Status: complete (v0.10.0, 2026-04-30).** Successor to [PLAN_PHASE8.md](PLAN_PHASE8.md).
 > Closes the four Phase 9 candidates listed in [PLAN.md](PLAN.md)'s
 > roadmap as of v0.9.0. Target tag: **v0.10.0**.
 

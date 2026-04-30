@@ -27,24 +27,33 @@ synopsis and quickstart.
 | 6 — Production hardening, continued | v0.7.0 | done (2026-04-29) | [PLAN_PHASE6.md](PLAN_PHASE6.md) | [`## [0.7.0]`](CHANGELOG.md) |
 | 7 — Sigstore + streaming closures | v0.8.0 | done (2026-04-29) | [PLAN_PHASE7.md](PLAN_PHASE7.md) | [`## [0.8.0]`](CHANGELOG.md) |
 | 8 — Search streaming + transparency-log completeness | v0.9.0 | done (2026-04-29) | [PLAN_PHASE8.md](PLAN_PHASE8.md) | [`## [0.9.0]`](CHANGELOG.md) |
-| 9 — Cost-aware streaming guards + log freshness + protocol completeness + router-driven AB-MCTS | v0.10.0 | in progress | [PLAN_PHASE9.md](PLAN_PHASE9.md) | [`## [Unreleased]`](CHANGELOG.md) |
+| 9 — Cost-aware streaming guards + log freshness + protocol completeness + router-driven AB-MCTS | v0.10.0 | done (2026-04-30) | [PLAN_PHASE9.md](PLAN_PHASE9.md) | [`## [0.10.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 9 candidates (indicative, not yet committed)
+### Phase 10 candidates (indicative, not yet committed)
 
-- **Streaming `LlmJudgeGuard`** — per-N-delta judge calls behind an
-  explicit opt-in (cost-aware streaming-aware judging).
-- **Rekor log-state continuity / checkpoint freshness anchor** —
-  trust-on-first-use over checkpoint `tree_size` to refuse rollback.
-- **Native `tako-compat` protocol extension** exposing
-  `verifier_score` / `recursion` events to non-OpenAI clients (a
-  `tako.*` SSE event type alongside the OpenAI `data:` frames).
-- **AB-MCTS with `Trinity`-style learned routing per branch** —
-  router-driven branch expansion.
+- **On-disk `JsonStateStore` for Rekor freshness.** Phase 9.B
+  shipped the in-memory anchor; the 9.B API surface is
+  forward-compatible with a helper that loads/persists
+  `rekor_max_tree_size()` to a JSON state file across process
+  restarts.
+- **Verifier-score event for non-AB-MCTS orchestrators.** `Trinity`
+  and `Conductor` could emit `OrchEvent::VerifierScore` if extended
+  with a verifier; lands when a concrete consumer asks.
+- **Streaming `tako-compat` extension events for tool-call
+  lifecycle.** The 9.C plumbing trivially generalises to
+  `tako.tool_call_start` / `tako.tool_call_result` named events.
+- **Vision / image content support across providers.** Largest
+  untouched item from the [Backlog](#backlog-uncommitted) — Anthropic,
+  Vertex, and Bedrock all have stub markers.
+- **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
+  promised in Phase 3 PLAN, still raise `NotImplementedError`.
+- **MCP Streamable HTTP — SSE upgrade + `Mcp-Session-Id` lifecycle.**
+  Promised in Phase 2; transport still yields an empty stream.
 
 ### Beyond (speculative)
 
