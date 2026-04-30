@@ -54,7 +54,7 @@ use tako_core::{TakoError, ToolSchema};
 use x509_cert::Certificate;
 use x509_cert::der::{Decode, DecodePem, Encode, asn1::Ia5StringRef};
 use x509_cert::ext::pkix::name::GeneralName;
-use x509_cert::ext::pkix::{ExtendedKeyUsage, SubjectAltName};
+use x509_cert::ext::pkix::{BasicConstraints, ExtendedKeyUsage, SubjectAltName};
 
 /// A verified MCP tool catalogue.
 ///
@@ -166,6 +166,18 @@ const FULCIO_OIDC_ISSUER_V1: ObjectIdentifier =
 /// `OtherName` GeneralName; included for forward compatibility.
 const FULCIO_OIDC_ISSUER_V2: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.8");
+
+// Phase 11.A M3 — known-handled X.509 v3 extension OIDs used for the
+// critical-extension whitelist in `verify_chain`. Any other extension
+// marked `critical: true` on a chain hop is rejected (RFC 5280 §4.2).
+const ID_CE_AUTHORITY_KEY_IDENTIFIER: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("2.5.29.35");
+const ID_CE_SUBJECT_KEY_IDENTIFIER: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("2.5.29.14");
+const ID_CE_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15");
+const ID_CE_SUBJECT_ALT_NAME: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.17");
+const ID_CE_BASIC_CONSTRAINTS: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.19");
+const ID_CE_EXT_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.37");
 
 /// Wire format for a tako keyless bundle.
 ///
@@ -849,12 +861,25 @@ fn chain_signing_scheme(
 /// `intermediates`, finally in `roots`. A self-signed cert (subject ==
 /// issuer) is treated as a root anchor and accepted only if it appears
 /// in `trust_root.roots`.
+///
+/// Phase 11.A M3 — at every hop, after the issuer is selected the
+/// chosen cert is checked for `BasicConstraints: cA == TRUE` (and
+/// `pathLenConstraint`, when present). Any unrecognised
+/// `critical: true` extension on the issuer rejects the chain
+/// (RFC 5280 §4.2). The leaf cert itself is exempt — it does not sign
+/// other certs.
 fn verify_chain(
     leaf: &Certificate,
     bundle_intermediates: &[Certificate],
     trust_root: &TrustRoot,
 ) -> Result<(), TakoError> {
     let mut current = leaf;
+    // Phase 11.A M3 — count of intermediates already walked through,
+    // i.e. the number of non-self-issued intermediate certs strictly
+    // between the issuer about to be selected and the leaf. RFC 5280
+    // §4.2.1.9 requires this to be ≤ each issuer's pathLenConstraint.
+    let mut intermediates_below_next_issuer: u32 = 0;
+
     for hop in 0..16 {
         let _ = hop;
         check_validity_now(current)?;
@@ -866,6 +891,11 @@ fn verify_chain(
                 // Verify the self-signature against itself as a sanity
                 // check; root certs are signed by their own private key.
                 verify_one_signature(current, current)?;
+                // The self-signed root must itself be a CA. Bail with
+                // an explicit basicConstraints message rather than
+                // silently accepting a non-CA self-signed leaf.
+                check_issuer_is_ca(current)?;
+                check_critical_extensions_known(current)?;
                 return Ok(());
             }
             return Err(TakoError::Invalid(
@@ -897,16 +927,90 @@ fn verify_chain(
 
         verify_one_signature(current, issuer)?;
 
+        // Phase 11.A M3 — every issuer must be a CA, with no
+        // unrecognised critical extensions.
+        let bc = check_issuer_is_ca(issuer)?;
+        check_critical_extensions_known(issuer)?;
+
+        // Phase 11.A M3 — pathLenConstraint applies to the issuer just
+        // selected: the count of intermediates strictly between it
+        // and the leaf must not exceed the constraint.
+        if let Some(budget) = bc.path_len_constraint
+            && intermediates_below_next_issuer > u32::from(budget)
+        {
+            return Err(TakoError::Invalid(format!(
+                "sigstore: chain pathLenConstraint exceeded \
+                 (issuer budget {budget}, {intermediates_below_next_issuer} intermediate(s) below it)"
+            )));
+        }
+
         // If the issuer is a pinned root, we're done.
         if trust_root.roots.iter().any(|r| cert_eq(r, issuer)) {
             check_validity_now(issuer)?;
             return Ok(());
         }
+
+        // Walking up through an intermediate — the next iteration's
+        // issuer will sit one intermediate further from the leaf.
+        intermediates_below_next_issuer = intermediates_below_next_issuer.saturating_add(1);
         current = issuer;
     }
     Err(TakoError::Invalid(
         "sigstore: chain depth exceeded 16 hops without reaching a pinned root".into(),
     ))
+}
+
+/// Phase 11.A M3 — confirm that `issuer` is itself a CA per
+/// RFC 5280 §4.2.1.9. Returns the parsed `BasicConstraints` so the
+/// caller can also inspect `path_len_constraint`.
+fn check_issuer_is_ca(issuer: &Certificate) -> Result<BasicConstraints, TakoError> {
+    let bc_pair = issuer
+        .tbs_certificate
+        .get::<BasicConstraints>()
+        .map_err(|e| {
+            TakoError::Invalid(format!("sigstore: chain BasicConstraints parse: {e}"))
+        })?;
+    let Some((_, bc)) = bc_pair else {
+        return Err(TakoError::Invalid(
+            "sigstore: chain issuer missing BasicConstraints (RFC 5280 §4.2.1.9)".into(),
+        ));
+    };
+    if !bc.ca {
+        return Err(TakoError::Invalid(
+            "sigstore: chain issuer has BasicConstraints cA=FALSE (not a CA)".into(),
+        ));
+    }
+    Ok(bc)
+}
+
+/// Phase 11.A M3 — RFC 5280 §4.2 mandates rejection of any unrecognised
+/// extension marked `critical: TRUE`. tako recognises the standard
+/// PKIX extensions plus the two Fulcio OIDs already parsed by the
+/// keyless verifier; anything else marked critical fails closed.
+fn check_critical_extensions_known(cert: &Certificate) -> Result<(), TakoError> {
+    let Some(exts) = cert.tbs_certificate.extensions.as_ref() else {
+        return Ok(());
+    };
+    for ext in exts {
+        if !ext.critical {
+            continue;
+        }
+        let recognised = ext.extn_id == ID_CE_BASIC_CONSTRAINTS
+            || ext.extn_id == ID_CE_KEY_USAGE
+            || ext.extn_id == ID_CE_EXT_KEY_USAGE
+            || ext.extn_id == ID_CE_SUBJECT_ALT_NAME
+            || ext.extn_id == ID_CE_SUBJECT_KEY_IDENTIFIER
+            || ext.extn_id == ID_CE_AUTHORITY_KEY_IDENTIFIER
+            || ext.extn_id == FULCIO_OIDC_ISSUER_V1
+            || ext.extn_id == FULCIO_OIDC_ISSUER_V2;
+        if !recognised {
+            return Err(TakoError::Invalid(format!(
+                "sigstore: chain cert carries unrecognised critical extension OID `{}`",
+                ext.extn_id,
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Verify `child.signature` over `child.tbs_certificate` using

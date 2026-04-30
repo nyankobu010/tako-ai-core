@@ -540,6 +540,294 @@ mod chain {
             "expected chain-validation error, got: {msg}"
         );
     }
+
+    /// Phase 11.A M3 — a chain whose "intermediate" cert is not a CA
+    /// (`BasicConstraints: cA=FALSE`) must be rejected. Without this
+    /// check tako would silently walk through any operator-supplied
+    /// non-CA leaf as if it were an intermediate, undermining the
+    /// trust root's curated guarantee.
+    #[test]
+    fn chain_rejects_non_ca_intermediate() {
+        let manifest = sample_manifest();
+        let issuer_uri = "https://token.actions.githubusercontent.com";
+        let san_uri = "https://github.com/example/m3/non-ca/x.yml@refs/heads/main";
+
+        let now = OffsetDateTime::now_utc();
+        let later = now + time::Duration::hours(1);
+        let earlier = now - time::Duration::minutes(5);
+
+        // Root CA (legitimate).
+        let root_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut root_params = CertificateParams::new(Vec::default()).unwrap();
+        root_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        root_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-root-m3");
+        root_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
+        root_params.not_before = earlier;
+        root_params.not_after = later;
+        let root_cert = root_params.clone().self_signed(&root_kp).unwrap();
+        let root_pem = root_cert.pem();
+        let root_issuer: Issuer<'static, KeyPair> = Issuer::new(root_params, root_kp);
+
+        // "Intermediate" — but built with IsCa::ExplicitNoCa so the
+        // BasicConstraints extension carries cA=FALSE.
+        let inter_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut inter_params = CertificateParams::new(Vec::default()).unwrap();
+        inter_params.is_ca = IsCa::ExplicitNoCa;
+        inter_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-non-ca-intermediate");
+        inter_params.use_authority_key_identifier_extension = true;
+        inter_params.not_before = earlier;
+        inter_params.not_after = later;
+        let inter_cert = inter_params
+            .clone()
+            .signed_by(&inter_kp, &root_issuer)
+            .unwrap();
+        let inter_pem = inter_cert.pem();
+        let inter_issuer: Issuer<'static, KeyPair> = Issuer::new(inter_params, inter_kp);
+
+        // Leaf "signed by" the non-CA intermediate.
+        let leaf_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut leaf_params = CertificateParams::default();
+        leaf_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-leaf-m3");
+        leaf_params.subject_alt_names = vec![SanType::URI(san_uri.try_into().unwrap())];
+        leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
+        leaf_params.use_authority_key_identifier_extension = true;
+        leaf_params.not_before = earlier;
+        leaf_params.not_after = later;
+        let oid_iter: Vec<u64> = FULCIO_OIDC_ISSUER_V1.to_vec();
+        let mut oidc_ext =
+            CustomExtension::from_oid_content(&oid_iter, issuer_uri.as_bytes().to_vec());
+        oidc_ext.set_criticality(false);
+        leaf_params.custom_extensions = vec![oidc_ext];
+        let leaf_cert = leaf_params.signed_by(&leaf_kp, &inter_issuer).unwrap();
+
+        let pkcs8 = leaf_kp.serialize_der();
+        let kp = sigstore::crypto::signing_key::SigStoreKeyPair::from_der(&pkcs8).unwrap();
+        let signer = kp
+            .to_sigstore_signer(&SigningScheme::ECDSA_P256_SHA256_ASN1)
+            .unwrap();
+        let sig = signer.sign(&manifest).unwrap();
+        let bundle_json = serde_json::to_vec(&KeylessBundle {
+            leaf_cert_pem: leaf_cert.pem(),
+            signature_b64: B64.encode(&sig),
+            chain_pem: Some(inter_pem),
+            rekor: None,
+        })
+        .unwrap();
+
+        let trust_root = TrustRoot::from_pem(root_pem.as_bytes(), None).unwrap();
+        let verifier = KeylessVerifier::new(IdentityPolicy::exact(issuer_uri, san_uri))
+            .with_trust_root(trust_root);
+        let err = verifier.verify_bundle(&manifest, &bundle_json).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("BasicConstraints") || msg.contains("not a CA"),
+            "expected non-CA-intermediate rejection, got: {msg}"
+        );
+    }
+
+    /// Phase 11.A M3 — a chain whose intermediate carries an unknown
+    /// `critical: TRUE` extension must be rejected per RFC 5280 §4.2.
+    /// Without this check, a CA could smuggle policy data through tako
+    /// silently.
+    #[test]
+    fn chain_rejects_unknown_critical_extension_on_intermediate() {
+        let manifest = sample_manifest();
+        let issuer_uri = "https://token.actions.githubusercontent.com";
+        let san_uri = "https://github.com/example/m3/critical-ext/x.yml@refs/heads/main";
+
+        let now = OffsetDateTime::now_utc();
+        let later = now + time::Duration::hours(1);
+        let earlier = now - time::Duration::minutes(5);
+
+        let root_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut root_params = CertificateParams::new(Vec::default()).unwrap();
+        root_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        root_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-root-m3-critical");
+        root_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
+        root_params.not_before = earlier;
+        root_params.not_after = later;
+        let root_cert = root_params.clone().self_signed(&root_kp).unwrap();
+        let root_pem = root_cert.pem();
+        let root_issuer: Issuer<'static, KeyPair> = Issuer::new(root_params, root_kp);
+
+        // Intermediate with an unknown critical extension OID
+        // (1.2.3.4.5.6.7 — a private OID we just made up).
+        let inter_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut inter_params = CertificateParams::new(Vec::default()).unwrap();
+        inter_params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+        inter_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-intermediate-critical-ext");
+        inter_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
+        inter_params.use_authority_key_identifier_extension = true;
+        inter_params.not_before = earlier;
+        inter_params.not_after = later;
+        let unknown_oid: Vec<u64> = vec![1, 2, 3, 4, 5, 6, 7];
+        let mut unknown_ext = CustomExtension::from_oid_content(&unknown_oid, vec![0xCA, 0xFE]);
+        unknown_ext.set_criticality(true);
+        inter_params.custom_extensions = vec![unknown_ext];
+        let inter_cert = inter_params
+            .clone()
+            .signed_by(&inter_kp, &root_issuer)
+            .unwrap();
+        let inter_pem = inter_cert.pem();
+        let inter_issuer: Issuer<'static, KeyPair> = Issuer::new(inter_params, inter_kp);
+
+        let leaf_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut leaf_params = CertificateParams::default();
+        leaf_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-leaf-m3-critical");
+        leaf_params.subject_alt_names = vec![SanType::URI(san_uri.try_into().unwrap())];
+        leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
+        leaf_params.use_authority_key_identifier_extension = true;
+        leaf_params.not_before = earlier;
+        leaf_params.not_after = later;
+        let oid_iter: Vec<u64> = FULCIO_OIDC_ISSUER_V1.to_vec();
+        let mut oidc_ext =
+            CustomExtension::from_oid_content(&oid_iter, issuer_uri.as_bytes().to_vec());
+        oidc_ext.set_criticality(false);
+        leaf_params.custom_extensions = vec![oidc_ext];
+        let leaf_cert = leaf_params.signed_by(&leaf_kp, &inter_issuer).unwrap();
+
+        let pkcs8 = leaf_kp.serialize_der();
+        let kp = sigstore::crypto::signing_key::SigStoreKeyPair::from_der(&pkcs8).unwrap();
+        let signer = kp
+            .to_sigstore_signer(&SigningScheme::ECDSA_P256_SHA256_ASN1)
+            .unwrap();
+        let sig = signer.sign(&manifest).unwrap();
+        let bundle_json = serde_json::to_vec(&KeylessBundle {
+            leaf_cert_pem: leaf_cert.pem(),
+            signature_b64: B64.encode(&sig),
+            chain_pem: Some(inter_pem),
+            rekor: None,
+        })
+        .unwrap();
+
+        let trust_root = TrustRoot::from_pem(root_pem.as_bytes(), None).unwrap();
+        let verifier = KeylessVerifier::new(IdentityPolicy::exact(issuer_uri, san_uri))
+            .with_trust_root(trust_root);
+        let err = verifier.verify_bundle(&manifest, &bundle_json).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unrecognised critical extension"),
+            "expected unknown-critical-extension rejection, got: {msg}"
+        );
+    }
+
+    /// Phase 11.A M3 — a chain that walks more intermediates than an
+    /// upstream `pathLenConstraint` permits must be rejected. We
+    /// build leaf → I1 → I2(pathLen=0) → root, where I2 carries
+    /// `pathLen=0` but I1 sits between I2 and the leaf, violating
+    /// the constraint by 1.
+    #[test]
+    fn chain_rejects_path_len_constraint_violation() {
+        let manifest = sample_manifest();
+        let issuer_uri = "https://token.actions.githubusercontent.com";
+        let san_uri = "https://github.com/example/m3/path-len/x.yml@refs/heads/main";
+
+        let now = OffsetDateTime::now_utc();
+        let later = now + time::Duration::hours(1);
+        let earlier = now - time::Duration::minutes(5);
+
+        let root_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut root_params = CertificateParams::new(Vec::default()).unwrap();
+        root_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        root_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-root-m3-pathlen");
+        root_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
+        root_params.not_before = earlier;
+        root_params.not_after = later;
+        let root_cert = root_params.clone().self_signed(&root_kp).unwrap();
+        let root_pem = root_cert.pem();
+        let root_issuer: Issuer<'static, KeyPair> = Issuer::new(root_params, root_kp);
+
+        // I2: pathLen=0 (no intermediates may follow it toward the leaf).
+        let i2_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut i2_params = CertificateParams::new(Vec::default()).unwrap();
+        i2_params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+        i2_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-i2-pathlen-0");
+        i2_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
+        i2_params.use_authority_key_identifier_extension = true;
+        i2_params.not_before = earlier;
+        i2_params.not_after = later;
+        let i2_cert = i2_params.clone().signed_by(&i2_kp, &root_issuer).unwrap();
+        let i2_pem = i2_cert.pem();
+        let i2_issuer: Issuer<'static, KeyPair> = Issuer::new(i2_params, i2_kp);
+
+        // I1: intermediate sitting *below* I2 — its presence violates
+        // I2's pathLen=0 constraint.
+        let i1_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut i1_params = CertificateParams::new(Vec::default()).unwrap();
+        i1_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        i1_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-i1-below-pathlen-0");
+        i1_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
+        i1_params.use_authority_key_identifier_extension = true;
+        i1_params.not_before = earlier;
+        i1_params.not_after = later;
+        let i1_cert = i1_params.clone().signed_by(&i1_kp, &i2_issuer).unwrap();
+        let i1_pem = i1_cert.pem();
+        let i1_issuer: Issuer<'static, KeyPair> = Issuer::new(i1_params, i1_kp);
+
+        let leaf_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut leaf_params = CertificateParams::default();
+        leaf_params
+            .distinguished_name
+            .push(DnType::CommonName, "tako-test-leaf-m3-pathlen");
+        leaf_params.subject_alt_names = vec![SanType::URI(san_uri.try_into().unwrap())];
+        leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
+        leaf_params.use_authority_key_identifier_extension = true;
+        leaf_params.not_before = earlier;
+        leaf_params.not_after = later;
+        let oid_iter: Vec<u64> = FULCIO_OIDC_ISSUER_V1.to_vec();
+        let mut oidc_ext =
+            CustomExtension::from_oid_content(&oid_iter, issuer_uri.as_bytes().to_vec());
+        oidc_ext.set_criticality(false);
+        leaf_params.custom_extensions = vec![oidc_ext];
+        let leaf_cert = leaf_params.signed_by(&leaf_kp, &i1_issuer).unwrap();
+
+        let pkcs8 = leaf_kp.serialize_der();
+        let kp = sigstore::crypto::signing_key::SigStoreKeyPair::from_der(&pkcs8).unwrap();
+        let signer = kp
+            .to_sigstore_signer(&SigningScheme::ECDSA_P256_SHA256_ASN1)
+            .unwrap();
+        let sig = signer.sign(&manifest).unwrap();
+        // Concatenate i1 + i2 PEMs as the bundle's chain.
+        let chain_pem = format!("{i1_pem}{i2_pem}");
+        let bundle_json = serde_json::to_vec(&KeylessBundle {
+            leaf_cert_pem: leaf_cert.pem(),
+            signature_b64: B64.encode(&sig),
+            chain_pem: Some(chain_pem),
+            rekor: None,
+        })
+        .unwrap();
+
+        let trust_root = TrustRoot::from_pem(root_pem.as_bytes(), None).unwrap();
+        let verifier = KeylessVerifier::new(IdentityPolicy::exact(issuer_uri, san_uri))
+            .with_trust_root(trust_root);
+        let err = verifier.verify_bundle(&manifest, &bundle_json).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("pathLenConstraint exceeded"),
+            "expected pathLenConstraint rejection, got: {msg}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
