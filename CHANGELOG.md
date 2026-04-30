@@ -9,6 +9,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.14.0] - 2026-04-30
+
+Phase 13 — clears two more carry-forward items from the Phase 12
+holding pen. Strictly additive: a new public `StateStore` trait
+in `tako-governance` (existing `JsonStateStore` callers keep using
+the inherent sync surface unchanged); a new optional
+`RedisStateStore` for multi-replica deployments (gated behind a new
+`redis` cargo feature); a default-impl `Verifier::evaluate_streaming`
+method (existing impls inherit `Ok(None)` and behave exactly as
+before); per-delta `OrchEvent::VerifierScore` emission in
+`Trinity::stream` when a verifier opts in.
+Plan: [PLAN_PHASE13.md](PLAN_PHASE13.md).
+
+### Added
+
+- **Phase 13.A — `StateStore` trait + `RedisStateStore` for
+  multi-replica deployments.** New public async trait
+  `tako_governance::sigstore_state::StateStore` with required
+  `load` / `save` and default-impl `seed` / `persist`
+  convenience methods. `JsonStateStore` (Phase 10.A) implements
+  the trait via a thin async-over-sync wrapper; the inherent sync
+  surface stays the public Phase 10.A API. New
+  `tako_governance::sigstore_state_redis::RedisStateStore` (gated
+  behind a new `tako-governance/redis` cargo feature; the existing
+  `tako-py/redis` feature now also forwards
+  `tako-governance/redis` and implies `sigstore`) keeps a single
+  shared `tako:sigstore:rekor_min_tree_size` key in Redis.
+  Cross-replica safety lives in a small Lua script enforcing
+  monotonic write — the cross-process analogue of
+  `KeylessVerifier::rekor_max_tree_size`'s in-process
+  `fetch_max` — so a slow replica cannot clobber a higher
+  water-mark with a stale value. No TTL: unlike daily-bucketed
+  `RedisBudgetBackend`, the Rekor anchor is permanent state.
+  Both stores ship as siblings — operator picks based on
+  deployment topology; the trait makes them interchangeable
+  behind `Arc<dyn StateStore>`. Python facade:
+  [tako.sigstore.RedisStateStore](python/tako/sigstore.py)
+  exposes async `connect` / `load` / `save` / `seed` / `persist`
+  via `pyo3_async_runtimes::tokio::future_into_py`. Files:
+  [crates/tako-governance/src/sigstore_state.rs](crates/tako-governance/src/sigstore_state.rs),
+  [crates/tako-governance/src/sigstore_state_redis.rs](crates/tako-governance/src/sigstore_state_redis.rs),
+  [crates/tako-py/src/py_sigstore.rs](crates/tako-py/src/py_sigstore.rs),
+  [python/tako/sigstore.py](python/tako/sigstore.py),
+  [python/tako/_native.pyi](python/tako/_native.pyi). Tests:
+  trait-bound smoke (`fn assert_state_store<T: StateStore>()`),
+  async round-trip on `JsonStateStore`, four `#[ignore]`-gated
+  live-Redis integration tests in
+  [sigstore_state_redis.rs](crates/tako-governance/src/sigstore_state_redis.rs)
+  (round-trip, first-boot, monotonic safety, `with_key` override),
+  Python smoke gated on `hasattr(_native, "RedisStateStore")` plus
+  three live-Redis tests gated on `TAKO_REDIS_TESTS=1` in
+  [tests/python/test_phase13_redis_state_store.py](tests/python/test_phase13_redis_state_store.py).
+- **Phase 13.B — Streaming-aware `Verifier` in `Trinity::stream`.**
+  `tako_core::Verifier` gains an optional
+  `evaluate_streaming(&self, principal, partial) -> Option<f32>`
+  default-impl method (default `Ok(None)`) mirroring Phase 9.A's
+  [`ConfidenceGuard::evaluate_streaming`](crates/tako-core/src/traits/confidence.rs#L54-L60).
+  When attached via the existing `.verifier(...)` builder kwarg,
+  `Trinity::stream`'s SSE accumulation loop now calls
+  `evaluate_streaming(&principal, &cumulative_text)` after each
+  non-empty assistant-text delta and yields an
+  `OrchEvent::VerifierScore` on the same `(step, branch)` as the
+  eventual synthesis-complete final whenever the hook returns
+  `Ok(Some(score))`. The Phase 10.C synthesis-complete
+  `VerifierScore` at the end of the turn is unchanged; partial
+  events are interleaved before it. Consumers distinguish
+  partials from the final by `(step, branch)` repetition.
+  Throttling lives inside the user's verifier impl via local state —
+  same cost-control philosophy as
+  `LlmJudgeGuard::with_streaming_min_chars`, no new builder knobs
+  on `Trinity`. **Conductor's worker dispatch is non-streaming
+  today, so this hook lands only on Trinity** —
+  streaming-aware verifier in Conductor is deferred to a future
+  phase that refactors `dispatch_workers` to surface intra-worker
+  deltas. Default-impl method preserves byte-for-byte parity for
+  verifiers that don't override (`AlwaysScore` plus any downstream
+  user impls). The shipped `RuleBasedVerifier` (and its Python
+  facade `tako.verifiers.RuleBased`) now overrides
+  `evaluate_streaming` so the cheap-heuristic verifier drives the
+  new hook out of the box. Files:
+  [crates/tako-core/src/traits/verifier.rs](crates/tako-core/src/traits/verifier.rs),
+  [crates/tako-orchestrator/src/trinity.rs](crates/tako-orchestrator/src/trinity.rs),
+  [crates/tako-orchestrator/src/verifiers.rs](crates/tako-orchestrator/src/verifiers.rs).
+  Tests:
+  [crates/tako-orchestrator/tests/trinity.rs](crates/tako-orchestrator/tests/trinity.rs)
+  module `streaming_verifier_emits` — counting verifier emits
+  3 partials + 1 final on a 3-delta `StreamingFake`, cumulative
+  buffer length verified, plus a regression that `AlwaysScore`
+  (no override) emits exactly the existing single
+  synthesis-complete event.
+  [crates/tako-orchestrator/src/verifiers.rs](crates/tako-orchestrator/src/verifiers.rs)
+  unit test verifies `RuleBasedVerifier::evaluate_streaming`
+  emits the same proportional score as `score()` would.
+  Python smoke at
+  [tests/python/test_phase13_streaming_verifier.py](tests/python/test_phase13_streaming_verifier.py).
+
+### Fixed
+
+- **Stale `0.12.0` version markers in two Python files.**
+  [python/tako/__init__.py](python/tako/__init__.py) and
+  [tests/python/test_smoke.py](tests/python/test_smoke.py)
+  carried `__version__ = "0.12.0"` while the workspace was on
+  `0.13.0` — Phase 12 oversight. Phase 13 sweeps both forward to
+  `0.14.0` along with the workspace version bump.
+- **Stale Phase 11.A schema field in
+  [tests/python/test_phase10_state_store.py](tests/python/test_phase10_state_store.py).**
+  Test asserted the on-disk JSON shape was
+  `{"rekor_min_tree_size": N}`, but Phase 11.A added a
+  `"version": 1` schema field for forward-incompat detection.
+  Updated the assertion to match the current shape.
+
 ## [0.13.0] - 2026-04-30
 
 Phase 12 — clears two long-standing debts surfaced in the Phase 11
@@ -1548,7 +1659,9 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.9.0...v0.10.0

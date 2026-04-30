@@ -31,17 +31,19 @@ synopsis and quickstart.
 | 10 — Phase 9 follow-on completeness + cross-orchestrator verifier scores + Python provider streaming | v0.11.0 | done (2026-04-30) | [PLAN_PHASE10.md](PLAN_PHASE10.md) | [`## [0.11.0]`](CHANGELOG.md) |
 | 11 — Sigstore security hardening + http-generic provider streaming | v0.12.0 | done (2026-04-30) | [PLAN_PHASE11.md](PLAN_PHASE11.md) | [`## [0.12.0]`](CHANGELOG.md) |
 | 12 — MCP SSE notifications + HttpGeneric Python facade | v0.13.0 | done (2026-04-30) | [PLAN_PHASE12.md](PLAN_PHASE12.md) | [`## [0.13.0]`](CHANGELOG.md) |
+| 13 — Multi-replica `StateStore` + streaming verifier in Trinity | v0.14.0 | done (2026-04-30) | [PLAN_PHASE13.md](PLAN_PHASE13.md) | [`## [0.14.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 13 candidates (indicative, not yet committed)
+### Phase 14 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 12's holding pen — the two debt-clearance items
-that landed in Phase 12 (MCP SSE notifications, HttpGeneric Python
-facade) are now off the list. The remainder:
+Carry-forward from Phase 13's holding pen — the two items that
+landed in Phase 13 (`StateStore` trait + `RedisStateStore`,
+streaming-aware verifier in Trinity) are now off the list. The
+remainder:
 
 - **Vision / image content support across providers.** Anthropic,
   Vertex, and Bedrock all have stub markers; multi-crate
@@ -49,15 +51,12 @@ facade) are now off the list. The remainder:
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
   Sandboxed runner needed.
-- **Redis-backed `StateStore`** — sibling to Phase 10.A's
-  `JsonStateStore` for multi-replica deployments where multiple
-  workers consume the same Rekor freshness anchor. Requires
-  introducing a `StateStore` trait first.
-- **Streaming-aware verifier in Trinity / Conductor.** Phase 10.C
-  emits `VerifierScore` only at synthesis-complete boundaries.
-  Per-delta verifier calls would need the same opt-in cost-control
-  surface as `LlmJudgeGuard::with_streaming_min_chars`. Lands when
-  a concrete consumer asks.
+- **Streaming-aware verifier in Conductor.** Phase 13.B landed the
+  `Verifier::evaluate_streaming` default-impl method and Trinity's
+  per-delta wiring; Conductor's `dispatch_workers().await` returns
+  flat `Vec<WorkerResult>` with no intra-worker delta exposure
+  today. Adding the streaming-verifier hook there requires
+  refactoring worker dispatch to surface deltas mid-flight.
 - **`tako-compat` real auth providers** — Vault / JWT / OIDC,
   beyond `StaticTokens` ([crates/tako-compat/src/auth.rs:5](crates/tako-compat/src/auth.rs#L5)).
 
@@ -94,6 +93,21 @@ where the fix would land.
   `tako.providers.PythonProvider` and the Rust side iterates the
   async generator via `__anext__()`, deserialising each yielded
   dict to a `ChatChunk` via the `kind`-tagged JSON shape.
+- [x] **Multi-replica Rekor freshness anchor.** Closed in Phase
+  13.A (v0.14.0): a new public
+  `tako_governance::sigstore_state::StateStore` async trait plus
+  a `RedisStateStore` impl gated behind a `tako-governance/redis`
+  cargo feature. A small Lua script enforces monotonic write so a
+  slow replica cannot clobber a higher water-mark.
+  `tako.sigstore.RedisStateStore` exposes the same surface from
+  Python.
+- [x] **Streaming-aware `Verifier` in Trinity.** Closed in Phase
+  13.B (v0.14.0): `Verifier::evaluate_streaming` default-impl
+  method on `tako-core` plus per-delta wiring in
+  `Trinity::stream`. `RuleBasedVerifier` overrides the hook so the
+  shipped cheap-heuristic verifier drives partial scores out of
+  the box. Conductor extension still pending — see Phase 14
+  candidates.
 - [ ] **`tako-compat` real auth providers** — Vault / JWT / OIDC.
   Only `StaticTokens` ships.
   [crates/tako-compat/src/auth.rs:5](crates/tako-compat/src/auth.rs#L5).

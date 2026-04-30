@@ -85,24 +85,25 @@ result = orch.run_sync("Quick question: ...")
 
 ## Feature matrix
 
-| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 | Phase 11 | Phase 12 |
-|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|:--------:|:--------:|
-| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | | ➕ Python custom provider streaming | ➕ `http-generic` streaming (`StreamConfig`) | ➕ `tako.providers.HttpGeneric` Python facade |
-| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events | | |
-| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | | | ➕ Streamable HTTP SSE notifications + `Mcp-Session-Id` lifecycle |
-| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | | | |
-| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores | | |
-| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores | | |
-| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | | | |
-| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | | | |
-| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | | | |
-| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | | | |
-| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | | | |
-| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | | | |
-| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | | | |
-| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | | | |
-| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` | ➕ review-driven hardening (race-free anchor; `0o600` state file; `BasicConstraints` + critical-ext checks) | |
-| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | | | |
+| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 | Phase 11 | Phase 12 | Phase 13 |
+|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|:--------:|:--------:|:--------:|
+| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | | ➕ Python custom provider streaming | ➕ `http-generic` streaming (`StreamConfig`) | ➕ `tako.providers.HttpGeneric` Python facade | |
+| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events | | | |
+| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | | | ➕ Streamable HTTP SSE notifications + `Mcp-Session-Id` lifecycle | |
+| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | | | | |
+| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | |
+| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | ➕ streaming `Verifier::evaluate_streaming` |
+| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | | | | |
+| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | | | | |
+| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | | | | |
+| Streaming verifier (`Verifier::evaluate_streaming`) | | | | | | | | | | | | | ✅ default-impl + Trinity per-delta + `RuleBasedVerifier` override |
+| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | | | | |
+| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | | | | |
+| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | | | | |
+| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | | | | |
+| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | | | | |
+| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` | ➕ review-driven hardening (race-free anchor; `0o600` state file; `BasicConstraints` + critical-ext checks) | | ➕ `StateStore` trait + `RedisStateStore` (multi-replica) |
+| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | | | | |
 
 ## Roadmap
 
@@ -192,6 +193,32 @@ result = orch.run_sync("Quick question: ...")
   `Capabilities::supports_streaming`. Both items reuse existing
   patterns (WebSocket transport for SSE, `PyBedrock` for the
   facade); strictly additive — no public API changes shape.
+- **Phase 13 — Multi-replica `StateStore` + streaming-aware
+  `Verifier` in Trinity** *(done, v0.14.0)*: clears two more
+  carry-forward items. (A) New public
+  `tako_governance::sigstore_state::StateStore` async trait with
+  required `load` / `save` and default-impl
+  `seed` / `persist` convenience methods; existing
+  `JsonStateStore` (Phase 10.A) implements it via thin
+  async-over-sync wrappers; new `RedisStateStore` (gated behind a
+  new `tako-governance/redis` cargo feature) keeps a single
+  shared key in Redis with monotonic-write Lua-script safety so
+  a slow replica cannot clobber a higher water-mark — the
+  cross-process analogue of `KeylessVerifier::rekor_max_tree_size`'s
+  in-process `fetch_max`. Both stores ship as siblings;
+  `tako.sigstore.RedisStateStore` mirrors the Python facade.
+  (B) `tako_core::Verifier` gains an optional
+  `evaluate_streaming(&self, principal, partial) -> Option<f32>`
+  default-impl method (default `Ok(None)`). `Trinity::stream`
+  now calls it on each cumulative assistant-text delta and emits
+  per-delta `OrchEvent::VerifierScore` events on the same
+  `(step, branch)` as the eventual synthesis-complete final;
+  consumers distinguish partials from the final by `(step, branch)`
+  repetition. The shipped `RuleBasedVerifier` (and
+  `tako.verifiers.RuleBased`) overrides the hook out of the box.
+  Conductor's worker dispatch is non-streaming today; Conductor
+  extension is deferred. Both items strictly additive — public
+  APIs unchanged shape.
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 
