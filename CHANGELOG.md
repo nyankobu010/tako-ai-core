@@ -9,6 +9,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.15.0] - 2026-04-30
+
+Phase 14 — clears two more carry-forward items from the Phase 13
+holding pen. Strictly additive: streaming-aware `Verifier` in
+`Conductor::stream` mirroring the Phase 13.B Trinity wiring (worker
+fanout now drives `provider.stream(...)` for streaming-capable
+workers and surfaces intra-worker progress via an mpsc); three new
+production-grade `tako-compat::AuthResolver` impls behind cargo
+features (`jwt` / `oidc` / `vault`), each mirrored as a Python
+pyclass under matching `auth-*` wheel-side features.
+Plan: [PLAN_PHASE14.md](PLAN_PHASE14.md).
+
+### Added
+
+- **Phase 14.A — Streaming-aware `Verifier` in `Conductor::stream`.**
+  The Phase 13.B `Verifier::evaluate_streaming` default-impl method
+  now drives per-delta `OrchEvent::VerifierScore` events out of
+  `Conductor::stream` too, on the same `(step, branch=(idx+1))` as
+  the existing Phase 10.C synthesis-complete final score. New
+  internal `WorkerStreamEvent { Delta, Done }` enum and
+  `dispatch_workers_streaming` free function refactor worker
+  fanout: each task now branches on
+  `provider.capabilities().supports_streaming` and, when true,
+  drives `provider.stream(...)` per worker (mirroring the
+  Trinity::stream pattern at trinity.rs:494-595), pushing each
+  cumulative-text delta as `WorkerStreamEvent::Delta { branch,
+  cumulative }` over a `tokio::sync::mpsc::UnboundedSender`. The
+  outer `Conductor::stream` recv-loop calls
+  `verifier.evaluate_streaming(...)` per delta and emits
+  `OrchEvent::VerifierScore` on hits. Non-streaming workers fall
+  through to `provider.chat(...)` — zero partials, one final per
+  worker (byte-for-byte parity with v0.14.0). The 1-based `branch`
+  index is stamped at task construction and travels with the
+  worker, so identity is permit-acquisition-order-independent
+  (verified by
+  `conductor_branch_index_stable_under_concurrent_completion`).
+  `Conductor::run` (non-streaming) is untouched —
+  `dispatch_workers_static` still drives `provider.chat()`. The
+  shipped `RuleBasedVerifier` (Phase 13.B) overrides
+  `evaluate_streaming` already, so Conductor users get the cheap
+  heuristic per-delta hook for free with no code change. Files:
+  [crates/tako-orchestrator/src/conductor.rs](crates/tako-orchestrator/src/conductor.rs).
+  Tests: five new tests in
+  [conductor_streaming_verifier.rs](crates/tako-orchestrator/tests/conductor_streaming_verifier.rs)
+  cover (a) per-delta partials with stable per-worker branch, (b)
+  `AlwaysScore` (default `Ok(None)`) one-final-per-worker
+  regression, (c) non-streaming-worker zero-partial shape, (d)
+  branch identity under concurrent completion, (e) the
+  `ToolCallStart`-precedes-`VerifierScore` ordering invariant.
+  Plus a Python smoke in
+  [tests/python/test_phase14_conductor_streaming_verifier.py](tests/python/test_phase14_conductor_streaming_verifier.py).
+- **Phase 14.B — `tako-compat` real auth providers (JWT / OIDC /
+  Vault).** Three new
+  [`tako_compat::AuthResolver`](crates/tako-compat/src/auth/mod.rs)
+  impls beyond the existing Phase 2 `StaticTokens` placeholder,
+  each gated behind a new optional cargo feature on tako-compat so
+  default builds inherit no new transitive deps:
+  - `jwt` →
+    [`JwtAuthResolver`](crates/tako-compat/src/auth/jwt.rs)
+    (HS256 / RS256 / ES256). Pins the signature algorithm at
+    construction time so `alg=none` and HS/RS confusion attacks
+    fail closed (verified in
+    `hs256_alg_confusion_rejected`). Configurable claim names
+    (default `tenant_id` / `sub` / `roles`); optional `aud` / `iss`
+    enforcement.
+  - `oidc` →
+    [`OidcAuthResolver`](crates/tako-compat/src/auth/oidc.rs).
+    Async `discover(issuer, audience)` constructor fetches the
+    `/.well-known/openid-configuration` doc once and captures the
+    `jwks_uri`. JWKS cache is `Arc<RwLock<JwkSet>>`, refreshed
+    lazily when stale (`refresh_interval`, default 1h). On
+    signature failure / missing `kid`, the resolver
+    force-refreshes the JWKS once and retries (the documented
+    JWKS-rotation mitigation from `oauth2-rs`). HS* and `alg=none`
+    are explicitly rejected; only RSA / ECDSA / PSS / EdDSA pass.
+  - `vault` →
+    [`VaultAuthResolver`](crates/tako-compat/src/auth/vault.rs).
+    Looks up bearer tokens at
+    `<mount>/data/<path_prefix>/<token>` (defaults: `secret` /
+    `tako/tokens`). Positive lookups cache for `cache_ttl`
+    (default 60s); failed lookups are NOT cached (no negative-cache
+    amplification for typos / probes). Vault token rotation
+    (AppRole, k8s auth) is deferred to Phase 15+.
+
+  Module re-org: `auth.rs` → `auth/` directory with one file per
+  impl (`mod.rs` for the trait + re-exports; `static_tokens.rs` for
+  the existing `StaticTokens`, verbatim move via `git mv`
+  preserving blame). The `AuthResolver` trait surface is unchanged
+  — strictly additive.
+
+  **Python facade.** Mirrored as
+  [`tako.compat.JwtAuth`](python/tako/compat.py) /
+  `tako.compat.OidcAuth` / `tako.compat.VaultAuth`, each gated on
+  a matching `auth-*` wheel-side feature. The slim default wheel
+  exposes them as `None` (graceful degradation), so
+  `import tako.compat` works regardless of feature set.
+  [`tako.compat.serve_openai`](python/tako/compat.py) gains an
+  `auth=` parameter; passing both `tokens` and `auth` is a
+  `ValueError` so operators must pick a single mode. Files:
+  [crates/tako-compat/Cargo.toml](crates/tako-compat/Cargo.toml),
+  [crates/tako-compat/src/auth/](crates/tako-compat/src/auth/),
+  [crates/tako-compat/src/lib.rs](crates/tako-compat/src/lib.rs),
+  [crates/tako-py/Cargo.toml](crates/tako-py/Cargo.toml),
+  [crates/tako-py/src/lib.rs](crates/tako-py/src/lib.rs),
+  [crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs),
+  [python/tako/compat.py](python/tako/compat.py).
+
+  Tests: 11 new lib tests in `crates/tako-compat/src/auth/{jwt,
+  oidc, vault}.rs` cover JWT round-trip, signature mismatch,
+  audience mismatch, alg confusion, missing claims, custom claim
+  names; OIDC / Vault have constructor + path-derivation smokes
+  (full integration tests requiring a running OIDC mock /
+  dev-mode Vault are deferred to a follow-on env-gated suite).
+  Plus six new pytest smokes in
+  [tests/python/test_phase14_compat_auth.py](tests/python/test_phase14_compat_auth.py).
+
 ## [0.14.0] - 2026-04-30
 
 Phase 13 — clears two more carry-forward items from the Phase 12

@@ -32,18 +32,19 @@ synopsis and quickstart.
 | 11 — Sigstore security hardening + http-generic provider streaming | v0.12.0 | done (2026-04-30) | [PLAN_PHASE11.md](PLAN_PHASE11.md) | [`## [0.12.0]`](CHANGELOG.md) |
 | 12 — MCP SSE notifications + HttpGeneric Python facade | v0.13.0 | done (2026-04-30) | [PLAN_PHASE12.md](PLAN_PHASE12.md) | [`## [0.13.0]`](CHANGELOG.md) |
 | 13 — Multi-replica `StateStore` + streaming verifier in Trinity | v0.14.0 | done (2026-04-30) | [PLAN_PHASE13.md](PLAN_PHASE13.md) | [`## [0.14.0]`](CHANGELOG.md) |
+| 14 — Streaming verifier in Conductor + tako-compat real auth providers | v0.15.0 | done (2026-04-30) | [PLAN_PHASE14.md](PLAN_PHASE14.md) | [`## [0.15.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 14 candidates (indicative, not yet committed)
+### Phase 15 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 13's holding pen — the two items that
-landed in Phase 13 (`StateStore` trait + `RedisStateStore`,
-streaming-aware verifier in Trinity) are now off the list. The
-remainder:
+Carry-forward from Phase 14's holding pen — the two items that
+landed in Phase 14 (streaming-aware verifier in Conductor;
+`tako-compat` JWT / OIDC / Vault `AuthResolver` impls) are now off
+the list. The remainder:
 
 - **Vision / image content support across providers.** Anthropic,
   Vertex, and Bedrock all have stub markers; multi-crate
@@ -51,14 +52,16 @@ remainder:
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
   Sandboxed runner needed.
-- **Streaming-aware verifier in Conductor.** Phase 13.B landed the
-  `Verifier::evaluate_streaming` default-impl method and Trinity's
-  per-delta wiring; Conductor's `dispatch_workers().await` returns
-  flat `Vec<WorkerResult>` with no intra-worker delta exposure
-  today. Adding the streaming-verifier hook there requires
-  refactoring worker dispatch to surface deltas mid-flight.
-- **`tako-compat` real auth providers** — Vault / JWT / OIDC,
-  beyond `StaticTokens` ([crates/tako-compat/src/auth.rs:5](crates/tako-compat/src/auth.rs#L5)).
+- **Per-delta streaming verifier in AB-MCTS rollouts** — Trinity
+  (Phase 13.B) and Conductor (Phase 14.A) now stream per-delta
+  verifier scores; `AbMcts::stream` calls the verifier per
+  rollout-complete only. Per-delta would require deeper rollout
+  sampler refactor.
+- **Vault dynamic token rotation** for `VaultAuthResolver`
+  (AppRole, Kubernetes auth methods); Phase 14.B uses a static
+  Vault token only.
+- **OIDC token introspection (RFC 7662)** for `OidcAuthResolver`;
+  Phase 14.B does signature validation only.
 
 ### Beyond (speculative)
 
@@ -106,11 +109,25 @@ where the fix would land.
   method on `tako-core` plus per-delta wiring in
   `Trinity::stream`. `RuleBasedVerifier` overrides the hook so the
   shipped cheap-heuristic verifier drives partial scores out of
-  the box. Conductor extension still pending — see Phase 14
-  candidates.
-- [ ] **`tako-compat` real auth providers** — Vault / JWT / OIDC.
-  Only `StaticTokens` ships.
-  [crates/tako-compat/src/auth.rs:5](crates/tako-compat/src/auth.rs#L5).
+  the box.
+- [x] **Streaming-aware `Verifier` in Conductor.** Closed in Phase
+  14.A (v0.15.0): worker fanout in `Conductor::stream` now drives
+  `provider.stream(...)` for streaming-capable workers and surfaces
+  per-delta progress as `OrchEvent::VerifierScore { step,
+  branch=(idx+1), score }` on the same `(step, branch)` as the
+  Phase 10.C synthesis-complete final. Non-streaming workers fall
+  back to `chat()` — zero partials, one final per worker (v0.14.0
+  parity preserved).
+- [x] **`tako-compat` real auth providers — Vault / JWT / OIDC.**
+  Closed in Phase 14.B (v0.15.0): three new
+  `tako_compat::AuthResolver` impls behind cargo features
+  (`jwt` / `oidc` / `vault`), each mirrored as a Python pyclass
+  under matching wheel-side `auth-*` features. `JwtAuthResolver`
+  pins the algorithm at construction so alg-confusion attacks fail
+  closed; `OidcAuthResolver` does discovery + JWKS rotation with a
+  one-shot force-refresh on signature failure;
+  `VaultAuthResolver` looks up bearer tokens in KV v2 with a
+  positive-only TTL cache.
 - [ ] **Vision / image content support across providers.**
   Anthropic ([convert.rs:171](crates/tako-providers/anthropic/src/convert.rs#L171)),
   Vertex ([convert.rs:203](crates/tako-providers/vertex/src/convert.rs#L203)),
