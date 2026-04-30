@@ -46,6 +46,7 @@ class PythonProvider:
         self,
         id: str,
         chat: Any,
+        stream: Any | None = ...,
         max_context_tokens: int | None = ...,
     ) -> None: ...
     def id(self) -> str: ...

@@ -1,5 +1,5 @@
-//! `PyPythonProvider` — a `LlmProvider` whose `chat()` is a Python
-//! async callable.
+//! `PyPythonProvider` — a `LlmProvider` whose `chat()` (and optional
+//! `stream()`) is a Python async callable.
 //!
 //! GIL hand-off:
 //! 1. We attach to Python long enough to call the user's `chat(request)`
@@ -8,12 +8,19 @@
 //!    to a Rust future without holding the GIL.
 //! 3. We `.await` outside of `Python::attach`.
 //! 4. We re-attach to extract the result string.
+//!
+//! Streaming (Phase 10.D) follows the same hand-off applied per chunk:
+//! we attach to Python to call `__anext__()` on the async iterator,
+//! release the GIL while awaiting the resulting coroutine, then
+//! re-attach to deserialise the yielded dict into a `ChatChunk` via
+//! the standard `serde(tag = "kind", rename_all = "snake_case")`
+//! representation. `StopAsyncIteration` cleanly terminates the stream.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyStopAsyncIteration, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde_json::Value;
@@ -29,8 +36,17 @@ use crate::py_provider::ProviderHandle;
 struct PyImpl {
     id: String,
     capabilities: Capabilities,
-    /// `async def chat(request: dict) -> str`
+    /// `async def chat(request: dict) -> str | dict`
     chat_callable: Py<PyAny>,
+    /// Phase 10.D — optional streaming callable. When set, the
+    /// provider's `Capabilities::supports_streaming` is `true` and
+    /// `stream()` invokes this callable. Contract: `async def
+    /// stream(request: dict) -> AsyncIterator[dict]` whose yielded
+    /// dicts deserialise as [`ChatChunk`] via its `kind`-tagged
+    /// JSON shape (e.g. `{"kind": "delta", "text": "..."}` or
+    /// `{"kind": "end", "finish_reason": "stop", "usage": {
+    /// "input_tokens": 5, "output_tokens": 3}}`).
+    stream_callable: Option<Py<PyAny>>,
 }
 
 impl std::fmt::Debug for PyImpl {
@@ -147,12 +163,114 @@ impl LlmProvider for PyImpl {
 
     async fn stream(
         &self,
-        _p: &Principal,
-        _r: ChatRequest,
+        _principal: &Principal,
+        req: ChatRequest,
     ) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
-        Err(TakoError::Invalid(
-            "Python providers do not yet support streaming (Phase 2)".into(),
-        ))
+        if self.stream_callable.is_none() {
+            return Err(TakoError::Invalid(format!(
+                "python provider `{}` did not register a stream callable; pass `stream=...` to PythonProvider(...)",
+                self.id,
+            )));
+        }
+        let stream_callable: Py<PyAny> = Python::attach(|py| {
+            self.stream_callable
+                .as_ref()
+                .map(|s| s.clone_ref(py))
+                .ok_or_else(|| TakoError::Invalid("stream callable disappeared".into()))
+        })?;
+
+        // Step 1 (GIL): build the request dict and call the user's
+        // `stream(request)`. With the canonical `async def stream(req)`
+        // + `yield` shape, the call returns the async generator
+        // immediately (no awaiting required).
+        let py_iter: Py<PyAny> = Python::attach(|py| -> PyResult<Py<PyAny>> {
+            let req_value =
+                serde_json::to_value(&req).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let req_py = json_value_to_py(py, &req_value)?;
+            let result = stream_callable.call1(py, (req_py,))?;
+            // Sanity check: must support __anext__.
+            let bound = result.bind(py);
+            if !bound.hasattr("__anext__")? {
+                return Err(PyTypeError::new_err(
+                    "python provider stream() must return an async iterator (use `async def stream(...)` with `yield`)",
+                ));
+            }
+            Ok(result)
+        })
+        .map_err(|e| stream_invalid_err(&self.id, &req.model, format!("dispatch: {e}")))?;
+
+        let id = self.id.clone();
+        let model = req.model.clone();
+
+        let s = async_stream::try_stream! {
+            loop {
+                // Step 2 (GIL): grab the `__anext__()` coroutine and
+                // convert to a Rust future. Holding the GIL only long
+                // enough to schedule.
+                let next_fut = match Python::attach(|py| -> PyResult<_> {
+                    let bound = py_iter.bind(py);
+                    let coro = bound.call_method0("__anext__")?;
+                    pyo3_async_runtimes::tokio::into_future(coro)
+                }) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        Err(stream_invalid_err(&id, &model, format!("__anext__: {e}")))?;
+                        unreachable!()
+                    }
+                };
+
+                // Step 3 (no GIL): await the chunk.
+                let item = match next_fut.await {
+                    Ok(it) => it,
+                    Err(e) if Python::attach(|py| e.is_instance_of::<PyStopAsyncIteration>(py)) => {
+                        // Clean termination of the async iterator.
+                        break;
+                    }
+                    Err(e) => {
+                        Err(stream_invalid_err(&id, &model, format!("await: {e}")))?;
+                        unreachable!()
+                    }
+                };
+
+                // Step 4 (GIL): deserialise the yielded dict to a
+                // ChatChunk via the standard kind-tagged JSON shape.
+                let chunk: ChatChunk = match Python::attach(|py| -> PyResult<ChatChunk> {
+                    let bound = item.into_bound(py);
+                    let dict = bound
+                        .cast::<PyDict>()
+                        .map_err(|_| PyTypeError::new_err(
+                            "python provider stream must yield dicts (e.g. {'kind': 'delta', 'text': ...})",
+                        ))?;
+                    let value = crate::conv::py_to_json(dict.as_any())?;
+                    serde_json::from_value::<ChatChunk>(value).map_err(|e| {
+                        PyValueError::new_err(format!(
+                            "yielded dict does not match ChatChunk schema: {e}",
+                        ))
+                    })
+                }) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        Err(stream_invalid_err(&id, &model, format!("decode: {e}")))?;
+                        unreachable!()
+                    }
+                };
+                yield chunk;
+            }
+        };
+
+        Ok(Box::pin(s))
+    }
+}
+
+fn stream_invalid_err(provider_id: &str, model: &str, msg: impl Into<String>) -> TakoError {
+    TakoError::Provider {
+        message: format!("Python provider stream raised: {}", msg.into()),
+        source: None,
+        details: Box::new(tako_core::ProviderErrorDetails {
+            provider_id: provider_id.to_string(),
+            model: model.to_string(),
+            ..Default::default()
+        }),
     }
 }
 
@@ -170,12 +288,34 @@ impl PyPythonProvider {
     /// `chat` must be `async def chat(request: dict) -> str | dict`. The
     /// dict form lets the callable report token usage:
     /// `{"text": "...", "input_tokens": 5, "output_tokens": 3}`.
+    ///
+    /// `stream` (Phase 10.D, optional) is `async def stream(request:
+    /// dict) -> AsyncIterator[dict]` whose yielded dicts deserialise
+    /// to [`ChatChunk`] via the standard `kind`-tagged JSON shape:
+    ///
+    /// ```python
+    /// async def stream(request):
+    ///     yield {"kind": "delta", "text": "hello"}
+    ///     yield {"kind": "delta", "text": " world"}
+    ///     yield {"kind": "end", "finish_reason": "stop",
+    ///            "usage": {"input_tokens": 5, "output_tokens": 3}}
+    /// ```
+    ///
+    /// When `stream=` is provided, the provider's
+    /// `Capabilities::supports_streaming` flips to `true` so
+    /// orchestrators that prefer streaming (e.g. Trinity, AB-MCTS)
+    /// will route through the streaming path automatically.
     #[new]
-    #[pyo3(signature = (id, chat, max_context_tokens=None))]
-    fn new(id: String, chat: Py<PyAny>, max_context_tokens: Option<u32>) -> PyResult<Self> {
+    #[pyo3(signature = (id, chat, stream=None, max_context_tokens=None))]
+    fn new(
+        id: String,
+        chat: Py<PyAny>,
+        stream: Option<Py<PyAny>>,
+        max_context_tokens: Option<u32>,
+    ) -> PyResult<Self> {
         let capabilities = Capabilities {
             max_context_tokens: max_context_tokens.unwrap_or(32_000),
-            supports_streaming: false,
+            supports_streaming: stream.is_some(),
             supports_tools: false,
             supports_vision: false,
             supports_json_mode: false,
@@ -186,6 +326,7 @@ impl PyPythonProvider {
             id,
             capabilities,
             chat_callable: chat,
+            stream_callable: stream,
         };
         Ok(Self {
             handle: ProviderHandle {

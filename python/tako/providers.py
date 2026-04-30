@@ -178,15 +178,20 @@ class Bedrock(_ProviderBase):
 # return either a string (assistant text) or a dict
 # {"text": str, "input_tokens"?: int, "output_tokens"?: int}.
 PythonChat = Callable[[dict[str, Any]], Awaitable[Any]]
+# Phase 10.D — `stream` callables receive the same request dict and return
+# an async iterator of dicts (chat chunks). Each dict matches the
+# `tako_core::ChatChunk` `kind`-tagged schema:
+# `{"kind": "delta", "text": "..."}` or
+# `{"kind": "end", "finish_reason": "stop", "usage": {"input_tokens": int,
+# "output_tokens": int}}`.
+PythonStream = Callable[[dict[str, Any]], Any]
 
 
 class PythonProvider(_ProviderBase):
     """LlmProvider whose ``chat()`` is a Python async callable.
 
     Useful for prototyping vendor adapters in pure Python or wiring up a
-    provider whose Rust crate doesn't exist yet. Streaming and tool calls
-    are not yet supported from the Python side; for those, implement a
-    Rust provider.
+    provider whose Rust crate doesn't exist yet.
 
     .. note::
        ``SingleAgent.run_sync()`` is not supported with a PythonProvider
@@ -194,12 +199,28 @@ class PythonProvider(_ProviderBase):
        the user's async ``chat`` callable needs). Always use the async
        ``run()`` API.
 
+    Phase 10.D — pass ``stream=async_gen_fn`` to enable streaming. The
+    callable is ``async def stream(request: dict) -> AsyncIterator[dict]``;
+    yielded dicts match :class:`tako_core::ChatChunk`'s ``kind``-tagged
+    schema. When ``stream=`` is set, the provider's
+    ``supports_streaming`` capability flips to ``True`` so orchestrators
+    that prefer streaming (Trinity, AB-MCTS) route through the streaming
+    path automatically.
+
     Example::
 
         async def my_chat(request: dict) -> str:
             return f"echo: {request['messages'][-1]['content'][0]['text']}"
 
-        provider = tako.providers.PythonProvider("custom:echo", chat=my_chat)
+        async def my_stream(request: dict):
+            yield {"kind": "delta", "text": "echo: "}
+            yield {"kind": "delta", "text": request["messages"][-1]["content"][0]["text"]}
+            yield {"kind": "end", "finish_reason": "stop",
+                   "usage": {"input_tokens": 0, "output_tokens": 0}}
+
+        provider = tako.providers.PythonProvider(
+            "custom:echo", chat=my_chat, stream=my_stream,
+        )
         agent = tako.SingleAgent(provider=provider)
     """
 
@@ -208,6 +229,12 @@ class PythonProvider(_ProviderBase):
         id: str,
         chat: PythonChat,
         *,
+        stream: PythonStream | None = None,
         max_context_tokens: int | None = None,
     ) -> None:
-        self._handle = _native.PythonProvider(id, chat, max_context_tokens=max_context_tokens)
+        self._handle = _native.PythonProvider(
+            id,
+            chat,
+            stream=stream,
+            max_context_tokens=max_context_tokens,
+        )

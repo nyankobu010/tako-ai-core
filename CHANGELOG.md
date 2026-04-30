@@ -145,6 +145,47 @@ verifier scores + Python provider streaming. Plan:
     cover kwarg acceptance, TypeError on a non-verifier argument,
     and default-no-kwarg construction parity.
 
+- **Python custom provider streaming** (Phase 10.D): closes the
+  long-standing v0.2.0 stale marker
+  `"Python providers do not yet support streaming"` at
+  [crates/tako-py/src/py_python_provider.rs](crates/tako-py/src/py_python_provider.rs).
+  Pure-Python providers now stream chunks through the same
+  orchestrator pipelines that consume native streaming providers
+  (Trinity / SelfCaller / AbMcts):
+  - New optional `stream=` kwarg on
+    `tako._native.PythonProvider.__init__`. Contract:
+    `async def stream(request: dict) -> AsyncIterator[dict]` whose
+    yielded dicts deserialise to `tako_core::ChatChunk` via the
+    standard `kind`-tagged JSON shape — `{"kind": "delta",
+    "text": ...}`, `{"kind": "end", "finish_reason": ...,
+    "usage": {...}}`, or `{"kind": "error", "message": ...}`.
+  - When `stream=` is supplied the Rust side flips
+    `Capabilities::supports_streaming` to `true`, so any
+    orchestrator that prefers streaming routes through the new
+    streaming path automatically.
+  - Implementation drives the Python async iterator via
+    `__anext__()` once per chunk: GIL is held only long enough
+    to schedule each call (via
+    `pyo3_async_runtimes::tokio::into_future`); awaits run with
+    the GIL released; deserialisation happens under a fresh GIL
+    attach via the existing `crate::conv::py_to_json` helper.
+    `StopAsyncIteration` cleanly terminates the stream; other
+    Python exceptions become `TakoError::Provider` with the
+    underlying message preserved.
+  - PyO3: optional `stream=` kwarg added; `_native.pyi` stub
+    updated; `tako.providers.PythonProvider` Python facade gains
+    the same kwarg with the documented contract in its docstring.
+    A new `PythonStream` callable type alias documents the
+    expected signature.
+  - 5 new Python smoke tests in
+    `tests/python/test_phase10_python_streaming.py` cover the
+    happy path (two deltas + an end frame round-tripping through
+    `SelfCaller.stream` to produce the expected joined text),
+    backwards-compatible construction without `stream=`, capability
+    flag flip when `stream=` is provided, error propagation from
+    inside the async generator, and schema-mismatch detection
+    when the yielded dict doesn't match `ChatChunk`.
+
 ## [0.10.0] - 2026-04-30
 
 Phase 9 — cost-aware streaming guards + transparency-log freshness +
