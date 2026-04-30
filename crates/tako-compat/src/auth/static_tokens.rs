@@ -1,9 +1,10 @@
-//! Bearer-token auth — the OpenAI SDK sends `Authorization: Bearer <token>`.
+//! `StaticTokens` — in-memory `token → Principal` table.
 //!
-//! The compat server resolves the token to a [`tako_core::Principal`] via
-//! a pluggable [`AuthResolver`]. Production deployments typically swap
-//! [`StaticTokens`] for a real provider (Vault, JWT, OIDC), but Phase 2
-//! ships only the static map.
+//! Phase 2 baseline. Suitable for dev, CI, and small deployments where
+//! the token list is curated by hand. Production deployments swap this
+//! for [`JwtAuthResolver`](super::JwtAuthResolver),
+//! [`OidcAuthResolver`](super::OidcAuthResolver), or
+//! [`VaultAuthResolver`](super::VaultAuthResolver) (Phase 14.B).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,11 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tako_core::{Principal, TakoError};
 
-/// Resolves a bearer token to the calling principal.
-#[async_trait]
-pub trait AuthResolver: Send + Sync + 'static + std::fmt::Debug {
-    async fn resolve(&self, token: &str) -> Result<Principal, TakoError>;
-}
+use super::AuthResolver;
 
 /// In-memory token table. Tokens map to `(tenant_id, user_id, roles)`.
 #[derive(Clone, Debug, Default)]

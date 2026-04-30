@@ -25,7 +25,20 @@ axum               = { workspace = true }
 tower              = { workspace = true }
 tower-http         = { workspace = true }
 hyper              = { workspace = true }
+# Phase 14.B — optional auth providers. Defaults stay off so existing
+# `StaticTokens`-only deployments see no new transitive deps.
+jsonwebtoken       = { version = "9.3", optional = true }
+reqwest            = { workspace = true, optional = true }
+vaultrs            = { version = "0.7", optional = true }
+
+[features]
+# Phase 14.B feature gates. Each enables one `AuthResolver` impl.
+jwt   = ["dep:jsonwebtoken"]
+# OIDC = JWT + JWKS rotation + discovery doc; reuses the JWT decoder.
+oidc  = ["jwt", "dep:reqwest"]
+vault = ["dep:vaultrs"]
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }
 reqwest            = { workspace = true }
+wiremock           = { workspace = true }

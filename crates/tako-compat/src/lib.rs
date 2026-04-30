@@ -21,5 +21,11 @@ mod routes;
 mod server;
 mod sse;
 
+#[cfg(feature = "jwt")]
+pub use auth::JwtAuthResolver;
+#[cfg(feature = "oidc")]
+pub use auth::OidcAuthResolver;
+#[cfg(feature = "vault")]
+pub use auth::VaultAuthResolver;
 pub use auth::{AuthResolver, StaticTokens};
 pub use server::{ServeConfig, serve_openai};
