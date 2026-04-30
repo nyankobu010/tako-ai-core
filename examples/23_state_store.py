@@ -20,6 +20,7 @@ cycle against a real bundle is exercised by the Rust integration test
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -27,6 +28,13 @@ import tako
 
 
 def main() -> None:
+    # Phase 11.A H2 — production deployments should set `umask 077`
+    # for the parent directory so tako's `JsonStateStore` lands the
+    # state file 0600 (per Phase 11.A's chmod) under a 0700 dir, not
+    # under the default umask-022 0755 dir. The chmod on the file
+    # itself is automatic; only the parent dir's permission is the
+    # operator's responsibility.
+    os.umask(0o077)
     with tempfile.TemporaryDirectory() as tmp:
         anchor = Path(tmp) / "rekor-anchor.json"
         store = tako.sigstore.JsonStateStore(str(anchor))

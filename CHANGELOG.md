@@ -9,6 +9,155 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.12.0] - 2026-04-30
+
+Phase 11 — Sigstore security hardening (review-driven from
+[SECURITY_PHASE10.md](SECURITY_PHASE10.md)) plus the long-standing
+`http-generic` provider streaming gap. Strictly additive — no public
+API change in the sigstore stack; the `http-generic` change is
+gated on a new opt-in `stream_config` field that defaults to `None`.
+Plan: [PLAN_PHASE11.md](PLAN_PHASE11.md).
+
+### Security
+
+H1 + H2 + M1–M4 from `SECURITY_PHASE10.md`, plus L2 / L3 / L5
+opportunistic. The full review motivates each item.
+
+- **H1 — Race-free Rekor checkpoint freshness-anchor advance.**
+  `KeylessVerifier::verify_bundle`'s Phase 9.B advance was a
+  three-step `load + compare + fetch_max` triple that opened a
+  TOCTOU window under concurrent `Arc<KeylessVerifier>` use. Replaced
+  with a `compare_exchange_weak` loop on `Acquire` / `AcqRel` /
+  `Acquire` orderings; `set_rekor_min_tree_size` and
+  `rekor_max_tree_size` upgraded to `Release` / `Acquire` for
+  cross-thread happens-before symmetry. New regression test
+  `hardening::multi_threaded_advance_never_observes_rollback`
+  spawns 16 tokio tasks against a shared verifier with 32
+  interleaved checkpoints (covers L4).
+- **H2 — `0o600` mode on the `JsonStateStore` file.** `save` now
+  `chmod`s the persisted state file to mode `0o600` after the atomic
+  rename on Unix; on Windows the chmod is a no-op and operators
+  manage confidentiality via NTFS ACLs on the parent directory.
+  Documented on the `JsonStateStore` rustdoc, mirrored into the
+  Python facade docstring at
+  `python/tako/sigstore.py:JsonStateStore`. Examples
+  `23_state_store.py` and the new `28_state_store_hardened.py` both
+  set `os.umask(0o077)` so the parent dir lands `0700`. New unit
+  test `save_clamps_state_file_to_0o600` (Unix-only).
+- **M1 + M4 — Atomic `JsonStateStore::save` via `tempfile::NamedTempFile`.**
+  Replaces the deterministic `<file>.tmp` + `fs::write` + `fs::rename`
+  triple with `NamedTempFile::new_in(parent).persist(...)`. The
+  randomised tmp suffix prevents two concurrent saves on a shared
+  `Arc<JsonStateStore>` from colliding; the `Drop` impl auto-removes
+  the tmp on the failure path, subsuming M4 (no orphan `.tmp` on
+  rename failure). `tempfile = "3"` promoted from dev-dep to
+  production dep in `crates/tako-governance/Cargo.toml`. Added
+  pre-`persist` `sync_all` so power-loss between the rename and the
+  inode flush still leaves a consistent file.
+- **M2 — `#[serde(deny_unknown_fields)]` + schema `version` on the
+  state file.** Strict-mode rejection of any unknown field plus a
+  `version: u32` (v1) discriminator. `load` rejects unrecognised
+  versions with an explicit "rebuild from a fresh boot" message;
+  legacy v0.11.0 state files (no `version` field) load as v1 via
+  `#[serde(default)]`. Four unit-test regressions:
+  `unknown_field_is_rejected`, `unsupported_version_is_rejected`,
+  `legacy_unversioned_file_loads_as_v1`,
+  `save_writes_current_version_field`.
+- **M3 — `BasicConstraints: cA=TRUE` + `pathLenConstraint` +
+  critical-extension enforcement in `verify_chain`.** At every
+  issuer hop, `verify_chain` now parses the `BasicConstraints`
+  extension and rejects when it's absent or `cA == FALSE`; enforces
+  `pathLenConstraint` against the count of intermediates between the
+  issuer and the leaf; rejects any `critical: TRUE` extension whose
+  OID is not in the known-handled set
+  (`BasicConstraints`, `KeyUsage`, `ExtendedKeyUsage`,
+  `SubjectAltName`, `SubjectKeyIdentifier`,
+  `AuthorityKeyIdentifier`, plus the two Fulcio OIDC OIDs).
+  RFC 5280 §4.2 + §4.2.1.9. Three regression tests:
+  `chain_rejects_non_ca_intermediate`,
+  `chain_rejects_unknown_critical_extension_on_intermediate`,
+  `chain_rejects_path_len_constraint_violation`.
+- **L2 — `extract_san_value` iterates the full SAN list.** Renamed
+  to `extract_san_values` and now returns every string-form SAN
+  (`rfc822Name`, `URI`, `dNSName`); `verify_bundle` runs the
+  identity policy against the entire set and accepts when at least
+  one SAN matches. The pre-fix code returned the first matching-type
+  SAN and would either let an attacker-injected SAN sorted earlier
+  in the list win the predicate or hide a legitimate SAN behind it.
+  Two regression tests in `mod keyless`:
+  `l2_predicate_iterates_all_sans`,
+  `l2_no_san_match_rejects_with_full_san_list`.
+- **L3 — `BTreeMap`-based canonical SET payload.**
+  `verify_rekor_set` builds the canonical JSON via
+  `BTreeMap<&'static str, serde_json::Value>` + `serde_json::to_string`
+  rather than a hand-rolled `format!` with no input escaping.
+  Existing Phase 6.E SET fixtures continue to verify (RFC 7159-
+  equivalent), so no behaviour change today, but a future
+  `RekorEntry` shape change cannot resurrect a silent injection
+  vector.
+- **L5 — Doc breadcrumb on `extract_oidc_issuer` v1 branch.** Notes
+  the unframed-IA5String assumption matches Fulcio's actual
+  encoding and points at the v2 `Ia5StringRef::from_der` fallback as
+  the breadcrumb if a CA ever flips to proper DER framing.
+  Documentation only.
+
+### Added
+
+- **`tako-providers-http-generic` streaming** (Phase 11.B): closes
+  the Phase 2 stale marker that previously returned
+  `"http-generic does not support streaming yet"`. Operators set
+  `HttpGenericConfig::stream_config` to one of:
+  - `StreamConfig::OpenAiSse { content_pointer, finish_reason_pointer,
+    usage_pointer }` — OpenAI-compatible SSE; reuses
+    `eventsource-stream` (the same parser the OpenAI provider
+    relies on); terminates on `data: [DONE]`.
+  - `StreamConfig::NdJson { … }` — newline-delimited JSON via
+    `LinesCodec` from `tokio-util`; terminates on EOF or on a frame
+    whose `finish_reason_pointer` resolves to a non-null string.
+
+  Both variants extract content delta, finish reason, and usage via
+  RFC 6901 JSON Pointer, so any endpoint with a structured frame
+  shape can be configured without code changes. Defaults match the
+  OpenAI layout (`/choices/0/delta/content`,
+  `/choices/0/finish_reason`, `/usage`). Tool-call delta extraction
+  is intentionally out of scope — operators streaming tool calls
+  should use the OpenAI provider's typed parser.
+
+  `Capabilities::supports_streaming` is now derived from
+  `stream_config.is_some()` unless an operator-supplied
+  `HttpGenericConfig::capabilities` overrides it. Tests: 9 unit
+  tests on the new types + 9 wiremock integration tests in
+  `crates/tako-providers/http-generic/tests/streaming.rs`.
+
+- **New examples** under `examples/`:
+  - `28_state_store_hardened.py` — Phase 10.A `JsonStateStore`
+    round-trip showing the v0.12.0 confidentiality posture
+    (`umask 0o077`, on-disk `0o600` mode-check on Unix).
+  - `23_state_store.py` updated with a one-line `os.umask(0o077)`
+    call so the example matches the recommended posture.
+
+### Changed
+
+- `KeylessVerifier::set_rekor_min_tree_size` / `rekor_max_tree_size`
+  use `Release` / `Acquire` ordering on the `AtomicU64`. No
+  observable behaviour change for single-threaded callers.
+- `JsonStateStore::save` writes `{"version": 1, "rekor_min_tree_size": …}`
+  rather than the v0.11.0 `{"rekor_min_tree_size": …}`. Old v0.11.0
+  files still load (treated as v1 via `#[serde(default)]`); new
+  binaries reading a future incompatible schema fail loudly.
+- `extract_san_value` is now `extract_san_values` (returns
+  `Vec<String>`). The keyless verifier path runs the identity
+  predicate against the full SAN list. No public API change — the
+  function is `pub(crate)`.
+
+### Deferred
+
+- **Python facade for `HttpGenericProvider`.** The plan included a
+  `stream_config=` Python kwarg, but `HttpGenericProvider` has no
+  Python facade today (it is configured via Rust code or by
+  community-supplied wrappers). Adding the full PyO3 binding is a
+  Phase 12 candidate if a concrete consumer asks.
+
 ## [0.11.0] - 2026-04-30
 
 Phase 10 — Phase 9 follow-on completeness + cross-orchestrator
@@ -1339,7 +1488,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.8.0...v0.9.0

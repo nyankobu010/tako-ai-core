@@ -29,43 +29,41 @@ synopsis and quickstart.
 | 8 — Search streaming + transparency-log completeness | v0.9.0 | done (2026-04-29) | [PLAN_PHASE8.md](PLAN_PHASE8.md) | [`## [0.9.0]`](CHANGELOG.md) |
 | 9 — Cost-aware streaming guards + log freshness + protocol completeness + router-driven AB-MCTS | v0.10.0 | done (2026-04-30) | [PLAN_PHASE9.md](PLAN_PHASE9.md) | [`## [0.10.0]`](CHANGELOG.md) |
 | 10 — Phase 9 follow-on completeness + cross-orchestrator verifier scores + Python provider streaming | v0.11.0 | done (2026-04-30) | [PLAN_PHASE10.md](PLAN_PHASE10.md) | [`## [0.11.0]`](CHANGELOG.md) |
-| 11 — Sigstore security hardening + http-generic provider streaming | v0.12.0 | in progress | [PLAN_PHASE11.md](PLAN_PHASE11.md) | [`## [0.12.0]`](CHANGELOG.md) |
+| 11 — Sigstore security hardening + http-generic provider streaming | v0.12.0 | done (2026-04-30) | [PLAN_PHASE11.md](PLAN_PHASE11.md) | [`## [0.12.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 11 candidates (indicative, not yet committed)
+### Phase 12 candidates (indicative, not yet committed)
 
-- **`http-generic` provider streaming.** Format is unknowable
-  without operator config (OpenAI-compat SSE? NDJSON? custom
-  binary?). Designing a `StreamConfig` enum + JSON-pointer-style
-  delta extractor is a phase of its own; deferred from Phase 10's
-  out-of-scope list. Stale marker today at
-  [crates/tako-providers/http-generic/src/lib.rs:259](crates/tako-providers/http-generic/src/lib.rs#L259).
-- **Vision / image content support across providers.** Largest
-  untouched item from the [Backlog](#backlog-uncommitted) — Anthropic,
-  Vertex, and Bedrock all have stub markers.
-- **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
-  promised in Phase 3 PLAN, still raise `NotImplementedError`.
 - **MCP Streamable HTTP — SSE upgrade + `Mcp-Session-Id` lifecycle.**
   Promised in Phase 2; transport still yields an empty stream.
+  [crates/tako-mcp/src/transport/streamable_http.rs:154](crates/tako-mcp/src/transport/streamable_http.rs#L154).
+- **Vision / image content support across providers.** Anthropic,
+  Vertex, and Bedrock all have stub markers; multi-crate
+  cross-cutting effort that warrants a focused phase.
+- **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
+  promised in Phase 3 PLAN, still raise `NotImplementedError`.
+  Sandboxed runner needed.
 - **Redis-backed `StateStore`** — sibling to Phase 10.A's
   `JsonStateStore` for multi-replica deployments where multiple
-  workers consume the same Rekor freshness anchor.
+  workers consume the same Rekor freshness anchor. Requires
+  introducing a `StateStore` trait first.
 - **Streaming-aware verifier in Trinity / Conductor.** Phase 10.C
   emits `VerifierScore` only at synthesis-complete boundaries.
   Per-delta verifier calls would need the same opt-in cost-control
   surface as `LlmJudgeGuard::with_streaming_min_chars`. Lands when
   a concrete consumer asks.
-- **Sigstore security hardening (review-driven).** Land H1 + H2 +
-  M1–M4 from [SECURITY_PHASE10.md](SECURITY_PHASE10.md): race-free
-  freshness-anchor advance (`compare_exchange_weak` or `Mutex<u64>`),
-  `0600` state-file mode + docstring, unique tmp filenames,
-  `deny_unknown_fields` + schema `version`, `basicConstraints: cA=TRUE`
-  enforcement in `verify_chain`, tmp cleanup on rename failure.
-  Strictly additive; no public API change.
+- **Python facade for `HttpGenericProvider`.** Phase 11.B added the
+  Rust streaming surface; the Python facade was planned but
+  skipped because no `tako.providers.HttpGeneric` class exists
+  today (it is configured via Rust code or community-supplied
+  wrappers). Adding the full PyO3 binding is a Phase 12 candidate
+  if community demand appears.
+- **`tako-compat` real auth providers** — Vault / JWT / OIDC,
+  beyond `StaticTokens` ([crates/tako-compat/src/auth.rs:5](crates/tako-compat/src/auth.rs#L5)).
 
 ### Beyond (speculative)
 
@@ -89,9 +87,10 @@ where the fix would land.
   Comment promises Phase 2; transport still yields an empty stream.
   [crates/tako-mcp/src/transport/streamable_http.rs:2-3](crates/tako-mcp/src/transport/streamable_http.rs#L2-L3),
   [:154](crates/tako-mcp/src/transport/streamable_http.rs#L154).
-- [ ] **`tako-providers/http-generic` streaming.** Runtime error
-  "does not support streaming yet (Phase 2)".
-  [crates/tako-providers/http-generic/src/lib.rs:259](crates/tako-providers/http-generic/src/lib.rs#L259).
+- [x] **`tako-providers/http-generic` streaming.** Closed in Phase
+  11.B (v0.12.0): set `HttpGenericConfig::stream_config` to a
+  `StreamConfig::OpenAiSse` or `StreamConfig::NdJson` variant
+  with JSON-pointer-based delta extraction.
 - [x] **Python custom provider streaming.** Closed in Phase 10.D
   (v0.11.0): pass `stream=async_gen_fn` to
   `tako.providers.PythonProvider` and the Rust side iterates the
