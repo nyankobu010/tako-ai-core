@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.13.0] - 2026-04-30
+
+Phase 12 — clears two long-standing debts surfaced in the Phase 11
+close-out. Strictly additive: `notifications()` previously returned
+an empty stream and now returns real notifications;
+`tako.providers.HttpGeneric` is a brand-new symbol. No existing
+public API changes shape.
+Plan: [PLAN_PHASE12.md](PLAN_PHASE12.md).
+
+### Added
+
+- **Phase 12.A — MCP Streamable HTTP SSE notifications + session
+  lifecycle.** `StreamableHttpTransport::notifications()` now opens a
+  long-lived `GET {url}` over `text/event-stream`, parses each
+  `data:` line as JSON-RPC via `eventsource_stream::Eventsource`,
+  and broadcasts method-bearing frames to subscribers via
+  `tokio::sync::broadcast`. The reader is spawned lazily on the
+  first `notifications()` call (guarded by an
+  `AtomicBool::compare_exchange` so concurrent calls share one
+  upstream GET); subsequent calls return fresh `broadcast::Receiver`
+  subscriptions to the shared feed. Frames carrying an `id` (POST
+  responses returned inline by `request()`) are dropped, never
+  double-broadcast. `Mcp-Session-Id` captured on a prior POST is
+  attached to the SSE GET header so servers that scope
+  subscriptions per session see the correct id. `close()` signals
+  the reader via `tokio::sync::Notify`. Closes the Phase 2 promise
+  tracked in the PLAN.md backlog at
+  [crates/tako-mcp/src/transport/streamable_http.rs](crates/tako-mcp/src/transport/streamable_http.rs).
+  Tests:
+  [crates/tako-mcp/tests/streamable_http_sse.rs](crates/tako-mcp/tests/streamable_http_sse.rs)
+  — four wiremock integration tests covering fan-out order,
+  `expect(1)` upstream sharing across multiple subscribers,
+  id-bearing-frame filtering, and `Mcp-Session-Id` propagation
+  from a prior POST.
+- **Phase 12.B — `tako.providers.HttpGeneric` Python facade.** Closes
+  the Phase 11.B deferred item. Rust `HttpGenericProvider` shipped
+  in Phase 11 with chat + streaming via `StreamConfig::OpenAiSse |
+  NdJson`; the PyO3 binding is now wired through
+  [crates/tako-py/src/py_http_generic.rs](crates/tako-py/src/py_http_generic.rs)
+  (mirrors the `PyBedrock` pattern). `body_template` and
+  `stream_config` accept Python dict / list / scalar values and
+  convert to `serde_json::Value` via `crate::conv::py_to_json`;
+  `StreamConfig` deserialises directly because of its existing
+  `#[serde(tag = "kind", rename_all = "snake_case")]` representation
+  — no enum-mapping plumbing in PyO3. `PyHttpGeneric` is wired into
+  both provider-extraction sites
+  ([py_orchestrator.rs](crates/tako-py/src/py_orchestrator.rs) and
+  the central `extract_provider` helper in
+  [py_conductor.rs](crates/tako-py/src/py_conductor.rs) that flows
+  through to Conductor / Trinity / AB-MCTS / SelfCaller). The
+  Python wrapper at
+  [python/tako/providers.py](python/tako/providers.py) exposes a
+  `supports_streaming` property surfacing
+  `Capabilities::supports_streaming`. Tests:
+  [tests/python/test_http_generic_provider.py](tests/python/test_http_generic_provider.py)
+  — six tests covering construction, both `StreamConfig` shapes
+  flipping `supports_streaming`, the Rust validator surfacing as
+  `ValueError`, unknown `stream_config` kinds rejected by serde,
+  and `SingleAgent(provider=HttpGeneric(...))` orchestrator wiring.
+
 ## [0.12.0] - 2026-04-30
 
 Phase 11 — Sigstore security hardening (review-driven from

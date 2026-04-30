@@ -30,17 +30,19 @@ synopsis and quickstart.
 | 9 — Cost-aware streaming guards + log freshness + protocol completeness + router-driven AB-MCTS | v0.10.0 | done (2026-04-30) | [PLAN_PHASE9.md](PLAN_PHASE9.md) | [`## [0.10.0]`](CHANGELOG.md) |
 | 10 — Phase 9 follow-on completeness + cross-orchestrator verifier scores + Python provider streaming | v0.11.0 | done (2026-04-30) | [PLAN_PHASE10.md](PLAN_PHASE10.md) | [`## [0.11.0]`](CHANGELOG.md) |
 | 11 — Sigstore security hardening + http-generic provider streaming | v0.12.0 | done (2026-04-30) | [PLAN_PHASE11.md](PLAN_PHASE11.md) | [`## [0.12.0]`](CHANGELOG.md) |
+| 12 — MCP SSE notifications + HttpGeneric Python facade | v0.13.0 | done (2026-04-30) | [PLAN_PHASE12.md](PLAN_PHASE12.md) | [`## [0.13.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 12 candidates (indicative, not yet committed)
+### Phase 13 candidates (indicative, not yet committed)
 
-- **MCP Streamable HTTP — SSE upgrade + `Mcp-Session-Id` lifecycle.**
-  Promised in Phase 2; transport still yields an empty stream.
-  [crates/tako-mcp/src/transport/streamable_http.rs:154](crates/tako-mcp/src/transport/streamable_http.rs#L154).
+Carry-forward from Phase 12's holding pen — the two debt-clearance items
+that landed in Phase 12 (MCP SSE notifications, HttpGeneric Python
+facade) are now off the list. The remainder:
+
 - **Vision / image content support across providers.** Anthropic,
   Vertex, and Bedrock all have stub markers; multi-crate
   cross-cutting effort that warrants a focused phase.
@@ -56,12 +58,6 @@ additive — public APIs from earlier phases never break.
   Per-delta verifier calls would need the same opt-in cost-control
   surface as `LlmJudgeGuard::with_streaming_min_chars`. Lands when
   a concrete consumer asks.
-- **Python facade for `HttpGenericProvider`.** Phase 11.B added the
-  Rust streaming surface; the Python facade was planned but
-  skipped because no `tako.providers.HttpGeneric` class exists
-  today (it is configured via Rust code or community-supplied
-  wrappers). Adding the full PyO3 binding is a Phase 12 candidate
-  if community demand appears.
 - **`tako-compat` real auth providers** — Vault / JWT / OIDC,
   beyond `StaticTokens` ([crates/tako-compat/src/auth.rs:5](crates/tako-compat/src/auth.rs#L5)).
 
@@ -83,10 +79,12 @@ where the fix would land.
 
 #### Stale phase markers — promised but not delivered
 
-- [ ] **MCP Streamable HTTP — SSE upgrade + `Mcp-Session-Id` lifecycle.**
-  Comment promises Phase 2; transport still yields an empty stream.
-  [crates/tako-mcp/src/transport/streamable_http.rs:2-3](crates/tako-mcp/src/transport/streamable_http.rs#L2-L3),
-  [:154](crates/tako-mcp/src/transport/streamable_http.rs#L154).
+- [x] **MCP Streamable HTTP — SSE upgrade + `Mcp-Session-Id` lifecycle.**
+  Closed in Phase 12.A (v0.13.0): `notifications()` opens a long-lived
+  `GET {url}` over `text/event-stream`, parses each `data:` line as
+  JSON-RPC, broadcasts method-bearing frames to subscribers, attaches
+  the latched `Mcp-Session-Id` header on the GET, and shuts down on
+  `close()` via a `tokio::sync::Notify`.
 - [x] **`tako-providers/http-generic` streaming.** Closed in Phase
   11.B (v0.12.0): set `HttpGenericConfig::stream_config` to a
   `StreamConfig::OpenAiSse` or `StreamConfig::NdJson` variant
