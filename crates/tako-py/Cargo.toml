@@ -54,3 +54,9 @@ grpc              = ["tako-mcp/grpc"]
 sigstore          = ["tako-governance/sigstore"]
 sigstore-protobuf = ["sigstore", "tako-governance/sigstore-protobuf"]
 redis             = ["sigstore", "tako-runtime/redis", "tako-governance/redis"]
+# Phase 14.B — wheel-side feature gates for the new tako-compat
+# AuthResolver impls. Each adds one optional dep tree (jsonwebtoken,
+# reqwest, vaultrs); off by default so default wheels stay slim.
+auth-jwt          = ["tako-compat/jwt"]
+auth-oidc         = ["tako-compat/oidc"]
+auth-vault        = ["tako-compat/vault"]

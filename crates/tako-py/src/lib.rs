@@ -88,6 +88,12 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_governance::shutdown_otlp_py, m)?)?;
     m.add_function(wrap_pyfunction!(py_compat::serve_openai_py, m)?)?;
     m.add_function(wrap_pyfunction!(py_compat::shutdown_compat_py, m)?)?;
+    #[cfg(feature = "auth-jwt")]
+    m.add_class::<py_compat::PyJwtAuth>()?;
+    #[cfg(feature = "auth-oidc")]
+    m.add_class::<py_compat::PyOidcAuth>()?;
+    #[cfg(feature = "auth-vault")]
+    m.add_class::<py_compat::PyVaultAuth>()?;
     m.add_function(wrap_pyfunction!(featurise_text_py, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

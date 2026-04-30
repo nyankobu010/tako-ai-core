@@ -13,6 +13,7 @@ def serve_openai(
     host: str = "127.0.0.1",
     port: int = 8080,
     tokens: dict[str, tuple[str, str]] | None = None,
+    auth: Any = None,
     models: list[str] | None = None,
 ) -> str:
     """Boot the OpenAI-compatible HTTP server.
@@ -22,10 +23,22 @@ def serve_openai(
     it. ``orch`` must be a ``tako.SingleAgent`` or ``tako.Conductor``.
 
     Auth: every request must carry ``Authorization: Bearer <token>``.
-    ``tokens`` maps each token to ``(tenant_id, user_id)``. If you don't
-    pass anything, a single ``"dev-token"`` mapping to anonymous is
-    installed for easy local testing — production deployments must pass
-    their own map.
+
+    Two auth modes:
+
+    1. **Static map** (dev / CI): ``tokens={"my-token": ("acme", "alice")}``.
+       Each token maps to ``(tenant_id, user_id)``. If neither ``tokens``
+       nor ``auth`` is set, a single ``"dev-token"`` mapping to anonymous
+       is installed for local testing.
+    2. **Real auth** (production, Phase 14.B): pass ``auth=`` with one of
+       ``tako.compat.JwtAuth.hs256(secret)``,
+       ``tako.compat.JwtAuth.rs256_from_pem(pem)``,
+       ``tako.compat.OidcAuth.discover(issuer, audience)`` (async), or
+       ``tako.compat.VaultAuth(addr, vault_token)``. These resolvers
+       require the wheel to be built with the matching ``auth-*`` feature
+       (e.g. ``maturin build --features auth-jwt``).
+
+    Passing both ``tokens`` and ``auth`` is an error.
     """
     if not hasattr(orch, "_inner"):
         raise TypeError("orch must be a tako.SingleAgent or tako.Conductor instance")
@@ -34,6 +47,7 @@ def serve_openai(
         host=host,
         port=port,
         tokens=tokens,
+        auth=auth,
         models=models,
     )
 
@@ -43,4 +57,13 @@ def shutdown_openai() -> None:
     _native.shutdown_compat_py()
 
 
-__all__ = ["serve_openai", "shutdown_openai"]
+# Phase 14.B — re-export the new auth resolver pyclasses when the
+# wheel was built with the matching feature. Importing names that
+# don't exist in `_native` yields `AttributeError`, so guard each
+# `getattr` so users can `import tako.compat` even from a slim wheel.
+JwtAuth = getattr(_native, "JwtAuth", None)
+OidcAuth = getattr(_native, "OidcAuth", None)
+VaultAuth = getattr(_native, "VaultAuth", None)
+
+
+__all__ = ["serve_openai", "shutdown_openai", "JwtAuth", "OidcAuth", "VaultAuth"]
