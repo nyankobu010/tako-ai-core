@@ -170,10 +170,8 @@ const FULCIO_OIDC_ISSUER_V2: ObjectIdentifier =
 // Phase 11.A M3 — known-handled X.509 v3 extension OIDs used for the
 // critical-extension whitelist in `verify_chain`. Any other extension
 // marked `critical: true` on a chain hop is rejected (RFC 5280 §4.2).
-const ID_CE_AUTHORITY_KEY_IDENTIFIER: ObjectIdentifier =
-    ObjectIdentifier::new_unwrap("2.5.29.35");
-const ID_CE_SUBJECT_KEY_IDENTIFIER: ObjectIdentifier =
-    ObjectIdentifier::new_unwrap("2.5.29.14");
+const ID_CE_AUTHORITY_KEY_IDENTIFIER: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.35");
+const ID_CE_SUBJECT_KEY_IDENTIFIER: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.14");
 const ID_CE_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15");
 const ID_CE_SUBJECT_ALT_NAME: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.17");
 const ID_CE_BASIC_CONSTRAINTS: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.19");
@@ -995,9 +993,7 @@ fn check_issuer_is_ca(issuer: &Certificate) -> Result<BasicConstraints, TakoErro
     let bc_pair = issuer
         .tbs_certificate
         .get::<BasicConstraints>()
-        .map_err(|e| {
-            TakoError::Invalid(format!("sigstore: chain BasicConstraints parse: {e}"))
-        })?;
+        .map_err(|e| TakoError::Invalid(format!("sigstore: chain BasicConstraints parse: {e}")))?;
     let Some((_, bc)) = bc_pair else {
         return Err(TakoError::Invalid(
             "sigstore: chain issuer missing BasicConstraints (RFC 5280 §4.2.1.9)".into(),
@@ -1092,16 +1088,18 @@ fn verify_rekor_set(key: &CosignVerificationKey, entry: &RekorEntry) -> Result<(
     // silent injection vector.
     let mut payload: std::collections::BTreeMap<&'static str, serde_json::Value> =
         std::collections::BTreeMap::new();
-    payload.insert("body", serde_json::Value::from(entry.canonicalized_body.clone()));
+    payload.insert(
+        "body",
+        serde_json::Value::from(entry.canonicalized_body.clone()),
+    );
     payload.insert(
         "integratedTime",
         serde_json::Value::from(entry.integrated_time),
     );
     payload.insert("logID", serde_json::Value::from(entry.log_id.clone()));
     payload.insert("logIndex", serde_json::Value::from(entry.log_index));
-    let canonical = serde_json::to_string(&payload).map_err(|e| {
-        TakoError::Invalid(format!("sigstore: rekor SET canonical encode: {e}"))
-    })?;
+    let canonical = serde_json::to_string(&payload)
+        .map_err(|e| TakoError::Invalid(format!("sigstore: rekor SET canonical encode: {e}")))?;
     let set_bytes = B64
         .decode(entry.set_b64.trim())
         .map_err(|e| TakoError::Invalid(format!("sigstore: rekor SET base64: {e}")))?;

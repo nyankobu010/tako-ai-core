@@ -421,7 +421,8 @@ mod keyless {
         let issuer = "https://token.actions.githubusercontent.com";
         let legitimate =
             "https://github.com/tako-ai/tako-ai-core/.github/workflows/release.yml@refs/heads/main";
-        let attacker = "https://github.com/attacker/repo/.github/workflows/evil.yml@refs/heads/main";
+        let attacker =
+            "https://github.com/attacker/repo/.github/workflows/evil.yml@refs/heads/main";
 
         // Attacker SAN comes first in the cert's SAN list.
         let fixture = build_leaf_two_sans(issuer, [attacker, legitimate]);
