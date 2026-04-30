@@ -304,6 +304,116 @@ async fn stream_emits_named_tako_extension_for_verifier_score() {
 }
 
 #[tokio::test]
+async fn stream_emits_tool_call_lifecycle_extensions() {
+    // Phase 10.B — `ToolCallStart` and `ToolCallResult` flow through
+    // the SSE pipeline with both their existing OpenAI mappings (where
+    // applicable) AND named `tako.tool_call_*` extension frames so
+    // tako-aware consumers gain a typed handle on the lifecycle and
+    // (crucially) on tool *results*, which previously had no
+    // observable representation in the OpenAI mapping.
+    use tako_orchestrator::{OrchEvent, OrchOutput};
+    let final_event = OrchEvent::Final {
+        output: Box::new(OrchOutput {
+            text: "done".into(),
+            message: Message::assistant("done"),
+            usage: Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+            steps: 1,
+        }),
+    };
+    let scripted = Arc::new(ScriptedOrchestrator {
+        events: tokio::sync::Mutex::new(vec![
+            OrchEvent::StepStart { step: 0 },
+            OrchEvent::ToolCallStart {
+                step: 0,
+                name: "search".into(),
+                id: "tc-abc".into(),
+            },
+            OrchEvent::ToolCallResult {
+                step: 0,
+                id: "tc-abc".into(),
+                result: serde_json::json!({"ok": true, "rows": 3}),
+                is_error: false,
+            },
+            OrchEvent::AssistantText {
+                step: 0,
+                delta: "result handled".into(),
+            },
+            final_event,
+        ]),
+    });
+    let auth = Arc::new(StaticTokens::new().with("test-token", Principal::new("acme", "alice")));
+    let (addr, _handle) = serve_openai(
+        scripted,
+        auth,
+        ServeConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            models: vec!["fake:m".into(), "tako-default".into()],
+        },
+    )
+    .await
+    .unwrap();
+
+    let client = reqwest::Client::new();
+    let body = json!({
+        "model": "tako-default",
+        "messages": [{"role": "user", "content": "x"}],
+        "stream": true,
+    });
+    let resp = client
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .header("Authorization", "Bearer test-token")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let bytes = resp.bytes().await.unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+
+    // Both lifecycle frames are present, with their JSON payloads
+    // carrying the relevant tako-side fields.
+    let start_idx = text
+        .find("event: tako.tool_call_start")
+        .unwrap_or_else(|| panic!("missing tako.tool_call_start frame; saw: {text}"));
+    let result_idx = text
+        .find("event: tako.tool_call_result")
+        .unwrap_or_else(|| panic!("missing tako.tool_call_result frame; saw: {text}"));
+    assert!(
+        start_idx < result_idx,
+        "tako.tool_call_start must precede tako.tool_call_result; saw: {text}",
+    );
+
+    // Result payload preserves the structured tool result and is_error.
+    assert!(text.contains("\"id\":\"tc-abc\""), "saw: {text}");
+    assert!(text.contains("\"name\":\"search\""), "saw: {text}");
+    assert!(text.contains("\"is_error\":false"), "saw: {text}");
+    assert!(text.contains("\"rows\":3"), "saw: {text}");
+
+    // OpenAI mapping for ToolCallStart is unchanged — the `tool_calls`
+    // delta frame is still present and follows after the named
+    // extension.
+    let oa_tool_idx = text
+        .find("\"tool_calls\"")
+        .unwrap_or_else(|| panic!("missing OpenAI tool_calls delta; saw: {text}"));
+    assert!(
+        start_idx < oa_tool_idx,
+        "tako.tool_call_start must precede the OpenAI tool_calls delta; saw: {text}",
+    );
+
+    // The downstream assistant-text and [DONE] sentinel still emit
+    // unchanged.
+    assert!(
+        text.contains("\"content\":\"result handled\""),
+        "saw: {text}"
+    );
+    assert!(text.contains("data: [DONE]"), "saw: {text}");
+}
+
+#[tokio::test]
 async fn list_models() {
     let (addr, _) = boot_server().await;
     let client = reqwest::Client::new();

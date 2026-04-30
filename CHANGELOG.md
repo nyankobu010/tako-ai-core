@@ -48,6 +48,43 @@ verifier scores + Python provider streaming. Plan:
     that rejects a smaller-tree-size bundle. 5 new Python smoke
     tests in `tests/python/test_phase10_state_store.py`.
 
+- **Named `tako.*` SSE events for tool-call lifecycle**
+  (Phase 10.B): closes the second Phase 9 follow-on. Phase 9.C
+  emitted `tako.verifier_score` / `tako.recursion` named SSE
+  extensions; the same mechanism now covers
+  [`OrchEvent::ToolCallStart`](crates/tako-orchestrator/src/types.rs)
+  and [`OrchEvent::ToolCallResult`](crates/tako-orchestrator/src/types.rs):
+  - `event_to_tako_extensions` at
+    [crates/tako-compat/src/sse.rs](crates/tako-compat/src/sse.rs)
+    gains two new arms:
+    - `ToolCallStart { step, name, id }` →
+      `("tako.tool_call_start", "{\"step\":N,\"name\":...,\"id\":...}")`.
+      Emitted in addition to the existing OpenAI `tool_calls`
+      delta from `event_to_payloads` — OpenAI clients ignore the
+      named extension per the SSE spec.
+    - `ToolCallResult { step, id, result, is_error }` →
+      `("tako.tool_call_result", "{\"step\":N,\"id\":...,\"result\":...,\"is_error\":...}")`.
+      Closes the gap where this variant had no OpenAI mapping at
+      all (silently dropped) so tako-aware clients now see tool
+      results mid-stream with `is_error` propagation.
+  - 3 new Rust unit tests in `sse.rs::tests`:
+    `tool_call_start_emits_named_tako_extension`,
+    `tool_call_result_emits_named_tako_extension`, and
+    `tool_call_result_propagates_is_error_true`. The pre-existing
+    `opaque_variants_emit_no_tako_extensions` regression is
+    narrowed to `AssistantText` + `StepStart` (the variants that
+    really do remain extension-less).
+  - 1 new Rust integration test
+    `stream_emits_tool_call_lifecycle_extensions` in
+    `crates/tako-compat/tests/server.rs` runs a `ScriptedOrchestrator`
+    that emits `ToolCallStart` then `ToolCallResult`; asserts the
+    wire body contains both `event: tako.tool_call_start` and
+    `event: tako.tool_call_result` lines, the result payload
+    preserves the structured tool result and `is_error: false`,
+    the named-start frame precedes the OpenAI `tool_calls` delta
+    for the same logical event boundary, and the downstream
+    assistant-text + `[DONE]` sentinel emit unchanged.
+
 ## [0.10.0] - 2026-04-30
 
 Phase 9 — cost-aware streaming guards + transparency-log freshness +

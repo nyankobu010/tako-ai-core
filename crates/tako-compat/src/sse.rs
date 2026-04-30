@@ -152,8 +152,22 @@ pub fn event_to_payloads(event: &OrchEvent, id: &str, model: &str) -> Vec<String
 ///
 /// - [`OrchEvent::VerifierScore`] →
 ///   `("tako.verifier_score", "{"step":N,"branch":B,"score":S}")`
+///   (Phase 9.C)
 /// - [`OrchEvent::Recursion`] →
 ///   `("tako.recursion", "{"depth":D,"confidence":C}")`
+///   (Phase 9.C)
+/// - [`OrchEvent::ToolCallStart`] →
+///   `("tako.tool_call_start", "{"step":N,"name":"...","id":"..."}")`
+///   (Phase 10.B). Emitted in addition to the existing OpenAI
+///   `tool_calls` delta in [`event_to_payloads`] — OpenAI clients
+///   ignore the named extension; tako-aware consumers gain a typed
+///   handle on the start of each tool invocation.
+/// - [`OrchEvent::ToolCallResult`] →
+///   `("tako.tool_call_result",
+///   "{"step":N,"id":"...","result":<json>,"is_error":<bool>}")`
+///   (Phase 10.B). Closes the gap where this variant had no OpenAI
+///   mapping at all and was silently dropped — tool results are now
+///   observable mid-stream.
 ///
 /// All other variants return an empty `Vec` (no extension emitted —
 /// the variant is either part of the OpenAI mapping or has no
@@ -178,6 +192,32 @@ pub fn event_to_tako_extensions(event: &OrchEvent) -> Vec<(&'static str, String)
                 "confidence": confidence,
             });
             vec![("tako.recursion", body.to_string())]
+        }
+        OrchEvent::ToolCallStart {
+            step,
+            name,
+            id: tc_id,
+        } => {
+            let body = json!({
+                "step": step,
+                "name": name,
+                "id": tc_id,
+            });
+            vec![("tako.tool_call_start", body.to_string())]
+        }
+        OrchEvent::ToolCallResult {
+            step,
+            id: tc_id,
+            result,
+            is_error,
+        } => {
+            let body = json!({
+                "step": step,
+                "id": tc_id,
+                "result": result,
+                "is_error": is_error,
+            });
+            vec![("tako.tool_call_result", body.to_string())]
         }
         _ => Vec::new(),
     }
@@ -271,19 +311,16 @@ mod tests {
 
     #[test]
     fn opaque_variants_emit_no_tako_extensions() {
-        // Variants that already have an OpenAI mapping (or are silent
-        // to OpenAI clients) must not also emit a tako-named frame —
-        // the extension sidechannel is reserved for events that
-        // OpenAI cannot represent.
+        // Variants that already have a clean OpenAI mapping (and no
+        // tako-side metadata that OpenAI cannot represent) must not
+        // also emit a tako-named frame — the extension sidechannel is
+        // reserved for events OpenAI cannot represent and for the
+        // tool-call lifecycle (Phase 10.B), which gains a parallel
+        // tako-named frame for tako-aware consumers.
         let cases = [
             OrchEvent::AssistantText {
                 step: 0,
                 delta: "hi".into(),
-            },
-            OrchEvent::ToolCallStart {
-                step: 0,
-                name: "s".into(),
-                id: "1".into(),
             },
             OrchEvent::StepStart { step: 0 },
         ];
@@ -293,6 +330,75 @@ mod tests {
                 "unexpected tako extension for {ev:?}",
             );
         }
+    }
+
+    #[test]
+    fn tool_call_start_emits_named_tako_extension() {
+        // Phase 10.B — `ToolCallStart` now has both an OpenAI
+        // `tool_calls` delta in `event_to_payloads` AND a
+        // `tako.tool_call_start` named extension. OpenAI clients
+        // ignore unknown event names per the SSE spec, so the dual
+        // emission is zero-impact for them.
+        let ev = OrchEvent::ToolCallStart {
+            step: 1,
+            name: "search".into(),
+            id: "tc-abc".into(),
+        };
+        let exts = event_to_tako_extensions(&ev);
+        assert_eq!(exts.len(), 1);
+        let (name, payload) = &exts[0];
+        assert_eq!(*name, "tako.tool_call_start");
+        let v: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(v["step"], 1);
+        assert_eq!(v["name"], "search");
+        assert_eq!(v["id"], "tc-abc");
+        // The OpenAI mapping for `ToolCallStart` is unchanged — still
+        // emits exactly one chat.completion.chunk with a `tool_calls`
+        // delta.
+        assert_eq!(event_to_payloads(&ev, "id-1", "gpt-test").len(), 1);
+    }
+
+    #[test]
+    fn tool_call_result_emits_named_tako_extension() {
+        // Phase 10.B — `ToolCallResult` had no OpenAI mapping (silently
+        // dropped at the `_ => Vec::new()` arm of `event_to_payloads`)
+        // so tako-aware clients never saw tool results mid-stream. The
+        // `tako.tool_call_result` named extension closes that gap.
+        let ev = OrchEvent::ToolCallResult {
+            step: 1,
+            id: "tc-abc".into(),
+            result: serde_json::json!({"ok": true, "rows": 3}),
+            is_error: false,
+        };
+        let exts = event_to_tako_extensions(&ev);
+        assert_eq!(exts.len(), 1);
+        let (name, payload) = &exts[0];
+        assert_eq!(*name, "tako.tool_call_result");
+        let v: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(v["step"], 1);
+        assert_eq!(v["id"], "tc-abc");
+        assert_eq!(v["result"]["ok"], true);
+        assert_eq!(v["result"]["rows"], 3);
+        assert_eq!(v["is_error"], false);
+        // Still no OpenAI mapping for this variant.
+        assert!(event_to_payloads(&ev, "id-1", "gpt-test").is_empty());
+    }
+
+    #[test]
+    fn tool_call_result_propagates_is_error_true() {
+        // Errors from a tool surface with `is_error: true` so consumers
+        // can short-circuit downstream processing.
+        let ev = OrchEvent::ToolCallResult {
+            step: 2,
+            id: "tc-xyz".into(),
+            result: serde_json::json!({"error": "rate limited"}),
+            is_error: true,
+        };
+        let exts = event_to_tako_extensions(&ev);
+        let (_, payload) = &exts[0];
+        let v: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(v["is_error"], true);
+        assert_eq!(v["result"]["error"], "rate limited");
     }
 
     #[test]
