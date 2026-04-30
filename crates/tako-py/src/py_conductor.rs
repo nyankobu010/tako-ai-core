@@ -160,11 +160,14 @@ fn extract_provider(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<ProviderHandle>
     if let Ok(p) = obj.extract::<crate::py_vertex::PyVertex>(py) {
         return Ok(p.handle);
     }
+    if let Ok(p) = obj.extract::<crate::py_http_generic::PyHttpGeneric>(py) {
+        return Ok(p.handle);
+    }
     if let Ok(p) = obj.extract::<crate::py_python_provider::PyPythonProvider>(py) {
         return Ok(p.handle);
     }
     Err(PyValueError::new_err(
-        "provider must be a tako._native.OpenAI, Anthropic, AzureOpenAi, Bedrock, Vertex, FakeProvider, or PythonProvider",
+        "provider must be a tako._native.OpenAI, Anthropic, AzureOpenAi, Bedrock, Vertex, HttpGeneric, FakeProvider, or PythonProvider",
     ))
 }
 

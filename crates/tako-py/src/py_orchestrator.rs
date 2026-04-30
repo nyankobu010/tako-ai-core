@@ -79,11 +79,13 @@ impl PyOrchestrator {
             p.handle
         } else if let Ok(p) = provider.extract::<crate::py_vertex::PyVertex>(py) {
             p.handle
+        } else if let Ok(p) = provider.extract::<crate::py_http_generic::PyHttpGeneric>(py) {
+            p.handle
         } else if let Ok(p) = provider.extract::<crate::py_python_provider::PyPythonProvider>(py) {
             p.handle
         } else {
             return Err(PyValueError::new_err(
-                "provider must be a tako._native.OpenAI, Anthropic, AzureOpenAi, Bedrock, Vertex, FakeProvider, or PythonProvider",
+                "provider must be a tako._native.OpenAI, Anthropic, AzureOpenAi, Bedrock, Vertex, HttpGeneric, FakeProvider, or PythonProvider",
             ));
         };
 

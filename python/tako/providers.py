@@ -174,6 +174,62 @@ class Bedrock(_ProviderBase):
         )
 
 
+class HttpGeneric(_ProviderBase):
+    """Generic HTTP / SSE provider — point at any chat-completions-compatible endpoint.
+
+    ``body_template`` is a JSON document where the literal strings
+    ``"{{ request }}"``, ``"{{ model }}"``, ``"{{ messages }}"`` are replaced
+    with the corresponding fields of the outgoing request at call time.
+    ``response_text_pointer`` is a JSON Pointer (RFC 6901) into the response
+    body that yields the assistant text.
+
+    Pass ``stream_config={"kind": "openai_sse", ...}`` or
+    ``{"kind": "ndjson", ...}`` to enable streaming;
+    ``Capabilities.supports_streaming`` flips automatically. Header values
+    may carry ``"$VAR_NAME"`` literals; the provider resolves those from
+    the environment at construction.
+
+    Example::
+
+        provider = tako.providers.HttpGeneric(
+            id="custom",
+            model="my-model-v1",
+            url="https://api.example.com/v1/chat/completions",
+            body_template={"model": "{{ model }}", "messages": "{{ messages }}"},
+            response_text_pointer="/choices/0/message/content",
+            headers=[("Authorization", "Bearer $MY_API_KEY")],
+            stream_config={"kind": "openai_sse"},
+        )
+    """
+
+    def __init__(
+        self,
+        id: str,
+        model: str,
+        url: str,
+        body_template: dict[str, Any] | list[Any] | str | int | float | bool | None,
+        response_text_pointer: str,
+        *,
+        headers: list[tuple[str, str]] | None = None,
+        timeout_secs: int | None = None,
+        stream_config: dict[str, Any] | None = None,
+    ) -> None:
+        self._handle = _native.HttpGeneric(
+            id,
+            model,
+            url,
+            body_template,
+            response_text_pointer,
+            headers=headers,
+            timeout_secs=timeout_secs,
+            stream_config=stream_config,
+        )
+
+    @property
+    def supports_streaming(self) -> bool:
+        return bool(self._handle.supports_streaming())
+
+
 # `chat` callables receive a request dict (model, messages, tools, ...) and
 # return either a string (assistant text) or a dict
 # {"text": str, "input_tokens"?: int, "output_tokens"?: int}.
