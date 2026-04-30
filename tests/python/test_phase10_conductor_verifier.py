@@ -6,7 +6,6 @@ when a verifier is attached. Mirrors the Rust integration test
 from __future__ import annotations
 
 import pytest
-
 import tako
 
 
@@ -31,7 +30,7 @@ def test_conductor_accepts_verifier_kwarg() -> None:
 def test_conductor_rejects_non_verifier() -> None:
     coord = tako.providers.PythonProvider("py:coord", chat=_fake_chat)
 
-    with pytest.raises(TypeError, match="verifier must be a tako.verifiers.*"):
+    with pytest.raises(TypeError, match=r"verifier must be a tako\.verifiers\."):
         tako.Conductor(
             coordinator=coord,
             workers={},

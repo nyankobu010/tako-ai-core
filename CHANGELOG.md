@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(none)
+
+## [0.11.0] - 2026-04-30
+
 Phase 10 — Phase 9 follow-on completeness + cross-orchestrator
-verifier scores + Python provider streaming. Plan:
-[PLAN_PHASE10.md](PLAN_PHASE10.md).
+verifier scores + Python provider streaming. Closes two follow-ons
+from `## [0.10.0]`'s release notes (Rekor freshness persistence;
+tool-call lifecycle named SSE events), brings `OrchEvent::VerifierScore`
+parity to the two non-AB-MCTS streaming orchestrators, and closes
+the long-standing Phase 2 stale marker on Python custom provider
+streaming. Plan: [PLAN_PHASE10.md](PLAN_PHASE10.md).
 
 ### Added
 
@@ -1331,7 +1339,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.7.0...v0.8.0

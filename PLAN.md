@@ -28,26 +28,21 @@ synopsis and quickstart.
 | 7 — Sigstore + streaming closures | v0.8.0 | done (2026-04-29) | [PLAN_PHASE7.md](PLAN_PHASE7.md) | [`## [0.8.0]`](CHANGELOG.md) |
 | 8 — Search streaming + transparency-log completeness | v0.9.0 | done (2026-04-29) | [PLAN_PHASE8.md](PLAN_PHASE8.md) | [`## [0.9.0]`](CHANGELOG.md) |
 | 9 — Cost-aware streaming guards + log freshness + protocol completeness + router-driven AB-MCTS | v0.10.0 | done (2026-04-30) | [PLAN_PHASE9.md](PLAN_PHASE9.md) | [`## [0.10.0]`](CHANGELOG.md) |
-| 10 — Phase 9 follow-on completeness + cross-orchestrator verifier scores + Python provider streaming | v0.11.0 | in progress | [PLAN_PHASE10.md](PLAN_PHASE10.md) | [`## [Unreleased]`](CHANGELOG.md) |
+| 10 — Phase 9 follow-on completeness + cross-orchestrator verifier scores + Python provider streaming | v0.11.0 | done (2026-04-30) | [PLAN_PHASE10.md](PLAN_PHASE10.md) | [`## [0.11.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 10 candidates (indicative, not yet committed)
+### Phase 11 candidates (indicative, not yet committed)
 
-- **On-disk `JsonStateStore` for Rekor freshness.** Phase 9.B
-  shipped the in-memory anchor; the 9.B API surface is
-  forward-compatible with a helper that loads/persists
-  `rekor_max_tree_size()` to a JSON state file across process
-  restarts.
-- **Verifier-score event for non-AB-MCTS orchestrators.** `Trinity`
-  and `Conductor` could emit `OrchEvent::VerifierScore` if extended
-  with a verifier; lands when a concrete consumer asks.
-- **Streaming `tako-compat` extension events for tool-call
-  lifecycle.** The 9.C plumbing trivially generalises to
-  `tako.tool_call_start` / `tako.tool_call_result` named events.
+- **`http-generic` provider streaming.** Format is unknowable
+  without operator config (OpenAI-compat SSE? NDJSON? custom
+  binary?). Designing a `StreamConfig` enum + JSON-pointer-style
+  delta extractor is a phase of its own; deferred from Phase 10's
+  out-of-scope list. Stale marker today at
+  [crates/tako-providers/http-generic/src/lib.rs:259](crates/tako-providers/http-generic/src/lib.rs#L259).
 - **Vision / image content support across providers.** Largest
   untouched item from the [Backlog](#backlog-uncommitted) — Anthropic,
   Vertex, and Bedrock all have stub markers.
@@ -55,6 +50,14 @@ additive — public APIs from earlier phases never break.
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
 - **MCP Streamable HTTP — SSE upgrade + `Mcp-Session-Id` lifecycle.**
   Promised in Phase 2; transport still yields an empty stream.
+- **Redis-backed `StateStore`** — sibling to Phase 10.A's
+  `JsonStateStore` for multi-replica deployments where multiple
+  workers consume the same Rekor freshness anchor.
+- **Streaming-aware verifier in Trinity / Conductor.** Phase 10.C
+  emits `VerifierScore` only at synthesis-complete boundaries.
+  Per-delta verifier calls would need the same opt-in cost-control
+  surface as `LlmJudgeGuard::with_streaming_min_chars`. Lands when
+  a concrete consumer asks.
 
 ### Beyond (speculative)
 
@@ -81,9 +84,11 @@ where the fix would land.
 - [ ] **`tako-providers/http-generic` streaming.** Runtime error
   "does not support streaming yet (Phase 2)".
   [crates/tako-providers/http-generic/src/lib.rs:259](crates/tako-providers/http-generic/src/lib.rs#L259).
-- [ ] **Python custom provider streaming.** Runtime error
-  "Python providers do not yet support streaming (Phase 2)".
-  [crates/tako-py/src/py_python_provider.rs:154](crates/tako-py/src/py_python_provider.rs#L154).
+- [x] **Python custom provider streaming.** Closed in Phase 10.D
+  (v0.11.0): pass `stream=async_gen_fn` to
+  `tako.providers.PythonProvider` and the Rust side iterates the
+  async generator via `__anext__()`, deserialising each yielded
+  dict to a `ChatChunk` via the `kind`-tagged JSON shape.
 - [ ] **`tako-compat` real auth providers** — Vault / JWT / OIDC.
   Only `StaticTokens` ships.
   [crates/tako-compat/src/auth.rs:5](crates/tako-compat/src/auth.rs#L5).
@@ -105,12 +110,12 @@ where the fix would land.
 
 #### Documentation maintenance
 
-- [ ] **Bring `README.md` feature matrix current to Phase 8.** Matrix
-  stops at Phase 6; Phase 7 (streaming closures, Rekor inclusion proof)
-  and Phase 8 (AB-MCTS streaming, `OrchEvent::VerifierScore` /
-  `Recursion`, Rekor checkpoint) are documented in `CHANGELOG.md` but
-  never reflected in the README columns.
-  [README.md](README.md) lines ~86-104.
+- [x] **Bring `README.md` feature matrix current.** Phase 9.E
+  swept the matrix through Phase 9; Phase 10.E added a Phase 10
+  column (verifier scores in Trinity / Conductor; tool-call
+  lifecycle named SSE events; on-disk JsonStateStore; Python
+  custom provider streaming). Roadmap section enumerates Phases
+  1–10.
 
 #### First-publish placeholders
 

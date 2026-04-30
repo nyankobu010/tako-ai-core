@@ -6,9 +6,7 @@ is attached. Mirrors the Rust integration test
 from __future__ import annotations
 
 import pytest
-
 import tako
-from tako import _native
 
 
 async def _fake_chat(_request: dict) -> str:
@@ -36,7 +34,7 @@ def test_trinity_rejects_non_verifier() -> None:
     primary = tako.providers.PythonProvider("py:p0", chat=_fake_chat)
     router = tako.routers.RegexRouter()
 
-    with pytest.raises(TypeError, match="verifier must be a tako.verifiers.*"):
+    with pytest.raises(TypeError, match=r"verifier must be a tako\.verifiers\."):
         tako.Trinity(
             roles={"primary": primary},
             router=router,

@@ -85,24 +85,24 @@ result = orch.run_sync("Quick question: ...")
 
 ## Feature matrix
 
-| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 |
-|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|
-| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | |
-| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | |
-| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         |
-| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         |
-| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         |
-| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         |
-| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | |
-| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion |
-| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta |
-| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         |
-| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         |
-| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         |
-| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | |
-| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         |
-| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor |
-| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         |
+| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 |
+|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|
+| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | | ➕ Python custom provider streaming |
+| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events |
+| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | |
+| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | |
+| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores |
+| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores |
+| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | |
+| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | |
+| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | |
+| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | |
+| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | |
+| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | |
+| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | |
+| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | |
+| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` |
+| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | |
 
 ## Roadmap
 
@@ -148,6 +148,19 @@ result = orch.run_sync("Quick question: ...")
   named `tako.verifier_score` / `tako.recursion` SSE events for
   OpenAI-compat clients; AB-MCTS router-driven branch expansion
   (`AbMcts::builder().candidate(p).router(r)`).
+  (`AbMcts::builder().candidate(p).router(r)`).
+- **Phase 10 — Phase 9 follow-on completeness + cross-orchestrator
+  verifier scores + Python provider streaming** *(done, v0.11.0)*:
+  on-disk `JsonStateStore` for Rekor checkpoint freshness anchor
+  (crash-safe atomic JSON persistence; `seed` / `persist`
+  convenience wrappers around `KeylessVerifier`); `tako-compat`
+  named `tako.tool_call_start` / `tako.tool_call_result` SSE
+  extension events (`ToolCallResult` previously had no observable
+  representation in the OpenAI mapping); `OrchEvent::VerifierScore`
+  for `Conductor` (per-worker, `branch` = 1-based dispatch index)
+  and `Trinity` (per-role, `branch` = role's positional index);
+  `tako.providers.PythonProvider(stream=async_gen)` closes the
+  Phase 2 streaming-stale marker on the Python custom provider.
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 
