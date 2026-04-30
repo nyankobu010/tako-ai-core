@@ -242,7 +242,22 @@ class JsonStateStore:
 
         { "rekor_min_tree_size": 4711 }
 
+    **Confidentiality of the state file (Phase 11.A H2, v0.12.0):**
+    on Unix, :meth:`save` ``chmod``s the resulting file to ``0o600``
+    after the atomic replace, so a co-tenant on the same host cannot
+    silently downgrade ``rekor_min_tree_size`` and re-enable rollback
+    acceptance. On Windows the chmod is a no-op and the operator must
+    constrain access via NTFS ACLs on the parent directory.
+
+    Operators should additionally place the state file under a
+    directory created with ``umask 077`` (or its Windows ACL
+    equivalent) so the parent directory itself is not world-readable.
+    See ``examples/23_state_store.py`` for a complete illustration.
+
     Typical operator pattern::
+
+        import os
+        os.umask(0o077)  # parent dir + state file land 0700 / 0600
 
         store = tako.sigstore.JsonStateStore("/var/lib/tako/rekor.json")
         verifier = store.seed(

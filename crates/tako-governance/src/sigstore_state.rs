@@ -17,11 +17,25 @@
 //! ```
 //!
 //! `save` is crash-safe via the standard `write-temp-then-rename`
-//! pattern: the new value is written to `<path>.tmp` and `rename`d
-//! over `<path>`, so an interrupted save cannot leave a corrupt
-//! anchor file. `load` against a missing path returns `Ok(0)`,
-//! matching the verifier's "uninitialised = no constraint"
-//! sentinel.
+//! pattern: the new value is written to a per-call random tmp file in
+//! the same directory and `rename`d over `<path>`, so an interrupted
+//! save cannot leave a corrupt or partially-written anchor. `load`
+//! against a missing path returns `Ok(0)`, matching the verifier's
+//! "uninitialised = no constraint" sentinel.
+//!
+//! ## Confidentiality of the state file
+//!
+//! Phase 11.A H2 — on Unix, `save` `chmod`s the resulting state file
+//! to mode `0o600` after the atomic replace, so a co-tenant on the
+//! same host cannot silently downgrade `rekor_min_tree_size` and
+//! re-enable rollback acceptance. On Windows the chmod is a no-op
+//! and the operator must constrain access via NTFS ACLs on the
+//! parent directory.
+//!
+//! Operators should additionally place the state file under a
+//! directory created with `umask 077` (or its Windows ACL equivalent)
+//! so the parent directory itself is not world-readable. See
+//! `examples/23_state_store.py` for a complete illustration.
 //!
 //! Two convenience methods, [`JsonStateStore::seed`] and
 //! [`JsonStateStore::persist`], wrap the verifier handover so the
@@ -150,6 +164,7 @@ impl JsonStateStore {
                 e.error,
             ))
         })?;
+        chmod_state_file(&self.path)?;
         Ok(())
     }
 
@@ -168,6 +183,29 @@ impl JsonStateStore {
     pub fn persist(&self, verifier: &KeylessVerifier) -> Result<(), TakoError> {
         self.save(verifier.rekor_max_tree_size())
     }
+}
+
+/// Phase 11.A H2 — clamp the persisted state file to mode `0o600` on
+/// Unix so a co-tenant on the same host cannot silently downgrade
+/// `rekor_min_tree_size`. On Windows this is a no-op; the operator
+/// is expected to constrain access via NTFS ACLs on the parent
+/// directory.
+#[cfg(unix)]
+fn chmod_state_file(path: &Path) -> Result<(), TakoError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| {
+        TakoError::Invalid(format!(
+            "sigstore_state: chmod 0600 {}: {e}",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn chmod_state_file(_path: &Path) -> Result<(), TakoError> {
+    // state-file confidentiality is operator-managed via NTFS ACL on
+    // Windows; nothing to do here.
+    Ok(())
 }
 
 #[cfg(test)]
@@ -232,5 +270,30 @@ mod tests {
             TakoError::Invalid(msg) => assert!(msg.contains("parse")),
             other => panic!("expected Invalid, got {other:?}"),
         }
+    }
+
+    /// Phase 11.A H2 — `save()` clamps the persisted state file to
+    /// mode `0o600` so a co-tenant on the same host cannot silently
+    /// downgrade `rekor_min_tree_size`. The chmod runs after the
+    /// atomic rename and overrides whatever umask the process held.
+    #[test]
+    #[cfg(unix)]
+    fn save_clamps_state_file_to_0o600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonStateStore::new(dir.path().join("anchor.json"));
+        store.save(99).unwrap();
+
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "state file mode {:o} != 0o600",
+            mode & 0o777,
+        );
     }
 }
