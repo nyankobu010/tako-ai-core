@@ -308,10 +308,98 @@ class JsonStateStore:
         return repr(self._native)
 
 
+class RedisStateStore:
+    """Redis-backed persistence for the :class:`KeylessVerifier` Rekor
+    checkpoint freshness anchor in multi-replica deployments
+    (Phase 13.A, v0.14.0).
+
+    :class:`JsonStateStore` is single-process: each replica owns an
+    independent file and a slow replica can silently advance its local
+    water-mark below another replica's. ``RedisStateStore`` keeps a
+    single shared key in Redis. Cross-replica safety lives in a small
+    Lua script enforcing **monotonic** write so a slow replica cannot
+    clobber a higher water-mark with a stale value.
+    Construct asynchronously via :meth:`connect`.
+
+    Only available when the wheel is built with the ``redis`` feature
+    (``maturin build --features redis``).
+
+    Typical operator pattern (multi-replica)::
+
+        store = await tako.sigstore.RedisStateStore.connect(
+            "redis://redis.internal:6379",
+        )
+        verifier = await store.seed(
+            tako.sigstore.KeylessVerifier(
+                issuer="https://accounts.example.com",
+                san="ci@example.com",
+                rekor_public_key_pem=rekor_pem,
+            )
+        )
+        # ... verify bundles ...
+        await store.persist(verifier)
+    """
+
+    _native: Any
+
+    def __init__(self) -> None:
+        # Construction goes through `connect`; this constructor exists
+        # only so users who hold a ready instance can subclass.
+        self._native = None  # type: ignore[assignment]
+
+    @classmethod
+    async def connect(
+        cls, url: str, key: str | None = None
+    ) -> RedisStateStore:
+        """Connect to a Redis URL and return a ready store.
+
+        ``url`` accepts either ``redis://`` or ``rediss://`` (TLS).
+        ``key`` overrides the default
+        ``"tako:sigstore:rekor_min_tree_size"``.
+        """
+        instance = cls.__new__(cls)
+        instance._native = await _native.RedisStateStore.connect(url, key)
+        return instance
+
+    @property
+    def key(self) -> str:
+        """The redis key backing this store."""
+        return str(self._native.key())
+
+    async def load(self) -> int:
+        """Read the persisted ``rekor_min_tree_size``. Returns ``0``
+        when the key does not exist (first-boot semantics)."""
+        return int(await self._native.load())
+
+    async def save(self, n: int) -> None:
+        """Persist ``n`` as the new high-water mark. The redis Lua
+        script enforces a monotonic compare so a stale write is
+        silently dropped (the next :meth:`load` returns the higher
+        existing value)."""
+        await self._native.save(int(n))
+
+    async def seed(self, verifier: KeylessVerifier) -> KeylessVerifier:
+        """Apply the persisted anchor to ``verifier`` and return it.
+        Mutates the verifier's interior atomic state in place; the
+        returned reference is the same object (for chainable assignment).
+        """
+        verifier._native = await self._native.seed(verifier._native)
+        return verifier
+
+    async def persist(self, verifier: KeylessVerifier) -> None:
+        """Read ``verifier.rekor_max_tree_size()`` and write it via
+        :meth:`save`."""
+        await self._native.persist(verifier._native)
+
+    def __repr__(self) -> str:
+        return repr(self._native)
+
+
 __all__ = [
     "Catalogue",
     "CatalogueVerifier",
     "JsonStateStore",
     "KeylessVerifier",
+    "RedisStateStore",
     "TrustRoot",
 ]

@@ -74,6 +74,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_sigstore::PyTrustRoot>()?;
     #[cfg(feature = "sigstore")]
     m.add_class::<py_sigstore::PyJsonStateStore>()?;
+    #[cfg(feature = "redis")]
+    m.add_class::<py_sigstore::PyRedisStateStore>()?;
     m.add_class::<py_runtime::PyInMemoryBudgetBackend>()?;
     #[cfg(feature = "redis")]
     m.add_class::<py_runtime::PyRedisBudgetBackend>()?;

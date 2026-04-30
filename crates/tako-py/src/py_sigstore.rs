@@ -10,12 +10,18 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+#[cfg(feature = "redis")]
+use pyo3_async_runtimes::tokio::future_into_py;
 #[cfg(feature = "sigstore-protobuf")]
 use tako_governance::sigstore::KeylessBundle;
 use tako_governance::sigstore::{
     Catalogue, CatalogueVerifier, IdentityPolicy, KeylessVerifier, TrustRoot,
 };
+#[cfg(feature = "redis")]
+use tako_governance::sigstore_state::StateStore;
 use tako_governance::sigstore_state::JsonStateStore;
+#[cfg(feature = "redis")]
+use tako_governance::sigstore_state_redis::RedisStateStore;
 
 use crate::py_provider::map_err;
 
@@ -324,5 +330,127 @@ impl PyJsonStateStore {
 
     fn __repr__(&self) -> String {
         format!("JsonStateStore(path={:?})", self.inner.path())
+    }
+}
+
+/// Phase 13.A — Redis-backed [`tako_governance::sigstore_state::StateStore`]
+/// for the [`tako_governance::sigstore::KeylessVerifier`] Rekor checkpoint
+/// freshness anchor in multi-replica deployments.
+///
+/// Constructed asynchronously via the `connect` staticmethod —
+/// `await tako.sigstore.RedisStateStore.connect("redis://...")`. Cross-replica
+/// safety lives in a small Lua script enforcing monotonic write so a slow
+/// replica cannot clobber a higher water-mark with a stale value.
+///
+/// Only available when the wheel is built with the `redis` feature.
+///
+/// ```python
+/// store = await tako.sigstore.RedisStateStore.connect("redis://localhost:6379")
+/// verifier = await store.seed(tako.sigstore.KeylessVerifier(issuer, san))
+/// # ... verify bundles ...
+/// await store.persist(verifier)
+/// ```
+#[cfg(feature = "redis")]
+#[pyclass(name = "RedisStateStore", module = "tako._native")]
+pub struct PyRedisStateStore {
+    inner: Arc<RedisStateStore>,
+}
+
+#[cfg(feature = "redis")]
+impl std::fmt::Debug for PyRedisStateStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PyRedisStateStore")
+            .field("key", &self.inner.key())
+            .finish()
+    }
+}
+
+#[cfg(feature = "redis")]
+#[pymethods]
+impl PyRedisStateStore {
+    /// Connect to a Redis URL and return a `RedisStateStore`. URL forms:
+    /// `redis://host:port` or `rediss://host:port` for TLS.
+    /// Optional `key` overrides the default
+    /// `"tako:sigstore:rekor_min_tree_size"`.
+    #[staticmethod]
+    #[pyo3(signature = (url, key=None))]
+    fn connect<'py>(
+        py: Python<'py>,
+        url: String,
+        key: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        future_into_py(py, async move {
+            let mut store = RedisStateStore::connect(&url).await.map_err(map_err)?;
+            if let Some(k) = key {
+                store = store.with_key(k);
+            }
+            Ok(PyRedisStateStore {
+                inner: Arc::new(store),
+            })
+        })
+    }
+
+    /// Read the persisted `rekor_min_tree_size`. Returns `0` when the
+    /// key does not exist (matches `JsonStateStore` first-boot semantics).
+    fn load<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        future_into_py(py, async move { inner.load().await.map_err(map_err) })
+    }
+
+    /// Persist `n` as the new high-water mark. The redis Lua script
+    /// enforces a monotonic compare so a stale write is silently dropped.
+    fn save<'py>(&self, py: Python<'py>, n: u64) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        future_into_py(py, async move {
+            inner.save(n).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
+    /// Apply the persisted anchor to `verifier` and return the same
+    /// verifier (chainable). Mutates the verifier's interior atomic
+    /// state in place — the returned reference is the same object.
+    fn seed<'py>(
+        &self,
+        py: Python<'py>,
+        verifier: Py<PyKeylessVerifier>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        let v_inner = {
+            let v_ref = verifier.borrow(py);
+            Arc::clone(&v_ref.inner)
+        };
+        future_into_py(py, async move {
+            let n = inner.load().await.map_err(map_err)?;
+            v_inner.set_rekor_min_tree_size(n);
+            Python::attach(|py| Ok(verifier.clone_ref(py)))
+        })
+    }
+
+    /// Read `verifier.rekor_max_tree_size()` and write it via `save`.
+    fn persist<'py>(
+        &self,
+        py: Python<'py>,
+        verifier: Py<PyKeylessVerifier>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        let v_inner = {
+            let v_ref = verifier.borrow(py);
+            Arc::clone(&v_ref.inner)
+        };
+        future_into_py(py, async move {
+            let n = v_inner.rekor_max_tree_size();
+            inner.save(n).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
+    /// The redis key backing this store.
+    fn key(&self) -> String {
+        self.inner.key().to_string()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("RedisStateStore(key={:?})", self.inner.key())
     }
 }
