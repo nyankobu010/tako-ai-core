@@ -68,9 +68,28 @@ pub struct JsonStateStore {
     path: PathBuf,
 }
 
+/// Phase 11.A M2 — schema version pinned in the on-disk file.
+///
+/// Bump on schema change (e.g. when a future field like a SET timestamp
+/// anchor or per-checkpoint signature is introduced). Readers reject
+/// any version they don't know explicitly so a forward-incompatible
+/// state file fails loudly rather than silently dropping new fields.
+const STATE_FILE_VERSION: u32 = 1;
+
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StateFile {
+    /// Phase 11.A M2 — `default = …` keeps v0.11.0 state files (which
+    /// did not carry a `version` field) loadable as v1; new writes
+    /// always include the field. `load()` rejects any version that
+    /// disagrees with [`STATE_FILE_VERSION`].
+    #[serde(default = "default_state_file_version")]
+    version: u32,
     rekor_min_tree_size: u64,
+}
+
+fn default_state_file_version() -> u32 {
+    STATE_FILE_VERSION
 }
 
 impl JsonStateStore {
@@ -98,6 +117,14 @@ impl JsonStateStore {
                         self.path.display()
                     ))
                 })?;
+                if parsed.version != STATE_FILE_VERSION {
+                    return Err(TakoError::Invalid(format!(
+                        "sigstore_state: unsupported state file version {} \
+                         (this build expects {STATE_FILE_VERSION}); \
+                         rebuild from a fresh boot",
+                        parsed.version,
+                    )));
+                }
                 Ok(parsed.rekor_min_tree_size)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
@@ -121,6 +148,7 @@ impl JsonStateStore {
     /// leaves an orphan `*.tmp` file behind.
     pub fn save(&self, n: u64) -> Result<(), TakoError> {
         let body = serde_json::to_vec(&StateFile {
+            version: STATE_FILE_VERSION,
             rekor_min_tree_size: n,
         })
         .map_err(|e| TakoError::Invalid(format!("sigstore_state: serialise: {e}")))?;
@@ -295,5 +323,78 @@ mod tests {
             "state file mode {:o} != 0o600",
             mode & 0o777,
         );
+    }
+
+    /// Phase 11.A M2 — `#[serde(deny_unknown_fields)]` rejects state
+    /// files containing fields the reader does not recognise, so a
+    /// future schema cannot silently lose new fields when read by an
+    /// older binary.
+    #[test]
+    fn unknown_field_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("anchor.json");
+        std::fs::write(
+            &path,
+            br#"{"version":1,"rekor_min_tree_size":42,"attacker_field":"x"}"#,
+        )
+        .unwrap();
+        let store = JsonStateStore::new(&path);
+        let err = store.load().unwrap_err();
+        match err {
+            TakoError::Invalid(msg) => assert!(
+                msg.contains("unknown field") && msg.contains("attacker_field"),
+                "expected unknown-field error, got: {msg}"
+            ),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    /// Phase 11.A M2 — a state file whose `version` field is not the
+    /// current `STATE_FILE_VERSION` is rejected loudly. Operators must
+    /// rebuild from a fresh boot rather than silently accept new
+    /// schemas the binary does not understand.
+    #[test]
+    fn unsupported_version_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("anchor.json");
+        std::fs::write(&path, br#"{"version":2,"rekor_min_tree_size":42}"#).unwrap();
+        let store = JsonStateStore::new(&path);
+        let err = store.load().unwrap_err();
+        match err {
+            TakoError::Invalid(msg) => assert!(
+                msg.contains("unsupported state file version 2"),
+                "expected version error, got: {msg}"
+            ),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    /// Phase 11.A M2 — v0.11.0 state files (no `version` field at all)
+    /// must continue to load as v1 via `default = …`. This is the
+    /// upgrade-path guarantee for operators that ran `JsonStateStore`
+    /// against the v0.11.0 release.
+    #[test]
+    fn legacy_unversioned_file_loads_as_v1() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("anchor.json");
+        std::fs::write(&path, br#"{"rekor_min_tree_size":17}"#).unwrap();
+        let store = JsonStateStore::new(&path);
+        assert_eq!(store.load().unwrap(), 17);
+    }
+
+    /// Phase 11.A M2 — `save()` always writes `version: 1`, so a
+    /// fresh save can be re-read on the same binary without going
+    /// through the legacy upgrade path.
+    #[test]
+    fn save_writes_current_version_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonStateStore::new(dir.path().join("anchor.json"));
+        store.save(123).unwrap();
+        let raw = std::fs::read_to_string(store.path()).unwrap();
+        assert!(
+            raw.contains(r#""version":1"#),
+            "expected version: 1, got: {raw}"
+        );
+        assert_eq!(store.load().unwrap(), 123);
     }
 }
