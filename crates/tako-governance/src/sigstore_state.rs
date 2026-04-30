@@ -28,9 +28,9 @@
 //! operator's startup / shutdown code stays tidy:
 //!
 //! ```no_run
-//! # use tako_governance::sigstore::{IdentityPolicy, KeylessVerifier, SanMatch};
+//! # use tako_governance::sigstore::{IdentityPolicy, KeylessVerifier};
 //! # use tako_governance::sigstore_state::JsonStateStore;
-//! # let identity = IdentityPolicy::new("https://accounts.example.com", SanMatch::Email("ci@example.com".into()));
+//! # let identity = IdentityPolicy::exact("https://accounts.example.com", "ci@example.com");
 //! let store = JsonStateStore::new("/var/lib/tako/rekor.json");
 //! let verifier = store.seed(KeylessVerifier::new(identity))?;
 //! // ... verify bundles ...
