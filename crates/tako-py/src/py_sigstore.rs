@@ -15,6 +15,7 @@ use tako_governance::sigstore::KeylessBundle;
 use tako_governance::sigstore::{
     Catalogue, CatalogueVerifier, IdentityPolicy, KeylessVerifier, TrustRoot,
 };
+use tako_governance::sigstore_state::JsonStateStore;
 
 use crate::py_provider::map_err;
 
@@ -235,5 +236,93 @@ impl PyTrustRoot {
 
     fn __repr__(&self) -> String {
         "TrustRoot(...)".to_string()
+    }
+}
+
+/// Phase 10.A — on-disk JSON persistence for
+/// [`KeylessVerifier`]'s Rekor checkpoint freshness anchor.
+///
+/// Construct with `JsonStateStore(path)`. Call `seed(verifier)` at
+/// startup (after building a `KeylessVerifier`) to load the persisted
+/// `rekor_min_tree_size` and apply it to the verifier. Call
+/// `persist(verifier)` after each verify cycle (or at shutdown) to
+/// write the verifier's high-water mark back to disk.
+///
+/// Crash-safe: `save` writes to `<path>.tmp` then atomically renames
+/// over `<path>`, so an interrupted save cannot leave a corrupt
+/// anchor file. `load` against a missing path returns `0` (matches
+/// the verifier's "uninitialised" sentinel).
+///
+/// ```python
+/// store = tako.sigstore.JsonStateStore("/var/lib/tako/rekor.json")
+/// verifier = store.seed(tako.sigstore.KeylessVerifier(issuer, san))
+/// # ... verify bundles ...
+/// store.persist(verifier)
+/// ```
+#[pyclass(name = "JsonStateStore", module = "tako._native")]
+pub struct PyJsonStateStore {
+    inner: JsonStateStore,
+}
+
+impl std::fmt::Debug for PyJsonStateStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PyJsonStateStore")
+            .field("path", &self.inner.path())
+            .finish()
+    }
+}
+
+#[pymethods]
+impl PyJsonStateStore {
+    #[new]
+    fn new(path: &str) -> Self {
+        Self {
+            inner: JsonStateStore::new(path),
+        }
+    }
+
+    /// Read the persisted `rekor_min_tree_size`. Returns `0` when the
+    /// file does not exist (first-boot semantics).
+    fn load(&self) -> PyResult<u64> {
+        self.inner.load().map_err(map_err)
+    }
+
+    /// Persist `n` as the new high-water mark via an atomic rename.
+    fn save(&self, n: u64) -> PyResult<()> {
+        self.inner.save(n).map_err(map_err)
+    }
+
+    /// Apply the persisted anchor to `verifier` and return the same
+    /// verifier (chainable). Mutates the verifier's interior atomic
+    /// state in place — the returned reference is the same object.
+    fn seed(
+        &self,
+        py: Python<'_>,
+        verifier: Py<PyKeylessVerifier>,
+    ) -> PyResult<Py<PyKeylessVerifier>> {
+        let n = self.inner.load().map_err(map_err)?;
+        {
+            let v_ref = verifier.borrow(py);
+            v_ref.inner.set_rekor_min_tree_size(n);
+        }
+        Ok(verifier)
+    }
+
+    /// Read `verifier.rekor_max_tree_size()` and write it via `save`.
+    fn persist(&self, py: Python<'_>, verifier: Py<PyKeylessVerifier>) -> PyResult<()> {
+        let n = {
+            let v_ref = verifier.borrow(py);
+            v_ref.inner.rekor_max_tree_size()
+        };
+        self.inner.save(n).map_err(map_err)
+    }
+
+    /// Filesystem path backing this store.
+    fn path(&self) -> String {
+        self.inner.path().display().to_string()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("JsonStateStore(path={:?})", self.inner.path())
     }
 }

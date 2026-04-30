@@ -62,3 +62,4 @@ wiremock = { workspace = true }
 sigstore = { workspace = true }
 rcgen    = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 time     = "0.3"
+tempfile = "3"

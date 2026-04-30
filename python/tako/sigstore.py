@@ -227,4 +227,76 @@ class TrustRoot:
         return repr(self._native)
 
 
-__all__ = ["Catalogue", "CatalogueVerifier", "KeylessVerifier", "TrustRoot"]
+class JsonStateStore:
+    """On-disk JSON persistence for the :class:`KeylessVerifier` Rekor
+    checkpoint freshness anchor (Phase 10.A, v0.11.0).
+
+    Phase 9.B added the in-memory anchor on :class:`KeylessVerifier`;
+    this helper persists the high-water mark across process restarts.
+    Crash-safe via the standard temp-then-rename pattern, so an
+    interrupted save never leaves a corrupt anchor file.
+
+    Wire shape on disk:
+
+    .. code-block:: json
+
+        { "rekor_min_tree_size": 4711 }
+
+    Typical operator pattern::
+
+        store = tako.sigstore.JsonStateStore("/var/lib/tako/rekor.json")
+        verifier = store.seed(
+            tako.sigstore.KeylessVerifier(
+                issuer="https://accounts.example.com",
+                san="ci@example.com",
+                rekor_public_key_pem=rekor_pem,
+            )
+        )
+        # ... verify bundles ...
+        store.persist(verifier)
+    """
+
+    _native: Any
+
+    def __init__(self, path: str) -> None:
+        self._native = _native.JsonStateStore(path)
+
+    @property
+    def path(self) -> str:
+        """Filesystem path backing this store."""
+        return str(self._native.path())
+
+    def load(self) -> int:
+        """Read the persisted ``rekor_min_tree_size``. Returns ``0``
+        when the file does not exist (first-boot semantics)."""
+        return int(self._native.load())
+
+    def save(self, n: int) -> None:
+        """Write ``n`` as the new high-water mark via an atomic
+        ``write-temp-then-rename``."""
+        self._native.save(int(n))
+
+    def seed(self, verifier: KeylessVerifier) -> KeylessVerifier:
+        """Apply the persisted anchor to ``verifier`` and return it.
+        Mutates the verifier's interior atomic state in place; the
+        returned reference is the same object (for chainable assignment).
+        """
+        verifier._native = self._native.seed(verifier._native)
+        return verifier
+
+    def persist(self, verifier: KeylessVerifier) -> None:
+        """Read ``verifier.rekor_max_tree_size()`` and write it via
+        :meth:`save`."""
+        self._native.persist(verifier._native)
+
+    def __repr__(self) -> str:
+        return repr(self._native)
+
+
+__all__ = [
+    "Catalogue",
+    "CatalogueVerifier",
+    "JsonStateStore",
+    "KeylessVerifier",
+    "TrustRoot",
+]

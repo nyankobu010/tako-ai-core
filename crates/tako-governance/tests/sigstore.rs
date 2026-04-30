@@ -1486,3 +1486,80 @@ mod checkpoint_freshness {
         assert_eq!(verifier.rekor_max_tree_size(), 10);
     }
 }
+
+mod state_store_seed_persist {
+    //! Phase 10.A — `JsonStateStore` round-trip against a real
+    //! `KeylessVerifier`. The file-only unit tests for `JsonStateStore`
+    //! (atomic write, missing-file load, parse error) live in
+    //! `src/sigstore_state.rs::tests`; this module covers the
+    //! seed → verify → persist cycle that needs the existing bundle
+    //! fixture helpers.
+
+    use super::checkpoint::{assemble_bundle, build_bundle_pieces, mint_checkpoint};
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use tako_governance::sigstore::KeylessVerifier;
+    use tako_governance::sigstore_state::JsonStateStore;
+
+    /// Persist after a verify cycle: the on-disk value matches
+    /// `verifier.rekor_max_tree_size()` and a fresh verifier seeded
+    /// from the same store rejects a smaller-tree-size bundle.
+    #[test]
+    fn seed_then_verify_then_persist_round_trips_high_water_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonStateStore::new(dir.path().join("rekor.json"));
+
+        let p = build_bundle_pieces();
+        let root_b64 = B64.encode(p.true_root);
+        let cp = mint_checkpoint(
+            &p.rekor_signer,
+            "rekor.sigstore.dev - test-fixture",
+            8,
+            &root_b64,
+            "rekor.sigstore.dev",
+        );
+        let bundle = assemble_bundle(&p, cp);
+
+        let verifier = store
+            .seed(
+                KeylessVerifier::new(p.identity.clone())
+                    .with_rekor_key(p.rekor_pem.as_bytes())
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(verifier.rekor_max_tree_size(), 0); // first-boot seed
+
+        verifier.verify_bundle(&p.manifest, &bundle).unwrap();
+        assert_eq!(verifier.rekor_max_tree_size(), 8);
+
+        store.persist(&verifier).unwrap();
+        assert_eq!(store.load().unwrap(), 8);
+
+        // Simulate process restart: a fresh verifier seeded from the
+        // same store inherits the high-water mark and rejects a
+        // smaller-tree-size bundle on first observation.
+        let smaller_cp = mint_checkpoint(
+            &p.rekor_signer,
+            "rekor.sigstore.dev - test-fixture",
+            5,
+            &root_b64,
+            "rekor.sigstore.dev",
+        );
+        let smaller = assemble_bundle(&p, smaller_cp);
+        let restarted = store
+            .seed(
+                KeylessVerifier::new(p.identity.clone())
+                    .with_rekor_key(p.rekor_pem.as_bytes())
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(restarted.rekor_max_tree_size(), 8);
+
+        let err = restarted.verify_bundle(&p.manifest, &smaller).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("tree_size 5 < previously observed 8"),
+            "expected restarted-rollback error, got: {msg}"
+        );
+    }
+}

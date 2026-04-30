@@ -503,8 +503,18 @@ impl KeylessVerifier {
     /// or smaller than any tree_size already observed on this
     /// instance — is rejected as a log rollback / forked tree.
     pub fn with_rekor_min_tree_size(self, n: u64) -> Self {
-        self.rekor_min_tree_size.store(n, Ordering::Relaxed);
+        self.set_rekor_min_tree_size(n);
         self
+    }
+
+    /// Phase 10.A — `&self` form of [`with_rekor_min_tree_size`].
+    /// Lets callers that hold the verifier behind an `Arc` (for
+    /// example through a PyO3 wrapper or a `tower` layer) seed the
+    /// freshness anchor without ownership transfer. The anchor is
+    /// stored in an `Arc<AtomicU64>` so this remains race-free under
+    /// concurrent verifies.
+    pub fn set_rekor_min_tree_size(&self, n: u64) {
+        self.rekor_min_tree_size.store(n, Ordering::Relaxed);
     }
 
     /// Phase 9.B — read the current high-water mark on the Rekor

@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(none)
+Phase 10 — Phase 9 follow-on completeness + cross-orchestrator
+verifier scores + Python provider streaming. Plan:
+[PLAN_PHASE10.md](PLAN_PHASE10.md).
+
+### Added
+
+- **On-disk `JsonStateStore` for Rekor freshness** (Phase 10.A):
+  closes the v0.10.0 follow-on flagged in `## [0.10.0]`'s release
+  notes. Phase 9.B shipped the in-memory anchor on
+  `KeylessVerifier::with_rekor_min_tree_size` /
+  `rekor_max_tree_size` but persistence was operator-rolled. Phase
+  10.A adds a tiny crash-safe helper:
+  - New module
+    [crates/tako-governance/src/sigstore_state.rs](crates/tako-governance/src/sigstore_state.rs)
+    exporting `JsonStateStore { path }` with `new`, `load` (returns
+    `Ok(0)` on missing file — matches the verifier's
+    "uninitialised" sentinel), `save` (atomic
+    `write-temp-then-rename`), `seed(KeylessVerifier) ->
+    KeylessVerifier`, and `persist(&KeylessVerifier)` convenience
+    wrappers. Wire schema:
+    `{ "rekor_min_tree_size": u64 }`.
+  - New `&self` setter on `KeylessVerifier`:
+    `set_rekor_min_tree_size(n)`, used by the PyO3 facade so the
+    anchor can be applied through an `Arc<KeylessVerifier>` without
+    ownership transfer. The original consuming
+    `with_rekor_min_tree_size(n)` now delegates to it.
+  - PyO3: `tako._native.JsonStateStore` exposes `__init__(path)`,
+    `load() -> int`, `save(n: int)`, `seed(verifier) -> verifier`,
+    `persist(verifier)`, and a `path()` getter. Forwarded through
+    `tako.sigstore.JsonStateStore`. `_native.pyi` stub updated.
+  - 5 new Rust unit tests in
+    `crates/tako-governance/src/sigstore_state.rs::tests` cover
+    round-trip, first-boot zero, `.tmp` non-residue after a
+    successful save, missing-parent-dir auto-create, and
+    parse-error surfacing. 1 new Rust integration test in
+    `crates/tako-governance/tests/sigstore.rs::state_store_seed_persist`
+    exercises the full seed → verify → persist cycle against the
+    existing checkpoint fixture and a simulated process restart
+    that rejects a smaller-tree-size bundle. 5 new Python smoke
+    tests in `tests/python/test_phase10_state_store.py`.
 
 ## [0.10.0] - 2026-04-30
 
