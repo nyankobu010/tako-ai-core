@@ -1157,7 +1157,7 @@ mod checkpoint {
     /// root_hash)` using `rekor_signer` and return the populated
     /// [`RekorCheckpoint`]. The signed message is the canonical
     /// `format!("{origin}\n{tree_size}\n{root_hash_b64}\n\n")`.
-    fn mint_checkpoint(
+    pub(super) fn mint_checkpoint(
         rekor_signer: &SigStoreSigner,
         origin: &str,
         tree_size: u64,
@@ -1179,23 +1179,23 @@ mod checkpoint {
     /// serialising the bundle. Returned by [`build_bundle_pieces`] so
     /// individual tests can swap fields and still re-sign with the
     /// same Rekor key (isolating root-mismatch from signature tamper).
-    struct BundlePieces {
-        manifest: Vec<u8>,
-        leaf_pem: String,
-        leaf_kp: KeyPair,
-        rekor_signer: SigStoreSigner,
-        rekor_pem: String,
-        identity: IdentityPolicy,
-        log_id: String,
-        log_index: u64,
-        integrated_time: i64,
-        body_b64: String,
-        inclusion: RekorInclusionProof,
-        true_root: [u8; 32],
-        n_leaves: u64,
+    pub(super) struct BundlePieces {
+        pub(super) manifest: Vec<u8>,
+        pub(super) leaf_pem: String,
+        pub(super) leaf_kp: KeyPair,
+        pub(super) rekor_signer: SigStoreSigner,
+        pub(super) rekor_pem: String,
+        pub(super) identity: IdentityPolicy,
+        pub(super) log_id: String,
+        pub(super) log_index: u64,
+        pub(super) integrated_time: i64,
+        pub(super) body_b64: String,
+        pub(super) inclusion: RekorInclusionProof,
+        pub(super) true_root: [u8; 32],
+        pub(super) n_leaves: u64,
     }
 
-    fn build_bundle_pieces() -> BundlePieces {
+    pub(super) fn build_bundle_pieces() -> BundlePieces {
         let manifest = sample_manifest();
         let issuer = "https://token.actions.githubusercontent.com";
         let san = "https://example.com/svc";
@@ -1243,7 +1243,7 @@ mod checkpoint {
     /// Assemble the [`KeylessBundle`] from the checkpoint pieces plus
     /// a custom checkpoint. Re-signs the manifest with the leaf key
     /// and mints the SET with the Rekor signer.
-    fn assemble_bundle(p: &BundlePieces, checkpoint: RekorCheckpoint) -> Vec<u8> {
+    pub(super) fn assemble_bundle(p: &BundlePieces, checkpoint: RekorCheckpoint) -> Vec<u8> {
         let manifest_sig = sign_manifest(&p.leaf_kp, &p.manifest);
         let set_b64 = mint_set(
             &p.rekor_signer,
@@ -1352,5 +1352,137 @@ mod checkpoint {
             msg.contains("disagrees with inclusion proof"),
             "expected root-mismatch error, got: {msg}"
         );
+    }
+}
+
+mod checkpoint_freshness {
+    //! Phase 9.B — Rekor checkpoint freshness anchor (TOFU).
+    //!
+    //! Verifies that a successful checkpoint observation atomically
+    //! advances the verifier's `rekor_max_tree_size`, and that any
+    //! later bundle whose checkpoint reports a smaller tree_size is
+    //! rejected as a rollback.
+
+    use super::checkpoint::{assemble_bundle, build_bundle_pieces, mint_checkpoint};
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use tako_governance::sigstore::KeylessVerifier;
+
+    /// Two successful verifies on the same verifier instance with
+    /// monotonically increasing checkpoint tree_size — both pass and
+    /// the high-water mark advances to the larger value.
+    #[test]
+    fn monotonic_ascent_accepted_and_advances_high_water_mark() {
+        let p = build_bundle_pieces();
+        let root_b64 = B64.encode(p.true_root);
+
+        let cp_small = mint_checkpoint(
+            &p.rekor_signer,
+            "rekor.sigstore.dev - test-fixture",
+            5,
+            &root_b64,
+            "rekor.sigstore.dev",
+        );
+        let cp_big = mint_checkpoint(
+            &p.rekor_signer,
+            "rekor.sigstore.dev - test-fixture",
+            7,
+            &root_b64,
+            "rekor.sigstore.dev",
+        );
+        let bundle_small = assemble_bundle(&p, cp_small);
+        let bundle_big = assemble_bundle(&p, cp_big);
+
+        let verifier = KeylessVerifier::new(p.identity.clone())
+            .with_rekor_key(p.rekor_pem.as_bytes())
+            .unwrap();
+
+        assert_eq!(verifier.rekor_max_tree_size(), 0);
+        verifier.verify_bundle(&p.manifest, &bundle_small).unwrap();
+        assert_eq!(verifier.rekor_max_tree_size(), 5);
+        verifier.verify_bundle(&p.manifest, &bundle_big).unwrap();
+        assert_eq!(verifier.rekor_max_tree_size(), 7);
+    }
+
+    /// Verifying a bundle whose checkpoint reports a smaller tree_size
+    /// than one already observed must be rejected with a clear
+    /// rollback error message; the high-water mark must remain at the
+    /// previously-observed value (i.e. the failed attempt does not
+    /// regress it).
+    #[test]
+    fn rollback_rejected_after_higher_tree_size_observed() {
+        let p = build_bundle_pieces();
+        let root_b64 = B64.encode(p.true_root);
+
+        let cp_big = mint_checkpoint(
+            &p.rekor_signer,
+            "rekor.sigstore.dev - test-fixture",
+            10,
+            &root_b64,
+            "rekor.sigstore.dev",
+        );
+        let cp_small = mint_checkpoint(
+            &p.rekor_signer,
+            "rekor.sigstore.dev - test-fixture",
+            5,
+            &root_b64,
+            "rekor.sigstore.dev",
+        );
+        let bundle_big = assemble_bundle(&p, cp_big);
+        let bundle_small = assemble_bundle(&p, cp_small);
+
+        let verifier = KeylessVerifier::new(p.identity.clone())
+            .with_rekor_key(p.rekor_pem.as_bytes())
+            .unwrap();
+
+        verifier.verify_bundle(&p.manifest, &bundle_big).unwrap();
+        assert_eq!(verifier.rekor_max_tree_size(), 10);
+
+        let err = verifier
+            .verify_bundle(&p.manifest, &bundle_small)
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("tree_size 5 < previously observed 10"),
+            "expected rollback error, got: {msg}"
+        );
+        // High-water mark unchanged.
+        assert_eq!(verifier.rekor_max_tree_size(), 10);
+    }
+
+    /// A seeded verifier (constructed via `with_rekor_min_tree_size`)
+    /// must reject bundles whose checkpoint tree_size is below the
+    /// seed even on first observation — the seed is the persisted
+    /// "trust root" for the freshness anchor.
+    #[test]
+    fn seed_value_enforced_from_construction() {
+        let p = build_bundle_pieces();
+        let root_b64 = B64.encode(p.true_root);
+
+        let cp = mint_checkpoint(
+            &p.rekor_signer,
+            "rekor.sigstore.dev - test-fixture",
+            5,
+            &root_b64,
+            "rekor.sigstore.dev",
+        );
+        let bundle_bytes = assemble_bundle(&p, cp);
+
+        let verifier = KeylessVerifier::new(p.identity.clone())
+            .with_rekor_key(p.rekor_pem.as_bytes())
+            .unwrap()
+            .with_rekor_min_tree_size(10);
+        assert_eq!(verifier.rekor_max_tree_size(), 10);
+
+        let err = verifier
+            .verify_bundle(&p.manifest, &bundle_bytes)
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("tree_size 5 < previously observed 10"),
+            "expected seeded-rollback error, got: {msg}"
+        );
+        // Seed not regressed by the failed attempt.
+        assert_eq!(verifier.rekor_max_tree_size(), 10);
     }
 }

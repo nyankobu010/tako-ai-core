@@ -41,6 +41,8 @@
 //! tree when explicitly enabled.
 
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ::sigstore::crypto::{CosignVerificationKey, Signature, SigningScheme};
 use base64::Engine;
@@ -432,6 +434,14 @@ pub struct KeylessVerifier {
     identity: IdentityPolicy,
     trust_root: Option<TrustRoot>,
     rekor_key: Option<CosignVerificationKey>,
+    /// Phase 9.B — Rekor checkpoint freshness anchor (trust-on-first-use).
+    /// Tracks the highest `tree_size` observed across `verify_bundle`
+    /// calls on this verifier instance. A subsequent bundle whose
+    /// checkpoint reports a smaller tree_size is rejected as a
+    /// rollback. Held as `Arc<AtomicU64>` so the public API remains
+    /// `&self`-immutable and concurrent verifies are race-free.
+    /// `0` means "uninitialised" (no constraint).
+    rekor_min_tree_size: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for KeylessVerifier {
@@ -440,6 +450,10 @@ impl std::fmt::Debug for KeylessVerifier {
             .field("identity", &self.identity)
             .field("trust_root", &self.trust_root)
             .field("rekor_key_pinned", &self.rekor_key.is_some())
+            .field(
+                "rekor_min_tree_size",
+                &self.rekor_min_tree_size.load(Ordering::Relaxed),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -451,6 +465,7 @@ impl KeylessVerifier {
             identity,
             trust_root: None,
             rekor_key: None,
+            rekor_min_tree_size: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -474,6 +489,29 @@ impl KeylessVerifier {
             .map_err(|e| TakoError::Invalid(format!("sigstore: rekor key: {e}")))?;
         self.rekor_key = Some(key);
         Ok(self)
+    }
+
+    /// Phase 9.B — seed the Rekor checkpoint freshness anchor.
+    ///
+    /// When set, every successful `verify_bundle` call asserts that
+    /// the carried checkpoint's `tree_size >= n` and atomically
+    /// advances the high-water mark. Operators load this value at
+    /// startup from a persisted state file (out-of-band; tako does not
+    /// own the persistence layer) and read it back via
+    /// [`rekor_max_tree_size`](Self::rekor_max_tree_size) after each
+    /// verify to write back. A `tree_size` smaller than the seed —
+    /// or smaller than any tree_size already observed on this
+    /// instance — is rejected as a log rollback / forked tree.
+    pub fn with_rekor_min_tree_size(self, n: u64) -> Self {
+        self.rekor_min_tree_size.store(n, Ordering::Relaxed);
+        self
+    }
+
+    /// Phase 9.B — read the current high-water mark on the Rekor
+    /// checkpoint freshness anchor. Returns `0` when no checkpoint
+    /// has been observed and no seed value was set.
+    pub fn rekor_max_tree_size(&self) -> u64 {
+        self.rekor_min_tree_size.load(Ordering::Relaxed)
     }
 
     /// Verify a keyless bundle and return the parsed [`Catalogue`].
@@ -561,6 +599,20 @@ impl KeylessVerifier {
                     .as_ref()
                     .map(|p| p.root_hash_hex.as_str());
                 verify_rekor_checkpoint(rekor_key, checkpoint, expected_root_hex)?;
+                // 9.B: trust-on-first-use freshness anchor. The
+                // checkpoint's tree_size must monotonically advance
+                // across verify calls on this verifier. A smaller
+                // value means the operator is being shown a stale or
+                // forked tree.
+                let prev = self.rekor_min_tree_size.load(Ordering::Relaxed);
+                if checkpoint.tree_size < prev {
+                    return Err(TakoError::Invalid(format!(
+                        "sigstore: rekor checkpoint tree_size {} < previously observed {}",
+                        checkpoint.tree_size, prev,
+                    )));
+                }
+                self.rekor_min_tree_size
+                    .fetch_max(checkpoint.tree_size, Ordering::Relaxed);
             }
         }
 
