@@ -99,6 +99,14 @@ class KeylessVerifier:
     chain-of-trust validation against an operator-pinned Fulcio root and
     Rekor SET verification against an operator-pinned Rekor public key.
     Both default to ``None`` so existing v0.6.0 callers keep working.
+
+    ``rekor_min_tree_size`` (Phase 9.B, v0.10.0) seeds the
+    trust-on-first-use freshness anchor over the Rekor checkpoint's
+    ``tree_size``. Any subsequent bundle whose checkpoint reports a
+    smaller value is rejected as a log rollback. Operators load this
+    from a persisted state file at startup; the verifier itself is
+    in-memory. Read the high-water mark back via
+    :meth:`rekor_max_tree_size` after each verify to write it out.
     """
 
     _native: Any
@@ -111,6 +119,7 @@ class KeylessVerifier:
         san_is_regex: bool = False,
         trust_root: TrustRoot | None = None,
         rekor_public_key_pem: bytes | None = None,
+        rekor_min_tree_size: int | None = None,
     ) -> None:
         tr_native = trust_root._native if trust_root is not None else None
         self._native = _native.KeylessVerifier(
@@ -119,7 +128,15 @@ class KeylessVerifier:
             san_is_regex=san_is_regex,
             trust_root=tr_native,
             rekor_public_key_pem=rekor_public_key_pem,
+            rekor_min_tree_size=rekor_min_tree_size,
         )
+
+    def rekor_max_tree_size(self) -> int:
+        """Phase 9.B — current high-water mark on the Rekor checkpoint
+        freshness anchor. Returns ``0`` when no checkpoint has been
+        observed and no seed value was set at construction.
+        """
+        return int(self._native.rekor_max_tree_size())
 
     def verify_bundle(self, manifest: bytes, bundle: bytes) -> Catalogue:
         """Check the bundle against ``manifest`` and return the parsed

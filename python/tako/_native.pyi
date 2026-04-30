@@ -162,6 +162,7 @@ class KeylessVerifier:
         san_is_regex: bool = False,
         trust_root: TrustRoot | None = ...,
         rekor_public_key_pem: bytes | None = ...,
+        rekor_min_tree_size: int | None = ...,
     ) -> None: ...
     def verify_bundle(self, manifest: bytes, bundle: bytes) -> tuple[str | None, str]: ...
     def verify_protobuf_bundle(
@@ -169,6 +170,7 @@ class KeylessVerifier:
         manifest: bytes,
         protobuf_bundle: bytes,
     ) -> tuple[str | None, str]: ...
+    def rekor_max_tree_size(self) -> int: ...
 
 class TrustRoot:
     """Available when the wheel is built with the ``sigstore`` feature."""

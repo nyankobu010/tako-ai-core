@@ -108,8 +108,20 @@ impl PyKeylessVerifier {
     /// `rekor_public_key_pem` is an optional PEM (typically Rekor's
     /// public-good ECDSA-P256 key). When set and the bundle carries a
     /// `rekor` field, the SET is verified against the key.
+    ///
+    /// `rekor_min_tree_size` (Phase 9.B) seeds the trust-on-first-use
+    /// freshness anchor over the Rekor checkpoint's `tree_size`. Any
+    /// bundle whose checkpoint reports a smaller value is rejected.
+    /// Operators load this from a persisted state file at startup; the
+    /// verifier itself is in-memory. Read the high-water mark back
+    /// after each verify via `rekor_max_tree_size()` to write it out.
     #[new]
-    #[pyo3(signature = (issuer, san, *, san_is_regex=false, trust_root=None, rekor_public_key_pem=None))]
+    #[pyo3(signature = (
+        issuer, san,
+        *, san_is_regex=false,
+        trust_root=None, rekor_public_key_pem=None,
+        rekor_min_tree_size=None,
+    ))]
     fn new(
         py: Python<'_>,
         issuer: &str,
@@ -117,6 +129,7 @@ impl PyKeylessVerifier {
         san_is_regex: bool,
         trust_root: Option<Py<PyAny>>,
         rekor_public_key_pem: Option<Vec<u8>>,
+        rekor_min_tree_size: Option<u64>,
     ) -> PyResult<Self> {
         let policy = if san_is_regex {
             IdentityPolicy::regex(issuer, san).map_err(map_err)?
@@ -133,7 +146,17 @@ impl PyKeylessVerifier {
         if let Some(pem) = rekor_public_key_pem {
             v = v.with_rekor_key(&pem).map_err(map_err)?;
         }
+        if let Some(n) = rekor_min_tree_size {
+            v = v.with_rekor_min_tree_size(n);
+        }
         Ok(Self { inner: Arc::new(v) })
+    }
+
+    /// Phase 9.B — read the current high-water mark on the Rekor
+    /// checkpoint freshness anchor. Returns `0` when no checkpoint
+    /// has been observed and no seed value was set at construction.
+    fn rekor_max_tree_size(&self) -> u64 {
+        self.inner.rekor_max_tree_size()
     }
 
     /// Verify a tako keyless bundle and return `(server, tools_json)`.
