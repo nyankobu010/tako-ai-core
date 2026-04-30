@@ -17,9 +17,9 @@ use tako_governance::sigstore::KeylessBundle;
 use tako_governance::sigstore::{
     Catalogue, CatalogueVerifier, IdentityPolicy, KeylessVerifier, TrustRoot,
 };
+use tako_governance::sigstore_state::JsonStateStore;
 #[cfg(feature = "redis")]
 use tako_governance::sigstore_state::StateStore;
-use tako_governance::sigstore_state::JsonStateStore;
 #[cfg(feature = "redis")]
 use tako_governance::sigstore_state_redis::RedisStateStore;
 

@@ -24,7 +24,9 @@ import pytest
 import tako
 
 
-def _serve_once(routes: dict[str, dict[str, Any]]) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
+def _serve_once(
+    routes: dict[str, dict[str, Any]],
+) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
     """Spin up a single-purpose HTTP server returning canned JSON for the
     given path -> body map. Returns (base_url, server, thread)."""
 

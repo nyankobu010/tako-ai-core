@@ -348,9 +348,7 @@ class RedisStateStore:
         self._native = None  # type: ignore[assignment]
 
     @classmethod
-    async def connect(
-        cls, url: str, key: str | None = None
-    ) -> RedisStateStore:
+    async def connect(cls, url: str, key: str | None = None) -> RedisStateStore:
         """Connect to a Redis URL and return a ready store.
 
         ``url`` accepts either ``redis://`` or ``rediss://`` (TLS).

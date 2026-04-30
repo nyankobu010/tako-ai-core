@@ -175,10 +175,7 @@ mod tests {
     async fn live_round_trip() {
         let url = live_redis_url().unwrap();
         let key = format!("tako:sigstore:test:round_trip:{}", std::process::id());
-        let store = RedisStateStore::connect(&url)
-            .await
-            .unwrap()
-            .with_key(&key);
+        let store = RedisStateStore::connect(&url).await.unwrap().with_key(&key);
         StateStore::save(&store, 0).await.unwrap();
         assert_eq!(StateStore::load(&store).await.unwrap(), 0);
         StateStore::save(&store, 7).await.unwrap();
@@ -192,10 +189,7 @@ mod tests {
     async fn live_first_boot_returns_zero() {
         let url = live_redis_url().unwrap();
         let key = format!("tako:sigstore:test:first_boot:{}", std::process::id());
-        let store = RedisStateStore::connect(&url)
-            .await
-            .unwrap()
-            .with_key(&key);
+        let store = RedisStateStore::connect(&url).await.unwrap().with_key(&key);
         let mut conn = store.manager.clone();
         let _: () = conn.del(&key).await.unwrap();
         assert_eq!(StateStore::load(&store).await.unwrap(), 0);
@@ -208,10 +202,7 @@ mod tests {
     async fn live_save_is_monotonic() {
         let url = live_redis_url().unwrap();
         let key = format!("tako:sigstore:test:monotonic:{}", std::process::id());
-        let store = RedisStateStore::connect(&url)
-            .await
-            .unwrap()
-            .with_key(&key);
+        let store = RedisStateStore::connect(&url).await.unwrap().with_key(&key);
         StateStore::save(&store, 10).await.unwrap();
         StateStore::save(&store, 5).await.unwrap();
         assert_eq!(
@@ -230,10 +221,7 @@ mod tests {
     async fn live_with_key_overrides_default() {
         let url = live_redis_url().unwrap();
         let key = format!("tako:sigstore:test:custom_key:{}", std::process::id());
-        let store = RedisStateStore::connect(&url)
-            .await
-            .unwrap()
-            .with_key(&key);
+        let store = RedisStateStore::connect(&url).await.unwrap().with_key(&key);
         assert_eq!(store.key(), key);
         StateStore::save(&store, 4).await.unwrap();
         let mut conn = store.manager.clone();

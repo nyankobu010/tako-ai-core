@@ -108,11 +108,7 @@ def _gpqa_to_task(row: dict[str, Any]) -> Task:
     # the response contains "A" as a standalone token.
     choices = [correct, incorrect_1, incorrect_2, incorrect_3]
     labeled = "\n".join(f"{chr(ord('A') + i)}. {c}" for i, c in enumerate(choices) if c)
-    prompt = (
-        f"{question}\n\n"
-        f"{labeled}\n\n"
-        "Reply with the single letter of the correct choice."
-    )
+    prompt = f"{question}\n\n{labeled}\n\nReply with the single letter of the correct choice."
     return Task(
         id=record_id,
         prompt=prompt,

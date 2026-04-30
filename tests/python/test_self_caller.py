@@ -22,7 +22,7 @@ def test_self_caller_passes_through_when_confidence_meets_threshold() -> None:
     result = sc.run_sync("hello")
     assert "long enough" in result.text
     # Only one provider call; no recursion.
-    assert fake.call_count ==1
+    assert fake.call_count == 1
 
 
 def test_terminates_within_max_depth_on_adversarial() -> None:
@@ -43,7 +43,7 @@ def test_terminates_within_max_depth_on_adversarial() -> None:
     result = sc.run_sync("anything")
     assert result.text  # not empty — it returns the final low-confidence output
     # max_depth=2 means inner is called at offsets 0, 1, 2 → 3 times.
-    assert fake.call_count ==3
+    assert fake.call_count == 3
 
 
 async def test_self_caller_recurses_until_threshold() -> None:

@@ -184,12 +184,8 @@ class TrinityTrainer:
         W2 = np.asarray(self.weights["W2"], dtype=np.float32)
         b2 = np.asarray(self.weights["b2"], dtype=np.float32)
 
-        inp = helper.make_tensor_value_info(
-            "features", TensorProto.FLOAT, [1, FEATURE_DIM]
-        )
-        out = helper.make_tensor_value_info(
-            "logits", TensorProto.FLOAT, [1, self.n_classes]
-        )
+        inp = helper.make_tensor_value_info("features", TensorProto.FLOAT, [1, FEATURE_DIM])
+        out = helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, self.n_classes])
 
         init_W1 = numpy_helper.from_array(W1, name="W1")
         init_b1 = numpy_helper.from_array(b1, name="b1")

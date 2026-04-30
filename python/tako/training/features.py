@@ -57,19 +57,13 @@ def featurise_text(text: str) -> list[float]:
     f[8] = 1.0 if "code" in lower else 0.0
     f[9] = 1.0 if ("math" in lower or "solve" in lower) else 0.0
     f[10] = 1.0 if ("explain" in lower or "describe" in lower) else 0.0
-    f[11] = (
-        1.0
-        if ("verify" in lower or "check" in lower or "prove" in lower)
-        else 0.0
-    )
+    f[11] = 1.0 if ("verify" in lower or "check" in lower or "prove" in lower) else 0.0
 
     newlines = float(text.count("\n"))
     f[12] = min(newlines / 20.0, 1.0)
 
     if flen > 0.0:
-        punct = sum(
-            1 for c in text.encode("utf-8") if c in (0x2E, 0x2C, 0x3B, 0x3A, 0x21)
-        )
+        punct = sum(1 for c in text.encode("utf-8") if c in (0x2E, 0x2C, 0x3B, 0x3A, 0x21))
         f[13] = punct / flen
     else:
         f[13] = 0.0

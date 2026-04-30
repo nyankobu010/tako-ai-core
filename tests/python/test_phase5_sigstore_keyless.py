@@ -48,22 +48,14 @@ def _build_leaf_and_signature(
     now = datetime.datetime.now(datetime.timezone.utc)
     builder = (
         x509.CertificateBuilder()
-        .subject_name(
-            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "tako-test-leaf")])
-        )
-        .issuer_name(
-            x509.Name(
-                [x509.NameAttribute(NameOID.COMMON_NAME, "tako-test-leaf-self")]
-            )
-        )
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "tako-test-leaf")]))
+        .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "tako-test-leaf-self")]))
         .public_key(sk.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(minutes=60))
         .add_extension(
-            x509.SubjectAlternativeName(
-                [x509.UniformResourceIdentifier(san_uri)]
-            ),
+            x509.SubjectAlternativeName([x509.UniformResourceIdentifier(san_uri)]),
             critical=False,
         )
         .add_extension(

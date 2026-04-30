@@ -67,9 +67,7 @@ def test_grpc_bad_endpoint_raises() -> None:
 # ---------- Sigstore CatalogueVerifier (gated by `sigstore`) ----------------
 
 
-@pytest.mark.skipif(
-    not _has("CatalogueVerifier"), reason="wheel built without `sigstore` feature"
-)
+@pytest.mark.skipif(not _has("CatalogueVerifier"), reason="wheel built without `sigstore` feature")
 def test_catalogue_round_trip_via_cryptography() -> None:
     """End-to-end: generate an ECDSA-P256 keypair via `cryptography`,
     sign a sample manifest, and round-trip it through
@@ -107,9 +105,7 @@ def test_catalogue_round_trip_via_cryptography() -> None:
     assert catalogue.tools[0].name == "weather.lookup"
 
 
-@pytest.mark.skipif(
-    not _has("CatalogueVerifier"), reason="wheel built without `sigstore` feature"
-)
+@pytest.mark.skipif(not _has("CatalogueVerifier"), reason="wheel built without `sigstore` feature")
 def test_catalogue_rejects_tampered_manifest() -> None:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -136,9 +132,7 @@ def _redis_url() -> str | None:
     return os.environ.get("REDIS_URL")
 
 
-@pytest.mark.skipif(
-    not _has("RedisBudgetBackend"), reason="wheel built without `redis` feature"
-)
+@pytest.mark.skipif(not _has("RedisBudgetBackend"), reason="wheel built without `redis` feature")
 @pytest.mark.skipif(_redis_url() is None, reason="REDIS_URL unset")
 async def test_redis_backend_round_trip() -> None:
     backend = tako.budget.RedisBackend(
@@ -151,9 +145,7 @@ async def test_redis_backend_round_trip() -> None:
     assert usage.tokens_today == 100
 
 
-@pytest.mark.skipif(
-    not _has("RedisBudgetBackend"), reason="wheel built without `redis` feature"
-)
+@pytest.mark.skipif(not _has("RedisBudgetBackend"), reason="wheel built without `redis` feature")
 @pytest.mark.skipif(_redis_url() is None, reason="REDIS_URL unset")
 async def test_redis_backend_zero_for_unknown_tenant() -> None:
     backend = tako.budget.RedisBackend(
