@@ -140,6 +140,49 @@ pub fn event_to_payloads(event: &OrchEvent, id: &str, model: &str) -> Vec<String
     }
 }
 
+/// Phase 9.C — map a single [`OrchEvent`] to zero or more named
+/// `tako.*` SSE extensions, returned as `(event_name, json_payload)`
+/// pairs. The caller emits each as
+/// `axum::response::sse::Event::default().event(name).data(payload)`,
+/// producing SSE frames with both an `event:` line and a `data:` line.
+/// OpenAI clients ignore unknown event names per the SSE spec, so this
+/// is a zero-impact additive sidechannel for tako-aware consumers.
+///
+/// Currently emits:
+///
+/// - [`OrchEvent::VerifierScore`] →
+///   `("tako.verifier_score", "{"step":N,"branch":B,"score":S}")`
+/// - [`OrchEvent::Recursion`] →
+///   `("tako.recursion", "{"depth":D,"confidence":C}")`
+///
+/// All other variants return an empty `Vec` (no extension emitted —
+/// the variant is either part of the OpenAI mapping or has no
+/// out-of-band signalling need yet).
+pub fn event_to_tako_extensions(event: &OrchEvent) -> Vec<(&'static str, String)> {
+    match event {
+        OrchEvent::VerifierScore {
+            step,
+            branch,
+            score,
+        } => {
+            let body = json!({
+                "step": step,
+                "branch": branch,
+                "score": score,
+            });
+            vec![("tako.verifier_score", body.to_string())]
+        }
+        OrchEvent::Recursion { depth, confidence } => {
+            let body = json!({
+                "depth": depth,
+                "confidence": confidence,
+            });
+            vec![("tako.recursion", body.to_string())]
+        }
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -184,6 +227,72 @@ mod tests {
         let tc = &v["choices"][0]["delta"]["tool_calls"][0];
         assert_eq!(tc["function"]["name"], "search");
         assert_eq!(tc["id"], "call_42");
+    }
+
+    #[test]
+    fn verifier_score_emits_tako_named_extension() {
+        // Score uses an exactly-representable f32 value to avoid
+        // float-widening surprises in the JSON round-trip.
+        let ev = OrchEvent::VerifierScore {
+            step: 3,
+            branch: 1,
+            score: 0.5,
+        };
+        let exts = event_to_tako_extensions(&ev);
+        assert_eq!(exts.len(), 1);
+        let (name, payload) = &exts[0];
+        assert_eq!(*name, "tako.verifier_score");
+        let v: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(v["step"], 3);
+        assert_eq!(v["branch"], 1);
+        assert_eq!(v["score"].as_f64().unwrap(), 0.5);
+        // `event_to_payloads` (the OpenAI mapping) must NOT emit
+        // anything for this variant — extension goes through the
+        // sidechannel only.
+        assert!(event_to_payloads(&ev, "id", "m").is_empty());
+    }
+
+    #[test]
+    fn recursion_emits_tako_named_extension() {
+        // Confidence uses an exactly-representable f32 value.
+        let ev = OrchEvent::Recursion {
+            depth: 2,
+            confidence: 0.25,
+        };
+        let exts = event_to_tako_extensions(&ev);
+        assert_eq!(exts.len(), 1);
+        let (name, payload) = &exts[0];
+        assert_eq!(*name, "tako.recursion");
+        let v: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(v["depth"], 2);
+        assert_eq!(v["confidence"].as_f64().unwrap(), 0.25);
+        assert!(event_to_payloads(&ev, "id", "m").is_empty());
+    }
+
+    #[test]
+    fn opaque_variants_emit_no_tako_extensions() {
+        // Variants that already have an OpenAI mapping (or are silent
+        // to OpenAI clients) must not also emit a tako-named frame —
+        // the extension sidechannel is reserved for events that
+        // OpenAI cannot represent.
+        let cases = [
+            OrchEvent::AssistantText {
+                step: 0,
+                delta: "hi".into(),
+            },
+            OrchEvent::ToolCallStart {
+                step: 0,
+                name: "s".into(),
+                id: "1".into(),
+            },
+            OrchEvent::StepStart { step: 0 },
+        ];
+        for ev in &cases {
+            assert!(
+                event_to_tako_extensions(ev).is_empty(),
+                "unexpected tako extension for {ev:?}",
+            );
+        }
     }
 
     #[test]

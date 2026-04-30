@@ -195,6 +195,114 @@ async fn stream_request_returns_sse_chunks_and_done() {
     assert!(text.contains("data: [DONE]"), "saw: {text}");
 }
 
+/// Phase 9.C — a stub Orchestrator that emits a fixed event sequence
+/// for the SSE wire-format test below. Lets the test assert the
+/// `event: tako.*` named-extension framing without standing up a
+/// full AbMcts pipeline.
+#[derive(Debug)]
+struct ScriptedOrchestrator {
+    events: tokio::sync::Mutex<Vec<tako_orchestrator::OrchEvent>>,
+}
+
+#[async_trait]
+impl tako_orchestrator::Orchestrator for ScriptedOrchestrator {
+    fn kind(&self) -> tako_orchestrator::OrchestratorKind {
+        // Reuse SingleAgent — the kind is informational only here.
+        tako_orchestrator::OrchestratorKind::SingleAgent
+    }
+    async fn run(
+        &self,
+        _principal: &Principal,
+        _input: tako_orchestrator::OrchInput,
+    ) -> Result<tako_orchestrator::OrchOutput, TakoError> {
+        Err(TakoError::Invalid("scripted: run not used".into()))
+    }
+    async fn stream(
+        &self,
+        _principal: &Principal,
+        _input: tako_orchestrator::OrchInput,
+    ) -> BoxStream<'static, Result<tako_orchestrator::OrchEvent, TakoError>> {
+        let evs = std::mem::take(&mut *self.events.lock().await);
+        let s = futures::stream::iter(evs.into_iter().map(Ok::<_, TakoError>));
+        futures::StreamExt::boxed(s)
+    }
+}
+
+#[tokio::test]
+async fn stream_emits_named_tako_extension_for_verifier_score() {
+    use tako_orchestrator::{OrchEvent, OrchOutput};
+    let final_event = OrchEvent::Final {
+        output: Box::new(OrchOutput {
+            text: "done".into(),
+            message: Message::assistant("done"),
+            usage: Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+            steps: 1,
+        }),
+    };
+    let scripted = Arc::new(ScriptedOrchestrator {
+        events: tokio::sync::Mutex::new(vec![
+            OrchEvent::StepStart { step: 0 },
+            OrchEvent::VerifierScore {
+                step: 0,
+                branch: 1,
+                score: 0.5,
+            },
+            OrchEvent::AssistantText {
+                step: 0,
+                delta: "hello".into(),
+            },
+            final_event,
+        ]),
+    });
+    let auth = Arc::new(StaticTokens::new().with("test-token", Principal::new("acme", "alice")));
+    let (addr, _handle) = serve_openai(
+        scripted,
+        auth,
+        ServeConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            models: vec!["fake:m".into(), "tako-default".into()],
+        },
+    )
+    .await
+    .unwrap();
+
+    let client = reqwest::Client::new();
+    let body = json!({
+        "model": "tako-default",
+        "messages": [{"role": "user", "content": "x"}],
+        "stream": true,
+    });
+    let resp = client
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .header("Authorization", "Bearer test-token")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let bytes = resp.bytes().await.unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    // The named extension frame must appear (event: line + data: line),
+    // and must precede the OpenAI assistant-text data: chunk that
+    // follows the same logical event boundary.
+    let ext_idx = text
+        .find("event: tako.verifier_score")
+        .unwrap_or_else(|| panic!("missing tako.verifier_score frame; saw: {text}"));
+    let assist_idx = text
+        .find("\"content\":\"hello\"")
+        .unwrap_or_else(|| panic!("missing assistant-text data: chunk; saw: {text}"));
+    assert!(
+        ext_idx < assist_idx,
+        "tako.verifier_score must precede the related assistant-text frame; saw: {text}",
+    );
+    assert!(text.contains("\"branch\":1"), "saw: {text}");
+    assert!(text.contains("data: [DONE]"), "saw: {text}");
+}
+
 #[tokio::test]
 async fn list_models() {
     let (addr, _) = boot_server().await;

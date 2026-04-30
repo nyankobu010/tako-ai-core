@@ -13,7 +13,7 @@ use tako_orchestrator::{OrchInput, Orchestrator};
 
 use crate::auth::AuthResolver;
 use crate::openai::{OaChatRequest, from_openai_request, models_list, to_openai_response};
-use crate::sse::{event_to_payloads, new_chunk_id};
+use crate::sse::{event_to_payloads, event_to_tako_extensions, new_chunk_id};
 
 pub(crate) struct AppState {
     pub orch: Arc<dyn Orchestrator>,
@@ -147,10 +147,26 @@ async fn chat_completions_stream(
             let id = chunk_id.clone();
             let model = model.clone();
             let payloads: Vec<Result<SseEvent, Infallible>> = match item {
-                Ok(ev) => event_to_payloads(&ev, &id, &model)
-                    .into_iter()
-                    .map(|p| Ok(SseEvent::default().data(p)))
-                    .collect(),
+                Ok(ev) => {
+                    // Phase 9.C: emit named `tako.*` extension frames
+                    // BEFORE the OpenAI `data:` chunk for the same
+                    // event so a verifier score is observable ahead of
+                    // any text chunk that follows. Old clients ignore
+                    // unknown `event:` names per the SSE spec.
+                    let mut frames: Vec<Result<SseEvent, Infallible>> =
+                        event_to_tako_extensions(&ev)
+                            .into_iter()
+                            .map(|(name, payload)| {
+                                Ok(SseEvent::default().event(name).data(payload))
+                            })
+                            .collect();
+                    frames.extend(
+                        event_to_payloads(&ev, &id, &model)
+                            .into_iter()
+                            .map(|p| Ok(SseEvent::default().data(p))),
+                    );
+                    frames
+                }
                 Err(e) => {
                     let frame = json!({
                         "error": {"message": e.to_string(), "type": "internal_error"}
