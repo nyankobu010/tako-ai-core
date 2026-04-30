@@ -122,6 +122,7 @@ class Conductor:
         fail_fast: bool = False,
         budget: Any = None,
         budget_backend: Any = None,
+        verifier: Any = None,
     ) -> None:
         if not hasattr(coordinator, "_handle"):
             raise TypeError("coordinator must be a tako.providers.* instance")
@@ -132,6 +133,9 @@ class Conductor:
             worker_handles[name] = w._handle
         budget_native = budget._native if budget is not None else None
         backend_native = budget_backend._native if budget_backend is not None else None
+        if verifier is not None and not hasattr(verifier, "_native"):
+            raise TypeError("verifier must be a tako.verifiers.* instance")
+        verifier_native = verifier._native if verifier is not None else None
         self._inner = _native.Conductor(
             coordinator._handle,
             worker_handles,
@@ -141,6 +145,7 @@ class Conductor:
             fail_fast=fail_fast,
             budget=budget_native,
             budget_backend=backend_native,
+            verifier=verifier_native,
         )
 
     async def run(
@@ -181,6 +186,7 @@ class Trinity:
         max_steps: int = 8,
         budget: Any = None,
         budget_backend: Any = None,
+        verifier: Any = None,
     ) -> None:
         if not hasattr(router, "_native"):
             raise TypeError("router must be a tako.routers.* instance")
@@ -193,12 +199,16 @@ class Trinity:
             ordered.append((name, p._handle))
         budget_native = budget._native if budget is not None else None
         backend_native = budget_backend._native if budget_backend is not None else None
+        if verifier is not None and not hasattr(verifier, "_native"):
+            raise TypeError("verifier must be a tako.verifiers.* instance")
+        verifier_native = verifier._native if verifier is not None else None
         self._inner = _native.Trinity(
             ordered,
             router._native,
             max_steps=max_steps,
             budget=budget_native,
             budget_backend=backend_native,
+            verifier=verifier_native,
         )
 
     async def run(

@@ -38,6 +38,13 @@ impl PyConductor {
     /// `coordinator` and each entry in `workers` (a dict
     /// `{role: provider}`) accept the usual provider classes
     /// (OpenAI, Anthropic, Bedrock, FakeProvider, PythonProvider).
+    ///
+    /// `verifier` (Phase 10.C) attaches an optional
+    /// `tako._native.RuleBasedVerifier`. When set, the streaming
+    /// path emits one `OrchEvent::VerifierScore` per worker output
+    /// before fold-in, with `branch` = the 1-based worker dispatch
+    /// index within the current step. Without this kwarg, no
+    /// `VerifierScore` events appear.
     #[new]
     #[pyo3(signature = (
         coordinator,
@@ -48,6 +55,7 @@ impl PyConductor {
         fail_fast=false,
         budget=None,
         budget_backend=None,
+        verifier=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -60,6 +68,7 @@ impl PyConductor {
         fail_fast: bool,
         budget: Option<PyBudget>,
         budget_backend: Option<Py<PyAny>>,
+        verifier: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         let coord_handle = extract_provider(py, &coordinator)?;
         let mut builder = Conductor::builder()
@@ -82,6 +91,10 @@ impl PyConductor {
             };
             let tracker = Arc::new(BudgetTracker::new(backend, budget_inner));
             builder = builder.budget(tracker);
+        }
+        if let Some(obj) = verifier {
+            let v = crate::py_ab_mcts::extract_any_verifier(py, &obj)?;
+            builder = builder.verifier(v);
         }
         let cond = builder.build().map_err(map_err)?;
         Ok(Self {

@@ -85,6 +85,66 @@ verifier scores + Python provider streaming. Plan:
     for the same logical event boundary, and the downstream
     assistant-text + `[DONE]` sentinel emit unchanged.
 
+- **`OrchEvent::VerifierScore` for `Trinity` and `Conductor`**
+  (Phase 10.C): the v0.9.0 enum variant has been on the wire since
+  Phase 8 but only [`AbMcts`](crates/tako-orchestrator/src/ab_mcts.rs)
+  emitted it. Phase 10.C adds optional verifier wiring to both
+  remaining streaming orchestrators with `None` defaults, so v0.10.0
+  behaviour is byte-for-byte preserved when the kwarg is omitted:
+  - **`Trinity`**: new `verifier: Option<Arc<dyn Verifier>>` field
+    + `TrinityBuilder::verifier(v)` builder method at
+    [crates/tako-orchestrator/src/trinity.rs](crates/tako-orchestrator/src/trinity.rs).
+    The streaming path emits one `OrchEvent::VerifierScore` after
+    each role's assistant turn completes, with `branch` = the
+    role's positional index in `role_order` so consumers can
+    attribute the score to the specific role/provider that
+    produced the turn.
+  - **`Conductor`**: new `verifier: Option<Arc<dyn Verifier>>`
+    field + `ConductorBuilder::verifier(v)` builder method at
+    [crates/tako-orchestrator/src/conductor.rs](crates/tako-orchestrator/src/conductor.rs).
+    The streaming path emits one `VerifierScore` per worker output
+    before its result is folded back into the next coordinator
+    turn, with `branch` = the 1-based worker dispatch index.
+    Failed workers (whose `outcome.is_err()`) are skipped — only
+    successful text outputs are scored.
+  - Both call `verifier.score(principal, prompt_text, output)` at
+    synthesis-complete boundaries (never per-delta); per-delta
+    cost-controlled judging remains the `LlmJudgeGuard` opt-in.
+    `prompt_text` is derived from `input.messages` using the same
+    `filter_map(ContentPart::as_text)…join("\n")` pattern AB-MCTS
+    has always used, so verifier inputs are consistent across the
+    three orchestrators.
+  - PyO3: `tako._native.Trinity.__init__` and
+    `tako._native.Conductor.__init__` gain optional `verifier=`
+    kwargs accepting any `tako._native.RuleBasedVerifier`.
+    Forwarded through `tako.Trinity` / `tako.Conductor` with the
+    same `verifier=` kwarg + a TypeError check
+    (`"verifier must be a tako.verifiers.* instance"`). The
+    `extract_any_verifier` helper in
+    [crates/tako-py/src/py_ab_mcts.rs](crates/tako-py/src/py_ab_mcts.rs)
+    is promoted to `pub(crate)` so all three orchestrators share
+    the validation logic. `_native.pyi` stubs updated.
+  - 4 new Rust integration tests (2 per orchestrator) under
+    `verifier_emits` sub-mods in
+    `crates/tako-orchestrator/tests/{trinity,conductor}.rs`:
+    - `trinity_emits_verifier_score_when_attached` — code-prompt
+      routes to the `code` role, exactly one `VerifierScore` event
+      with `branch=0` and `score=0.6` (matching the `AlwaysScore`
+      fixture).
+    - `trinity_emits_no_verifier_score_when_unattached` — same
+      setup without `.verifier(...)`, zero `VerifierScore` events.
+    - `conductor_emits_verifier_score_per_worker` — coordinator
+      dispatches three workers in one turn, exactly three
+      `VerifierScore` events emit with `branch ∈ {1, 2, 3}` and
+      `score=0.4`. All three workers' call counters confirm
+      execution.
+    - `conductor_emits_no_verifier_score_when_unattached` — same
+      setup without `.verifier(...)`, zero `VerifierScore` events.
+  - 6 new Python smoke tests across
+    `tests/python/test_phase10_{trinity,conductor}_verifier.py`
+    cover kwarg acceptance, TypeError on a non-verifier argument,
+    and default-no-kwarg construction parity.
+
 ## [0.10.0] - 2026-04-30
 
 Phase 9 — cost-aware streaming guards + transparency-log freshness +

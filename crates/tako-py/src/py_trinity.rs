@@ -35,8 +35,15 @@ impl PyTrinity {
     ///
     /// `roles` is a dict mapping `role_name -> provider`. `router` is one
     /// of `tako._native.RegexRouter` or `tako._native.OnnxRouter`.
+    ///
+    /// `verifier` (Phase 10.C) attaches an optional
+    /// `tako._native.RuleBasedVerifier`. When set, the streaming path
+    /// emits one `OrchEvent::VerifierScore` per role's assistant
+    /// turn, with `branch` = the role's positional index in the
+    /// insertion order. Without this kwarg, no `VerifierScore`
+    /// events appear.
     #[new]
-    #[pyo3(signature = (roles, router, max_steps=8, budget=None, budget_backend=None))]
+    #[pyo3(signature = (roles, router, max_steps=8, budget=None, budget_backend=None, verifier=None))]
     fn new(
         py: Python<'_>,
         roles: Vec<(String, Py<PyAny>)>,
@@ -44,6 +51,7 @@ impl PyTrinity {
         max_steps: u32,
         budget: Option<PyBudget>,
         budget_backend: Option<Py<PyAny>>,
+        verifier: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         let mut builder = Trinity::builder()
             .router(extract_router(py, &router)?)
@@ -62,6 +70,10 @@ impl PyTrinity {
             };
             let tracker = Arc::new(BudgetTracker::new(backend, budget_inner));
             builder = builder.budget(tracker);
+        }
+        if let Some(obj) = verifier {
+            let v = crate::py_ab_mcts::extract_any_verifier(py, &obj)?;
+            builder = builder.verifier(v);
         }
         let trinity = builder
             .build()

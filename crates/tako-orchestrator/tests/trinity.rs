@@ -402,3 +402,91 @@ async fn trinity_budget_pre_check_short_circuits_on_daily_cap() {
     assert!(matches!(err, TakoError::BudgetExhausted(_)));
     assert_eq!(code.calls.load(Ordering::SeqCst), 0);
 }
+
+mod verifier_emits {
+    //! Phase 10.C — `Trinity` emits one `OrchEvent::VerifierScore`
+    //! per role's assistant turn after the turn completes, with
+    //! `branch` = the role's positional index in `role_order`.
+    //! Without `.verifier(...)`, no `VerifierScore` events appear
+    //! (v0.10.0 byte-for-byte parity).
+
+    use super::{FakeProvider, RegexRouter, Trinity, assistant};
+    use futures::StreamExt;
+    use std::sync::Arc;
+    use tako_core::{AlwaysScore, Principal};
+    use tako_orchestrator::{OrchEvent, OrchInput, Orchestrator};
+
+    #[tokio::test]
+    async fn trinity_emits_verifier_score_when_attached() {
+        let code = Arc::new(FakeProvider::new("fake:code", vec![assistant("CODE OUT")]));
+        let math = Arc::new(FakeProvider::new("fake:math", vec![assistant("MATH OUT")]));
+        let fb = Arc::new(FakeProvider::new("fake:fb", vec![assistant("FB")]));
+        let trinity = Trinity::builder()
+            .role("code", code)
+            .role("math", math)
+            .role("fallback", fb)
+            .router(Arc::new(RegexRouter::default()))
+            .max_steps(2)
+            .verifier(Arc::new(AlwaysScore(0.6)))
+            .build()
+            .unwrap();
+
+        let mut stream = trinity
+            .stream(
+                &Principal::anonymous(),
+                OrchInput::from_user("Write a fn to compute fib"),
+            )
+            .await;
+        let mut scores = Vec::new();
+        while let Some(ev) = stream.next().await {
+            if let OrchEvent::VerifierScore {
+                step,
+                branch,
+                score,
+            } = ev.unwrap()
+            {
+                scores.push((step, branch, score));
+            }
+        }
+        // The "code" prompt routes to the `code` role on its first
+        // (and only halt-bearing) turn; that role is at positional
+        // index 0 in role_order.
+        assert_eq!(scores.len(), 1, "expected exactly one VerifierScore");
+        assert_eq!(scores[0].0, 0); // step
+        assert_eq!(scores[0].1, 0); // branch == role index for `code`
+        assert!(
+            (scores[0].2 - 0.6).abs() < 1e-6,
+            "score should match the AlwaysScore fixture: got {}",
+            scores[0].2
+        );
+    }
+
+    #[tokio::test]
+    async fn trinity_emits_no_verifier_score_when_unattached() {
+        // Backwards-compat: without `.verifier(...)`, the streaming
+        // path emits zero VerifierScore events.
+        let code = Arc::new(FakeProvider::new("fake:code", vec![assistant("CODE OUT")]));
+        let fb = Arc::new(FakeProvider::new("fake:fb", vec![assistant("FB")]));
+        let trinity = Trinity::builder()
+            .role("code", code)
+            .role("fallback", fb)
+            .router(Arc::new(RegexRouter::default()))
+            .max_steps(2)
+            .build()
+            .unwrap();
+
+        let mut stream = trinity
+            .stream(
+                &Principal::anonymous(),
+                OrchInput::from_user("Write a fn to compute fib"),
+            )
+            .await;
+        let mut count = 0_usize;
+        while let Some(ev) = stream.next().await {
+            if matches!(ev.unwrap(), OrchEvent::VerifierScore { .. }) {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 0);
+    }
+}

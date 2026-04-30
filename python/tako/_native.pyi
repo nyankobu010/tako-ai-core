@@ -245,6 +245,7 @@ class Trinity:
         max_steps: int = ...,
         budget: Any | None = ...,
         budget_backend: Any | None = ...,
+        verifier: Any | None = ...,
     ) -> None: ...
     def run(
         self,
@@ -393,6 +394,7 @@ class Conductor:
         fail_fast: bool = ...,
         budget: Any | None = ...,
         budget_backend: Any | None = ...,
+        verifier: Any | None = ...,
     ) -> None: ...
     def run(
         self,

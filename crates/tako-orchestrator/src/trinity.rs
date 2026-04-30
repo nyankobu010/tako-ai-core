@@ -20,7 +20,7 @@ use futures::stream::BoxStream;
 use tako_core::{
     ChatChunk, ChatRequest, ContentPart, FinishReason, LlmProvider, Message, PolicyContext,
     PolicyDecision, PolicyEngine, PolicyStage, Principal, Role, Router, TakoError, ToolCallDelta,
-    Usage,
+    Usage, Verifier,
 };
 use tako_mcp::ToolRegistry;
 use tako_runtime::BudgetTracker;
@@ -48,6 +48,13 @@ pub struct Trinity {
     /// budget enforcement runs and the orchestrator behaves exactly as
     /// in v0.6.0.
     budget: Option<Arc<BudgetTracker>>,
+    /// Phase 10.C — optional [`Verifier`]. When set, the streaming
+    /// path emits an [`OrchEvent::VerifierScore`] after each role's
+    /// assistant turn completes, with `branch` = the role's
+    /// positional index in `role_order`. Without this, no
+    /// `VerifierScore` events appear (Trinity behaves exactly as in
+    /// v0.10.0).
+    verifier: Option<Arc<dyn Verifier>>,
 }
 
 impl std::fmt::Debug for Trinity {
@@ -75,6 +82,7 @@ pub struct TrinityBuilder {
     defaults: ChatDefaults,
     policy: Option<Arc<dyn PolicyEngine>>,
     budget: Option<Arc<BudgetTracker>>,
+    verifier: Option<Arc<dyn Verifier>>,
 }
 
 impl std::fmt::Debug for TrinityBuilder {
@@ -136,6 +144,25 @@ impl TrinityBuilder {
         self
     }
 
+    /// Phase 10.C — attach a [`Verifier`]. When set, the streaming
+    /// path emits one [`OrchEvent::VerifierScore`] after each role's
+    /// assistant turn completes, scoring `(input_prompt, assistant_text)`
+    /// at synthesis-complete boundaries (never per-delta). `branch`
+    /// is the role's positional index in `role_order` so consumers
+    /// can attribute the score to the specific role/provider that
+    /// produced the turn. Without this builder method, no
+    /// `VerifierScore` events are emitted (Trinity behaves exactly
+    /// as in v0.10.0).
+    ///
+    /// Per-step verifier calls compose with whatever verifier
+    /// implementation you choose; for cost-controlled streaming
+    /// guards, see `LlmJudgeGuard` and `RuleBasedGuard` in
+    /// [`crate::self_caller`].
+    pub fn verifier(mut self, v: Arc<dyn Verifier>) -> Self {
+        self.verifier = Some(v);
+        self
+    }
+
     pub fn build(self) -> Result<Trinity, TakoError> {
         if self.roles.is_empty() {
             return Err(TakoError::Invalid(
@@ -154,6 +181,7 @@ impl TrinityBuilder {
             defaults: self.defaults,
             policy: self.policy,
             budget: self.budget,
+            verifier: self.verifier,
         })
     }
 }
@@ -378,8 +406,27 @@ impl Orchestrator for Trinity {
         let max_steps = self.max_steps;
         let principal = principal.clone();
         let budget = self.budget.clone();
+        let verifier = self.verifier.clone();
 
         let s = async_stream::try_stream! {
+            // Phase 10.C — derive a single prompt-text snapshot from the
+            // user-side input, used as the verifier's `prompt` argument
+            // for every per-step scoring call. Mirrors the AB-MCTS
+            // `prompt_text` derivation so the two orchestrators feed
+            // verifiers consistently.
+            let prompt_text = input
+                .messages
+                .iter()
+                .filter_map(|m| {
+                    m.content
+                        .iter()
+                        .filter_map(ContentPart::as_text)
+                        .next()
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
             let mut messages: Vec<Message> = Vec::new();
             if let Some(sys) = input.system.clone() {
                 messages.push(Message::system(sys));
@@ -555,6 +602,30 @@ impl Orchestrator for Trinity {
                 total_usage.output_tokens = total_usage
                     .output_tokens
                     .saturating_add(step_usage.output_tokens);
+
+                // Phase 10.C — score the role's assistant text once
+                // the turn is complete. `branch` is the role's
+                // positional index in `role_order` so consumers can
+                // attribute the score to the specific role/provider
+                // that produced this turn. No emission when no
+                // verifier is attached.
+                if let Some(v) = verifier.as_ref() {
+                    let assistant_text = assistant
+                        .content
+                        .iter()
+                        .filter_map(ContentPart::as_text)
+                        .collect::<Vec<_>>()
+                        .join("");
+                    let branch = role_order
+                        .iter()
+                        .position(|r| r == &role)
+                        .unwrap_or(0) as u32;
+                    let score = v
+                        .score(&principal, &prompt_text, &assistant_text)
+                        .await?
+                        .clamp(0.0, 1.0);
+                    yield OrchEvent::VerifierScore { step, branch, score };
+                }
 
                 messages.push(assistant.clone());
 

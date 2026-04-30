@@ -195,7 +195,7 @@ impl PyAbMcts {
     }
 }
 
-fn extract_any_verifier(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn Verifier>> {
+pub(crate) fn extract_any_verifier(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn Verifier>> {
     if let Ok(v) = obj.extract::<PyRef<PyRuleBasedVerifier>>(py) {
         return Ok(Arc::clone(&v.inner));
     }

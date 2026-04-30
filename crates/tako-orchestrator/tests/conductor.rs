@@ -537,3 +537,110 @@ async fn conductor_budget_exhausted_on_worker_propagates_via_fail_fast() {
     );
     assert_eq!(coordinator.calls.load(Ordering::SeqCst), 0);
 }
+
+mod verifier_emits {
+    //! Phase 10.C — `Conductor` emits one `OrchEvent::VerifierScore`
+    //! per worker output before fold-in. `step` is the coordinator
+    //! turn; `branch` is the 1-based worker dispatch index. Without
+    //! `.verifier(...)`, no `VerifierScore` events appear (v0.10.0
+    //! byte-for-byte parity).
+
+    use super::{Conductor, FakeProvider, assistant_text, coord_dispatch, coord_halt};
+    use futures::StreamExt;
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+    use tako_core::{AlwaysScore, Principal};
+    use tako_orchestrator::{OrchEvent, OrchInput, Orchestrator};
+
+    #[tokio::test]
+    async fn conductor_emits_verifier_score_per_worker() {
+        // Coordinator dispatches three workers in one turn, then halts
+        // on the next turn. Each worker's text output passes through
+        // the verifier, producing exactly three VerifierScore events.
+        let coordinator = Arc::new(FakeProvider::new(
+            "fake:coord",
+            vec![
+                coord_dispatch(&[("a", "do a"), ("b", "do b"), ("c", "do c")]),
+                coord_halt("done"),
+            ],
+        ));
+        let worker_a = Arc::new(FakeProvider::new("fake:a", vec![assistant_text("A_OUT")]));
+        let worker_b = Arc::new(FakeProvider::new("fake:b", vec![assistant_text("B_OUT")]));
+        let worker_c = Arc::new(FakeProvider::new("fake:c", vec![assistant_text("C_OUT")]));
+
+        let cond = Conductor::builder()
+            .coordinator(coordinator.clone())
+            .worker("a", worker_a.clone())
+            .worker("b", worker_b.clone())
+            .worker("c", worker_c.clone())
+            .max_steps(5)
+            .verifier(Arc::new(AlwaysScore(0.4)))
+            .build()
+            .unwrap();
+
+        let mut stream = cond
+            .stream(
+                &Principal::anonymous(),
+                OrchInput::from_user("plan three workers"),
+            )
+            .await;
+        let mut scores = Vec::new();
+        while let Some(ev) = stream.next().await {
+            if let OrchEvent::VerifierScore {
+                step,
+                branch,
+                score,
+            } = ev.unwrap()
+            {
+                scores.push((step, branch, score));
+            }
+        }
+
+        // Three workers in step 0; branches are 1-based.
+        assert_eq!(scores.len(), 3, "expected three VerifierScore events");
+        let mut branches: Vec<u32> = scores.iter().map(|s| s.1).collect();
+        branches.sort();
+        assert_eq!(branches, vec![1, 2, 3]);
+        for (step, _, score) in &scores {
+            assert_eq!(*step, 0);
+            assert!(
+                (score - 0.4).abs() < 1e-6,
+                "score should match the AlwaysScore fixture: got {score}"
+            );
+        }
+
+        // All three workers were actually invoked.
+        assert_eq!(worker_a.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(worker_b.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(worker_c.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn conductor_emits_no_verifier_score_when_unattached() {
+        // Backwards-compat: without `.verifier(...)`, the streaming
+        // path emits zero VerifierScore events.
+        let coordinator = Arc::new(FakeProvider::new(
+            "fake:coord",
+            vec![coord_dispatch(&[("a", "do a")]), coord_halt("done")],
+        ));
+        let worker_a = Arc::new(FakeProvider::new("fake:a", vec![assistant_text("A_OUT")]));
+
+        let cond = Conductor::builder()
+            .coordinator(coordinator)
+            .worker("a", worker_a)
+            .max_steps(5)
+            .build()
+            .unwrap();
+
+        let mut stream = cond
+            .stream(&Principal::anonymous(), OrchInput::from_user("hi"))
+            .await;
+        let mut count = 0_usize;
+        while let Some(ev) = stream.next().await {
+            if matches!(ev.unwrap(), OrchEvent::VerifierScore { .. }) {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 0);
+    }
+}

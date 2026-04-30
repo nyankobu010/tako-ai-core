@@ -18,7 +18,8 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use tako_core::{
-    ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal, Role, TakoError, Usage,
+    ChatRequest, ContentPart, FinishReason, LlmProvider, Message, Principal, Role, TakoError,
+    Usage, Verifier,
 };
 use tako_runtime::BudgetTracker;
 use tokio::sync::Semaphore;
@@ -78,6 +79,13 @@ pub struct Conductor {
     /// (`record`). When `None`, no budget enforcement runs and the
     /// orchestrator behaves exactly as in v0.6.0.
     budget: Option<Arc<BudgetTracker>>,
+    /// Phase 10.C — optional [`Verifier`]. When set, the streaming
+    /// path emits one [`OrchEvent::VerifierScore`] per worker output
+    /// before fold-in. `step` is the coordinator turn; `branch` is
+    /// the 1-based worker dispatch index within that turn. Without
+    /// this, no `VerifierScore` events are emitted (Conductor behaves
+    /// exactly as in v0.10.0).
+    verifier: Option<Arc<dyn Verifier>>,
 }
 
 impl std::fmt::Debug for Conductor {
@@ -135,6 +143,7 @@ pub struct ConductorBuilder {
     worker_timeout: Option<Duration>,
     fail_fast: Option<bool>,
     budget: Option<Arc<BudgetTracker>>,
+    verifier: Option<Arc<dyn Verifier>>,
 }
 
 impl std::fmt::Debug for ConductorBuilder {
@@ -191,6 +200,24 @@ impl ConductorBuilder {
         self
     }
 
+    /// Phase 10.C — attach a [`Verifier`]. When set, the streaming
+    /// path emits one [`OrchEvent::VerifierScore`] per worker
+    /// output before its result is folded back into the next
+    /// coordinator turn. `step` is the coordinator turn; `branch`
+    /// is the 1-based worker dispatch index within that turn.
+    /// Without this builder method, no `VerifierScore` events are
+    /// emitted (Conductor behaves exactly as in v0.10.0).
+    ///
+    /// Verifier calls are sequenced after each worker future
+    /// resolves and before the result is folded — they run at
+    /// synthesis-complete boundaries only, never per-delta. For
+    /// per-delta cost-controlled judging, use `LlmJudgeGuard` from
+    /// [`crate::self_caller`].
+    pub fn verifier(mut self, v: Arc<dyn Verifier>) -> Self {
+        self.verifier = Some(v);
+        self
+    }
+
     pub fn build(self) -> Result<Conductor, TakoError> {
         Ok(Conductor {
             coordinator: self.coordinator.ok_or_else(|| {
@@ -202,6 +229,7 @@ impl ConductorBuilder {
             worker_timeout: self.worker_timeout.unwrap_or(DEFAULT_WORKER_TIMEOUT),
             fail_fast: self.fail_fast.unwrap_or(false),
             budget: self.budget,
+            verifier: self.verifier,
         })
     }
 }
@@ -379,8 +407,26 @@ impl Orchestrator for Conductor {
         let principal = principal.clone();
         let system = self.system_prompt();
         let budget = self.budget.clone();
+        let verifier = self.verifier.clone();
 
         let s = async_stream::try_stream! {
+            // Phase 10.C — single prompt-text snapshot used as the
+            // verifier's `prompt` argument for every per-worker
+            // scoring call. Mirrors the AB-MCTS / Trinity derivation
+            // so verifier inputs are consistent across orchestrators.
+            let prompt_text = input
+                .messages
+                .iter()
+                .filter_map(|m| {
+                    m.content
+                        .iter()
+                        .filter_map(ContentPart::as_text)
+                        .next()
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
             let mut messages: Vec<Message> = Vec::new();
             messages.push(Message::system(system));
             if let Some(extra) = input.system.clone() {
@@ -514,6 +560,24 @@ impl Orchestrator for Conductor {
                         result: value,
                         is_error: is_err,
                     };
+
+                    // Phase 10.C — score each worker's text output
+                    // against the original prompt before fold-in.
+                    // `branch` is the 1-based worker dispatch index
+                    // within this turn (consumers can attribute the
+                    // score to the specific worker that produced it).
+                    // Failed workers have no useful text to score, so
+                    // the emit is gated on `Ok`. A verifier error
+                    // surfaces as a stream error — same semantics as
+                    // AB-MCTS rollouts.
+                    if let (Some(v), Ok(text)) = (verifier.as_ref(), r.outcome.as_ref()) {
+                        let branch = (idx + 1) as u32;
+                        let score = v
+                            .score(&principal, &prompt_text, text)
+                            .await?
+                            .clamp(0.0, 1.0);
+                        yield OrchEvent::VerifierScore { step, branch, score };
+                    }
                 }
 
                 if fail_fast {
