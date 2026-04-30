@@ -20,6 +20,8 @@ pub mod secrets;
 pub mod sigstore;
 #[cfg(feature = "sigstore")]
 pub mod sigstore_state;
+#[cfg(feature = "redis")]
+pub mod sigstore_state_redis;
 
 pub use otel::{TracerGuard, TracingConfig, init_otlp_tracing, init_tracing};
 pub use pii::{ContentTransform, PiiHit, PiiKind, apply, detect};
@@ -33,4 +35,6 @@ pub use sigstore::{
     Catalogue, CatalogueVerifier, IdentityPolicy, KeylessBundle, KeylessVerifier, SanMatch,
 };
 #[cfg(feature = "sigstore")]
-pub use sigstore_state::JsonStateStore;
+pub use sigstore_state::{JsonStateStore, StateStore};
+#[cfg(feature = "redis")]
+pub use sigstore_state_redis::RedisStateStore;

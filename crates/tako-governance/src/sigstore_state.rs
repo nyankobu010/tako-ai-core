@@ -55,11 +55,70 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tako_core::TakoError;
 use tempfile::NamedTempFile;
 
 use crate::sigstore::KeylessVerifier;
+
+/// Phase 13.A — pluggable backend for the [`KeylessVerifier`] Rekor
+/// checkpoint freshness anchor.
+///
+/// Two impls ship: [`JsonStateStore`] (single-process) and (when the
+/// `redis` cargo feature is enabled) `RedisStateStore`
+/// (multi-replica). They are interchangeable behind
+/// `Arc<dyn StateStore>` so orchestrator code that wants either can
+/// stay backend-agnostic.
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// # use tako_governance::sigstore::{IdentityPolicy, KeylessVerifier};
+/// # use tako_governance::sigstore_state::{JsonStateStore, StateStore};
+/// # async fn run() -> Result<(), tako_core::TakoError> {
+/// let store: Arc<dyn StateStore> = Arc::new(JsonStateStore::new("/var/lib/tako/rekor.json"));
+/// let identity = IdentityPolicy::exact("https://accounts.example.com", "ci@example.com");
+/// let verifier = store.seed(KeylessVerifier::new(identity)).await?;
+/// // ... verify bundles ...
+/// store.persist(&verifier).await?;
+/// # Ok(()) }
+/// ```
+///
+/// Required methods are [`load`](StateStore::load) and
+/// [`save`](StateStore::save). The [`seed`](StateStore::seed) and
+/// [`persist`](StateStore::persist) helpers have default impls that
+/// call them, so concrete impls inherit the verifier-handover
+/// convenience for free.
+#[async_trait]
+pub trait StateStore: Send + Sync + std::fmt::Debug + 'static {
+    /// Read the persisted `rekor_min_tree_size`. Implementations
+    /// should return `Ok(0)` when no value has ever been persisted —
+    /// the verifier treats `0` as "uninitialised, no constraint".
+    async fn load(&self) -> Result<u64, TakoError>;
+
+    /// Persist `n` as the new high-water mark. Implementations must be
+    /// crash-safe (atomic for [`JsonStateStore`]) and monotonically
+    /// non-decreasing across replicas (Lua-script-guarded for
+    /// `RedisStateStore`) so a slow replica cannot clobber a higher
+    /// water-mark with a stale value.
+    async fn save(&self, n: u64) -> Result<(), TakoError>;
+
+    /// Load the persisted high-water mark and apply it to `verifier`
+    /// via [`KeylessVerifier::with_rekor_min_tree_size`]. Returns the
+    /// rebuilt verifier so the call composes into a builder chain.
+    async fn seed(&self, verifier: KeylessVerifier) -> Result<KeylessVerifier, TakoError> {
+        let n = self.load().await?;
+        Ok(verifier.with_rekor_min_tree_size(n))
+    }
+
+    /// Read [`KeylessVerifier::rekor_max_tree_size`] and write it via
+    /// [`save`](Self::save). No-op semantics when the verifier's
+    /// high-water mark is `0` — still writes `0` so the next boot
+    /// `load`s an explicit `0` rather than a missing key.
+    async fn persist(&self, verifier: &KeylessVerifier) -> Result<(), TakoError> {
+        self.save(verifier.rekor_max_tree_size()).await
+    }
+}
 
 /// On-disk JSON state for the [`KeylessVerifier::rekor_max_tree_size`]
 /// freshness anchor.
@@ -213,6 +272,29 @@ impl JsonStateStore {
     }
 }
 
+/// Phase 13.A — async [`StateStore`] impl. Delegates to the inherent
+/// sync methods (file ops are sub-millisecond, no `spawn_blocking`
+/// justified). The inherent surface stays the public API for callers
+/// who don't want to take a `Send + Sync` trait dependency.
+#[async_trait]
+impl StateStore for JsonStateStore {
+    async fn load(&self) -> Result<u64, TakoError> {
+        JsonStateStore::load(self)
+    }
+
+    async fn save(&self, n: u64) -> Result<(), TakoError> {
+        JsonStateStore::save(self, n)
+    }
+
+    async fn seed(&self, verifier: KeylessVerifier) -> Result<KeylessVerifier, TakoError> {
+        JsonStateStore::seed(self, verifier)
+    }
+
+    async fn persist(&self, verifier: &KeylessVerifier) -> Result<(), TakoError> {
+        JsonStateStore::persist(self, verifier)
+    }
+}
+
 /// Phase 11.A H2 — clamp the persisted state file to mode `0o600` on
 /// Unix so a co-tenant on the same host cannot silently downgrade
 /// `rekor_min_tree_size`. On Windows this is a no-op; the operator
@@ -241,6 +323,36 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use super::*;
+
+    /// Phase 13.A — `StateStore` is a public trait that
+    /// `JsonStateStore` implements. This compile-time assertion
+    /// guards against accidental regressions to the trait surface
+    /// (e.g. dropping `Send + Sync + Debug + 'static` bounds breaks
+    /// `Arc<dyn StateStore>` use sites).
+    #[test]
+    fn json_state_store_implements_state_store() {
+        fn assert_state_store<T: StateStore>() {}
+        assert_state_store::<JsonStateStore>();
+    }
+
+    /// Phase 13.A — the trait must be object-safe so callers can hold
+    /// `Arc<dyn StateStore>` and pick the backend at runtime.
+    #[test]
+    fn state_store_is_object_safe() {
+        let _store: std::sync::Arc<dyn StateStore> = std::sync::Arc::new(JsonStateStore::new(
+            std::path::PathBuf::from("/tmp/object-safe-check.json"),
+        ));
+    }
+
+    /// Phase 13.A — the async trait surface round-trips the same
+    /// values as the sync inherent methods.
+    #[tokio::test]
+    async fn async_trait_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonStateStore::new(dir.path().join("anchor.json"));
+        StateStore::save(&store, 42).await.unwrap();
+        assert_eq!(StateStore::load(&store).await.unwrap(), 42);
+    }
 
     #[test]
     fn round_trip() {
