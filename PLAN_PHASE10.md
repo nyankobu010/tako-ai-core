@@ -330,3 +330,4 @@ Updated from PLAN.md's current list at end of Phase 10:
 - Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
 - MCP Streamable HTTP — SSE upgrade + `Mcp-Session-Id` lifecycle (Phase 2 promise).
 - Redis-backed `StateStore` (sibling to `JsonStateStore` for multi-replica deployments).
+- Sigstore security hardening (review-driven). Land H1 + H2 + M1–M4 from [SECURITY_PHASE10.md](SECURITY_PHASE10.md): race-free freshness-anchor advance (`compare_exchange_weak` or `Mutex<u64>`), `0600` state-file mode + docstring, unique tmp filenames, `deny_unknown_fields` + schema `version`, `basicConstraints: cA=TRUE` enforcement in `verify_chain`, tmp cleanup on rename failure. Strictly additive; no public API change.

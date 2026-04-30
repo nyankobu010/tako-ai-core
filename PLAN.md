@@ -58,6 +58,13 @@ additive — public APIs from earlier phases never break.
   Per-delta verifier calls would need the same opt-in cost-control
   surface as `LlmJudgeGuard::with_streaming_min_chars`. Lands when
   a concrete consumer asks.
+- **Sigstore security hardening (review-driven).** Land H1 + H2 +
+  M1–M4 from [SECURITY_PHASE10.md](SECURITY_PHASE10.md): race-free
+  freshness-anchor advance (`compare_exchange_weak` or `Mutex<u64>`),
+  `0600` state-file mode + docstring, unique tmp filenames,
+  `deny_unknown_fields` + schema `version`, `basicConstraints: cA=TRUE`
+  enforcement in `verify_chain`, tmp cleanup on rename failure.
+  Strictly additive; no public API change.
 
 ### Beyond (speculative)
 
