@@ -24,6 +24,13 @@
 //! client cache** (Vault-token → `VaultClient`) are orthogonal — Vault
 //! token rotation does not invalidate principal lookups.
 //!
+//! Phase 16.B.1 — Vault Enterprise multi-tenant deployments scope
+//! every API call to a named **namespace** via the `X-Vault-Namespace`
+//! HTTP header. [`VaultAuthResolver::with_namespace`] sets the
+//! namespace once at builder time; it propagates to every
+//! `VaultClient` built by [`VaultAuthResolver::get_or_build_client`].
+//! `None` (the default) preserves OSS-Vault behaviour byte-for-byte.
+//!
 //! Errors map to `TakoError::Invalid("vault: ...")` for unknown
 //! tokens / malformed entries (so [`crate::routes::resolve_principal`]
 //! returns 401) and to `TakoError::Transport("vault: ...")` for
@@ -70,6 +77,10 @@ pub struct VaultAuthResolver {
     path_prefix: String,
     cache_ttl: Duration,
     cache: Arc<RwLock<HashMap<String, (Principal, Instant)>>>,
+    /// Phase 16.B.1 — Vault Enterprise namespace. `None` ⇒ OSS Vault
+    /// (no `X-Vault-Namespace` header). Set via
+    /// [`VaultAuthResolver::with_namespace`].
+    namespace: Option<String>,
 }
 
 impl std::fmt::Debug for VaultAuthResolver {
@@ -79,6 +90,7 @@ impl std::fmt::Debug for VaultAuthResolver {
             .field("mount", &self.mount)
             .field("path_prefix", &self.path_prefix)
             .field("cache_ttl", &self.cache_ttl)
+            .field("namespace", &self.namespace)
             .finish_non_exhaustive()
     }
 }
@@ -107,6 +119,7 @@ impl VaultAuthResolver {
             path_prefix: DEFAULT_PATH_PREFIX.into(),
             cache_ttl: DEFAULT_CACHE_TTL,
             cache: Arc::new(RwLock::new(HashMap::new())),
+            namespace: None,
         }
     }
 
@@ -161,6 +174,24 @@ impl VaultAuthResolver {
         self
     }
 
+    /// Phase 16.B.1 — set the Vault Enterprise namespace for every
+    /// outgoing request. The value is propagated through
+    /// [`VaultClientSettingsBuilder::namespace`] so each cached
+    /// `VaultClient` sends the `X-Vault-Namespace` header on every
+    /// KV lookup. `None` (the default) keeps OSS Vault behaviour.
+    ///
+    /// Chainable on top of any
+    /// [`VaultAuthResolver::new`] /
+    /// [`VaultAuthResolver::with_provider`] /
+    /// [`VaultAuthResolver::with_approle`] /
+    /// [`VaultAuthResolver::with_kubernetes`] /
+    /// [`VaultAuthResolver::with_kubernetes_in_pod`] constructor —
+    /// namespace is orthogonal to auth method.
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = Some(namespace.into());
+        self
+    }
+
     fn path_for(&self, token: &str) -> String {
         format!("{}/{token}", self.path_prefix.trim_end_matches('/'))
     }
@@ -176,9 +207,12 @@ impl VaultAuthResolver {
                 return Ok(Arc::clone(c));
             }
         }
-        let settings = VaultClientSettingsBuilder::default()
-            .address(&self.addr)
-            .token(vault_token)
+        let mut builder = VaultClientSettingsBuilder::default();
+        builder.address(&self.addr).token(vault_token);
+        if let Some(ns) = self.namespace.as_ref() {
+            builder.namespace(Some(ns.clone()));
+        }
+        let settings = builder
             .build()
             .map_err(|e| TakoError::Invalid(format!("vault: invalid client settings: {e}")))?;
         let client = VaultClient::new(settings)
@@ -308,5 +342,47 @@ mod tests {
         let auth = VaultAuthResolver::with_kubernetes_in_pod("http://127.0.0.1:8200", "tako-role")
             .unwrap();
         assert_eq!(auth.addr, "http://127.0.0.1:8200");
+    }
+
+    #[test]
+    fn vault_resolver_namespace_default_none() {
+        let auth = VaultAuthResolver::new("http://127.0.0.1:8200", "dev-token").unwrap();
+        assert!(auth.namespace.is_none());
+    }
+
+    #[test]
+    fn vault_resolver_with_namespace_sets_value() {
+        let auth = VaultAuthResolver::new("http://127.0.0.1:8200", "dev-token")
+            .unwrap()
+            .with_namespace("eng-team");
+        assert_eq!(auth.namespace.as_deref(), Some("eng-team"));
+    }
+
+    #[test]
+    fn vault_resolver_with_namespace_chainable_with_other_builders() {
+        // Phase 16.B.1 — namespace is orthogonal to mount / prefix /
+        // ttl and to the underlying auth-method constructor.
+        let auth = VaultAuthResolver::with_approle("http://127.0.0.1:8200", "role-id", "secret-id")
+            .unwrap()
+            .with_mount("kv")
+            .with_path_prefix("api/keys")
+            .with_namespace("acme")
+            .with_cache_ttl(Duration::from_secs(5));
+        assert_eq!(auth.mount, "kv");
+        assert_eq!(auth.path_prefix, "api/keys");
+        assert_eq!(auth.namespace.as_deref(), Some("acme"));
+        assert_eq!(auth.cache_ttl, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn vault_resolver_namespace_appears_in_debug_repr() {
+        let auth = VaultAuthResolver::new("http://127.0.0.1:8200", "dev-token")
+            .unwrap()
+            .with_namespace("eng-team");
+        let dbg = format!("{auth:?}");
+        assert!(
+            dbg.contains("namespace") && dbg.contains("eng-team"),
+            "namespace not in debug repr: {dbg}"
+        );
     }
 }
