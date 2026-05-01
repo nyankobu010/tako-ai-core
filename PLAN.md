@@ -43,31 +43,30 @@ synopsis and quickstart.
 | 22 — URL-source images: Anthropic + OpenAI + Mistral | v0.23.0 | done (2026-05-01) | [PLAN_PHASE22.md](PLAN_PHASE22.md) | [`## [0.23.0]`](CHANGELOG.md) |
 | 23 — URL-source images: Vertex (Gemini fileData) | v0.24.0 | done (2026-05-01) | [PLAN_PHASE23.md](PLAN_PHASE23.md) | [`## [0.24.0]`](CHANGELOG.md) |
 | 24 — OIDC introspection mTLS / `tls_client_auth` | v0.25.0 | done (2026-05-01) | [PLAN_PHASE24.md](PLAN_PHASE24.md) | [`## [0.25.0]`](CHANGELOG.md) |
+| 25 — OIDC `self_signed_tls_client_auth` | v0.26.0 | done (2026-05-01) | [PLAN_PHASE25.md](PLAN_PHASE25.md) | [`## [0.26.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 25 candidates (indicative, not yet committed)
+### Phase 26 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 24's holding pen — OIDC introspection
-mTLS landed in Phase 24 (`tls_client_auth`). After Phase 24 the
-OIDC introspection auth-method surface covers all five RFC 7662
-§2.1 / RFC 8414-listed methods we ship: `client_secret_basic` /
-`_post` / `_jwt` / `private_key_jwt` / `tls_client_auth`. The
+Carry-forward from Phase 25's holding pen —
+`self_signed_tls_client_auth` landed in Phase 25, completing the
+OIDC introspection auth-method surface to all six RFC 7662 §2.1
+/ RFC 8414 / RFC 8705-listed methods tako ships:
+`client_secret_basic` / `_post` / `_jwt` / `private_key_jwt` /
+`tls_client_auth` / `self_signed_tls_client_auth`. The
 remainder:
 
-- **`self_signed_tls_client_auth`** (RFC 8705 §2.2) — corner
-  case where the issuer accepts self-signed certs without a CA
-  chain. Identical wire shape to `tls_client_auth` so the same
-  builder works, but the discovery-list entry is distinct.
-- **OIDC mTLS end-to-end integration test** — Phase 24 ships
-  builder-level tests; a real TLS server requiring client auth
-  (e.g. rustls-server in the test harness) would close the loop.
-- **OIDC mTLS cert / key rotation** — Phase 24 builds the mTLS
-  Client once at builder time; long-running deployments that
-  rotate client certs would need a refresh mechanism.
+- **OIDC mTLS end-to-end integration test** — Phases 24 + 25
+  ship builder-level tests; a real TLS server requiring client
+  auth (axum-server + rustls + per-test CA) would close the
+  loop. ~300 lines of test infra.
+- **OIDC mTLS cert / key rotation** — Phases 24 + 25 build the
+  mTLS Client once at builder time; long-running deployments
+  rotating client certs would need a refresh mechanism.
 - **URL-source images for Bedrock / Ollama** — both need
   tako-side pre-fetch with an SSRF guard. Different design
   problem from the vendor-fetched-URL case Phases 22 + 23

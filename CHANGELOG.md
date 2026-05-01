@@ -9,6 +9,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.26.0] - 2026-05-01
+
+Phase 25 — closes the OIDC introspection auth-method surface to
+all six RFC 7662 §2.1 / RFC 8414 / RFC 8705-listed methods tako
+ships. Phase 24 added CA-backed mTLS (`tls_client_auth`);
+Phase 25 adds the self-signed sibling (`self_signed_tls_client_auth`,
+RFC 8705 §2.2). Natural close-out of the ~10-phase OIDC
+hardening arc that started with Phase 14.B. Plan:
+[PLAN_PHASE25.md](PLAN_PHASE25.md).
+
+The auth-method surface tako now covers:
+
+1. `client_secret_basic` (Phase 15.B.2 default; RFC 7662 §2.1)
+2. `client_secret_post` (Phase 16.B.2; RFC 7662 §2.1)
+3. `client_secret_jwt` (Phase 17.B; RFC 7521 / 7523 HS256)
+4. `private_key_jwt` (Phase 18.A; RFC 7521 / 7523 RS256 / ES256
+   / EdDSA)
+5. `tls_client_auth` (Phase 24; RFC 8705 §2.1 CA-backed mTLS)
+6. `self_signed_tls_client_auth` (Phase 25; RFC 8705 §2.2
+   self-signed mTLS)
+
+### Added
+
+- **Phase 25.A — OIDC introspection
+  `self_signed_tls_client_auth`
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+
+  New `IntrospectionAuthMethod::SelfSignedTlsClientAuth`
+  variant. Wire-identical to Phase 24's
+  `IntrospectionAuthMethod::TlsClientAuth` (both present a TLS
+  client cert during the handshake), but the issuer matches the
+  cert directly against a pre-registered cert thumbprint or
+  public-key fingerprint instead of validating against a CA
+  chain. The distinction is in the discovery-list entry; the
+  wire format is identical so the same `mtls_client` field on
+  `IntrospectionConfig` carries the Identity for both variants.
+
+  Two new `OidcAuthResolver` builders:
+  - `with_introspection_self_signed_mtls(cert_pem, key_pem)`
+  - `with_introspection_self_signed_mtls_combined(combined_pem)`
+
+  Both load the cert + key, build a per-resolver mTLS-enabled
+  `reqwest::Client` via `reqwest::Identity::from_pem`, and flip
+  `auth_method` to `SelfSignedTlsClientAuth`. PEM parse /
+  `Client` build failures surface as `TakoError::Invalid` at
+  builder time, matching Phase 24's pattern.
+
+  Auto-selector extension: extends the Phase 24 five-tier
+  preference order to a six-tier ordering with
+  `tls_client_auth` (CA-backed) at the head and
+  `self_signed_tls_client_auth` second. Rationale: CA-backed
+  wins because the chain provides ongoing trust validation
+  (revocation, etc.). Both gated on having an mTLS identity
+  configured. When only `self_signed_tls_client_auth` is
+  advertised, the auto-selector picks it (regardless of which
+  mTLS builder set the identity up).
+
+  `introspect()` extension: the body-build, Client-swap, and
+  no-Authorization-header arms all extend to handle
+  `SelfSignedTlsClientAuth` identically to `TlsClientAuth`.
+  The pre-flight identity check is generalised over both
+  variants, producing distinct error messages
+  (`"oidc: tls_client_auth requires mtls_client to be set"` vs.
+  `"oidc: self_signed_tls_client_auth requires mtls_client to
+  be set"`).
+
+  Six new unit tests:
+  - `with_introspection_self_signed_mtls_accepts_valid_pem`
+  - `with_introspection_self_signed_mtls_combined_accepts_concatenated_pem`
+  - `with_introspection_self_signed_mtls_rejects_garbage_pem`
+  - `auto_select_prefers_tls_client_auth_over_self_signed_when_both_listed`
+    — even after `with_introspection_mtls` then re-run
+    auto-selector with both advertised, CA-backed wins.
+  - `auto_select_picks_self_signed_when_only_self_signed_listed` —
+    `tls_client_auth` not advertised; auto-selector picks
+    self-signed.
+  - `introspect_self_signed_tls_client_auth_errors_when_mtls_client_missing`
+    — request-time fail.
+
+  Phase 24 mTLS test cert + key fixtures are reused. All Phase
+  24 mTLS tests pass byte-for-byte unchanged.
+
+- **Phase 25.B — Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `OidcAuth.with_introspection_self_signed_mtls(cert_pem,
+  key_pem)` and `_combined(combined_pem)` mirror the Rust
+  builders. Returns a NEW `OidcAuth`. Raises `ValueError` on
+  PEM parse failure.
+
+  `OidcAuth.with_introspection_auth_method(method)` alias
+  parser extended with four case-insensitive aliases for the
+  new variant: `"self_signed_tls_client_auth"` (RFC 8705 §2.2
+  spec name), `"self-signed-tls-client-auth"` (kebab variant),
+  `"self_signed_mtls"` and `"self-signed-mtls"`
+  (operator-friendly shorthands).
+
+  `tako.compat` module docstring updated with the close-out
+  note that the OIDC introspection auth-method surface now
+  covers all six published methods. New
+  [`tests/python/test_phase25_self_signed_mtls.py`](tests/python/test_phase25_self_signed_mtls.py)
+  covers facade attribute presence + the alias-parser entries.
+
+- **`PLAN_PHASE25.md` filename free.** A previous file by this
+  name held Phase 2.5's plan because of the `2.5 → 25`
+  reading. Renamed to `PLAN_PHASE2_5.md` (underscore variant)
+  in this phase so the actual Phase 25 plan can claim the
+  natural filename. PLAN.md table row + cross-references in
+  `PLAN_PHASE1.md` and `PLAN_PHASE3.md` updated.
+
+### Changed
+
+- `IntrospectionAuthMethod` gains a sixth unit variant
+  `SelfSignedTlsClientAuth`. The enum keeps `#[derive(Debug,
+  Clone, Copy, Default, PartialEq, Eq)]`; default is unchanged
+  (`ClientSecretBasic`).
+- The pre-flight mTLS identity check in `introspect()` is
+  generalised over both mTLS variants and produces
+  variant-specific error messages.
+- Workspace + Python crate version bumped to v0.26.0.
+
+### Carried forward to Phase 26+
+
+- OIDC mTLS end-to-end integration test — real TLS server
+  requiring client auth (axum-server + rustls + per-test CA);
+  ~300 lines of test infra.
+- OIDC mTLS cert / key rotation — long-running deployments
+  rotating client certs would need a refresh mechanism.
+- URL-source images for Bedrock / Ollama (need tako-side
+  pre-fetch with SSRF guard), Vertex File API upload flow,
+  eval-harness real graders, OIDC refresh-token / revocation,
+  ChainedAuth short-circuit-on-transport-error.
+
 ## [0.25.0] - 2026-05-01
 
 Phase 24 — closes the OIDC introspection mTLS gap that's been
