@@ -102,7 +102,7 @@ These were documented in commits but did not land in Phase 1:
 - mkdocs full nav (concepts/, recipes/, API reference) — Phase 2.
 
 (The above all landed in Phase 2 / 2.5 — see [PLAN_PHASE2.md](PLAN_PHASE2.md)
-and [PLAN_PHASE25.md](PLAN_PHASE25.md).)
+and [PLAN_PHASE2_5.md](PLAN_PHASE2_5.md).)
 
 ### Final Phase 1 verification (manual, requires Python 3.10+)
 

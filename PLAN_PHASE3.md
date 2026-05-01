@@ -4,7 +4,7 @@
 > shipped, plus the orchestrator-streaming carry-over from Phase 2.5.
 > See [CHANGELOG.md](CHANGELOG.md) `## [0.4.0]` for the full diff.
 >
-> Successor to [PLAN_PHASE25.md](PLAN_PHASE25.md). Phase 4 (AB-MCTS,
+> Successor to [PLAN_PHASE2_5.md](PLAN_PHASE2_5.md). Phase 4 (AB-MCTS,
 > Mistral/Ollama providers, WS/gRPC MCP, Sigstore, Redis budgets) is
 > next; see [PLAN.md](PLAN.md).
 
