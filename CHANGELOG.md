@@ -9,6 +9,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.34.0] - 2026-05-02
+
+Phase 33 — OIDC mTLS cert/key rotation. Closes the
+Phase-24/25-deferred operator-UX gap where the mTLS
+introspection client was built once at builder time and
+required a process restart to refresh. Phase 33 adds an
+explicit-reload primitive: operators call
+`OidcAuthResolver::reload_mtls_identity(cert_pem, key_pem)`
+from their own scheduler (cert-manager webhook, Vault PKI
+rotation, filesystem watcher, periodic poll) and the next
+request uses the new identity. The swap is atomic from the
+request-handler's perspective — concurrent introspection POSTs
+either see the old Client or the new one, never a torn state.
+
+Two sub-items, mostly additive (one internal field type
+widening on a 6-week-old struct). Plan:
+[PLAN_PHASE33.md](PLAN_PHASE33.md).
+
+### Added
+
+- **Phase 33.A — Rust core
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+
+  New public `MtlsClient` newtype wraps an
+  `std::sync::RwLock<Arc<reqwest::Client>>`. `MtlsClient::new`
+  constructs from a freshly-built reqwest Client;
+  `MtlsClient::current()` returns an `Arc<reqwest::Client>`
+  snapshot (lock acquisition is brief — read lock + Arc
+  clone; poison-recoverable);
+  `MtlsClient::swap(client)` atomically replaces the inner
+  Client. Concurrent readers either see the old Client or the
+  new one, never a torn state.
+
+  Phase 24/25 builders
+  (`with_introspection_mtls{,_combined}` and
+  `with_introspection_self_signed_mtls{,_combined}`) now wrap
+  the freshly-built `reqwest::Client` in `MtlsClient::new(...)`
+  before storing on `IntrospectionConfig.mtls_client`.
+
+  `introspect()` request-time read path snapshots via
+  `cfg.mtls_client.as_ref().map(|m| m.current())` before
+  building the request. The snapshot lives for the duration
+  of the request; concurrent reloads via
+  `OidcAuthResolver::reload_mtls_identity` affect only the
+  NEXT request, never an in-flight one.
+
+  New `OidcAuthResolver::reload_mtls_identity(cert_pem,
+  key_pem) -> Result<(), TakoError>` and
+  `reload_mtls_identity_combined(combined_pem)` methods. Both
+  take `&self` (not `&mut self`) so operators can call through
+  a shared `Arc<OidcAuthResolver>` — interior mutability lives
+  on the `MtlsClient::inner` RwLock. Reload errors when no
+  prior `with_introspection_mtls` /
+  `with_introspection_self_signed_mtls` call (operator
+  notices early; not silent no-op). Reload PEM parse /
+  `reqwest::Client` build failures surface as
+  `TakoError::Invalid` AND leave the previously installed
+  Client unchanged.
+
+  Seven new unit tests:
+  - `mtls_client_current_returns_arc_clone` — Two `current()`
+    calls before any swap return Arc-equal snapshots.
+  - `mtls_client_swap_replaces_inner` — After `swap()`,
+    `current()` returns a NEW Arc.
+  - `reload_mtls_identity_swaps_under_arc_resolver` — Reload
+    through `Arc<OidcAuthResolver>` works via `&self`.
+  - `reload_mtls_identity_errs_when_no_mtls_configured` —
+    Resolver without prior mTLS call returns `TakoError::Invalid`
+    with operator guidance pointing at the right builder.
+  - `reload_mtls_identity_errs_on_invalid_pem_and_preserves_old`
+    — Garbage PEM returns Err AND the previously installed
+    Client is still served by `current()` (no
+    partial-rollback).
+  - `reload_mtls_identity_combined_works_for_combined_pem` —
+    `cat cert.pem key.pem` form roundtrips.
+  - `reload_mtls_identity_works_for_self_signed_too` — Reload
+    works identically for Phase 25 self-signed mTLS configs.
+
+- **Phase 33.B — Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)
+  +
+  [python/tako/compat.py](python/tako/compat.py)).**
+
+  New `PyOidcAuth.reload_mtls_identity(cert_pem, key_pem)` and
+  `reload_mtls_identity_combined(combined_pem)` methods. Both
+  take `&self` (not the immutable-builder pattern) and mutate
+  state in place via internal mutability. Both raise
+  `ValueError` (mapped from `TakoError::Invalid` via
+  `map_err`) when no prior `with_introspection_mtls` /
+  `with_introspection_self_signed_mtls` call AND when the new
+  PEM fails to parse / the reqwest Client fails to build.
+
+  [`python/tako/compat.py`](python/tako/compat.py) module
+  docstring extended with a Phase 33.B paragraph describing
+  the new methods, the cert-rotation use case, and the
+  atomic-swap semantic.
+
+  Three new tests in
+  [`tests/python/test_phase33_oidc_mtls_reload.py`](tests/python/test_phase33_oidc_mtls_reload.py)
+  pin attribute presence on both methods and confirm the
+  Phase 33.B paragraph appears in the `serve_openai`
+  docstring (documentation-discoverability follows the Phase
+  24.B cadence).
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.34.0.
+- `IntrospectionConfig.mtls_client` field type widens from
+  `Option<Arc<reqwest::Client>>` to
+  `Option<Arc<MtlsClient>>`. The struct is barely 6 weeks old
+  (Phase 24); external callers who pass `None` are unaffected;
+  callers who construct with `Some(Arc::new(client))` need to
+  wrap in `MtlsClient::new(...)`. The Phase 24 + 25 builders
+  do the wrapping; only callers who construct
+  `IntrospectionConfig` directly with `Some(...)` are
+  affected.
+
+### Carried forward to Phase 34+
+
+- **Trait-based `MtlsIdentityProvider`** — async trait that
+  yields fresh cert+key bytes on demand; tako would call it
+  proactively at e.g. 90% of cert validity. Needs cert-parsing
+  on the tako side (`x509-parser` dep or hand-rolled DER
+  walk).
+- **Automatic refresh-on-handshake-failure** — catch TLS
+  handshake errors at request time and trigger reload. Needs
+  retry logic + cycle-detection.
+- **Filesystem watcher integration** — auto-reload when the
+  cert+key files on disk change. `notify` crate dep.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+
 ## [0.33.0] - 2026-05-02
 
 Phase 32 — URL pre-fetch CIDR allowlist. Closes the

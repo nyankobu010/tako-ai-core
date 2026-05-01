@@ -51,35 +51,43 @@ synopsis and quickstart.
 | 30 — URL pre-fetch per-host allowlist | v0.31.0 | done (2026-05-01) | [PLAN_PHASE30.md](PLAN_PHASE30.md) | [`## [0.31.0]`](CHANGELOG.md) |
 | 31 — URL pre-fetch wildcard host patterns | v0.32.0 | done (2026-05-01) | [PLAN_PHASE31.md](PLAN_PHASE31.md) | [`## [0.32.0]`](CHANGELOG.md) |
 | 32 — URL pre-fetch CIDR allowlist | v0.33.0 | done (2026-05-02) | [PLAN_PHASE32.md](PLAN_PHASE32.md) | [`## [0.33.0]`](CHANGELOG.md) |
+| 33 — OIDC mTLS cert/key rotation | v0.34.0 | done (2026-05-02) | [PLAN_PHASE33.md](PLAN_PHASE33.md) | [`## [0.34.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 33 candidates (indicative, not yet committed)
+### Phase 34 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 32's holding pen — CIDR allowlist
-landed in Phase 32. The URL pre-fetch allowlist now covers all
-three semantic forms: exact host (Phase 30), wildcard suffix
-host (Phase 31), CIDR subnet (Phase 32). The operator allowlist
-arc is closed. The remainder of the wider backlog:
+Carry-forward from Phase 33's holding pen — OIDC mTLS cert/key
+rotation landed in Phase 33 via the explicit-reload primitive
+(`reload_mtls_identity`). Operators now refresh client certs
+without process restart. The remainder of the wider backlog:
 
+- **Trait-based `MtlsIdentityProvider`** — async trait that
+  yields fresh cert+key bytes on demand; tako would call it
+  proactively at e.g. 90% of cert validity. Needs cert-parsing
+  on the tako side (`x509-parser` dep or hand-rolled DER walk).
+  Phase 33 carry-forward.
+- **Automatic refresh-on-handshake-failure** — catch TLS
+  handshake errors at request time and trigger reload. Needs
+  retry logic + cycle-detection. Phase 33 carry-forward.
+- **Filesystem watcher integration** — auto-reload when the
+  cert+key files on disk change. `notify` crate dep. Phase 33
+  carry-forward.
 - **Wildcard at non-leftmost positions** — patterns like
   `registry.*.corp` (wildcard in middle). Phase 31 ships only
   the leftmost-`*.` convention. Probably never worth shipping
   unless a real operator asks.
 - **Strict-allowlist mode** — currently all allowlists are
   per-rule BYPASSes of the blocklist. A strict mode would
-  REQUIRE every URL host to match an allowlist entry (no
-  bypass; reject everything else). No operator ask yet.
+  REQUIRE every URL host to match an allowlist entry. No
+  operator ask yet.
 - **OIDC mTLS end-to-end integration test** — Phases 24 + 25
   ship builder-level tests; a real TLS server requiring client
   auth (axum-server + rustls + per-test CA) would close the
   loop. ~300 lines of test infra.
-- **OIDC mTLS cert / key rotation** — Phases 24 + 25 build the
-  mTLS Client once at builder time; long-running deployments
-  rotating client certs would need a refresh mechanism.
 - **Vertex File API upload flow** — separate API surface; the
   Phase 23 `VxFileData` already accepts uploaded URIs.
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —

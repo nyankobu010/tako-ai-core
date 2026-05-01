@@ -85,25 +85,25 @@ result = orch.run_sync("Quick question: ...")
 
 ## Feature matrix
 
-| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 | Phase 11 | Phase 12 | Phase 13 | Phase 14 | Phase 15 | Phase 16 | Phase 17 | Phase 18 | Phase 19 | Phase 20 | Phase 21 | Phase 22 | Phase 23 | Phase 24 | Phase 25 | Phase 26 | Phase 27 | Phase 28 | Phase 29 | Phase 30 | Phase 31 | Phase 32 |
-|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|
+| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 | Phase 11 | Phase 12 | Phase 13 | Phase 14 | Phase 15 | Phase 16 | Phase 17 | Phase 18 | Phase 19 | Phase 20 | Phase 21 | Phase 22 | Phase 23 | Phase 24 | Phase 25 | Phase 26 | Phase 27 | Phase 28 | Phase 29 | Phase 30 | Phase 31 | Phase 32 | Phase 33 |
+|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|
 | `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | | ➕ Python custom provider streaming | ➕ `http-generic` streaming (`StreamConfig`) | ➕ `tako.providers.HttpGeneric` Python facade | | | | | | | ➕ outbound vision content (`ContentPart::Image`) on Anthropic + OpenAI | ➕ outbound vision content on Vertex (Gemini `inlineData`) + Mistral (OpenAI-compatible `image_url`) + Ollama (sibling `images` field) — completes the six-of-six provider sweep | | ➕ URL-source images (`ContentPart::ImageUrl`) on Anthropic + OpenAI + Mistral; vendor's API server fetches the URL | ➕ URL-source images on Vertex (Gemini `fileData` — accepts `gs://` GCS + `https://` URLs Google fetches) | | | | | ➕ URL-source images on Bedrock + Ollama via opt-in tako-side pre-fetch (`url_prefetch=true`; `https`-only, configurable timeout / size cap, MIME validation) | ➕ default-on private-IP blocklist (loopback / RFC 1918 / link-local / multicast / IPv6 unique-local + link-local + IPv4-mapped) at DNS-resolve time + IP-literal check; DNS-rebinding mitigation via `reqwest::dns::Resolve` impl validating EVERY returned IP; `tako.providers.Ollama` Python facade closes Phase 28.C asymmetry | ➕ per-host allowlist (`with_url_prefetch_allow_host(host)`) — chainable builder lets operators permit specific internal hostnames (e.g., a private artifact registry on a private RFC 1918 address) while keeping the rest of the blocklist active; `url_prefetch_allow_hosts: list[str] \| None` kwarg threaded through `tako.providers.Bedrock` + `tako.providers.Ollama` | ➕ wildcard suffix patterns (`*.internal.corp`) on the per-host allowlist via new `AllowList` struct that splits exact-match from suffix-match at config time; multi-level matching by default (`*.X` matches `a.X` AND `b.a.X`); leftmost-`*` convention only | ➕ CIDR allowlist (`with_url_prefetch_allow_cidr("10.0.5.0/24")`) — IPv4 + IPv6 CIDRs via new `ipnet` workspace dep; bypass triggers when a resolved IP (or IP literal) falls inside any allowlisted subnet; `url_prefetch_allow_cidrs: list[str] \| None` Python kwarg on both providers — closes the operator allowlist arc (exact + wildcard + CIDR forms) |
-| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events | | | | ➕ JWT / OIDC / Vault `AuthResolver` impls (cargo features) | ➕ Vault AppRole / Kubernetes token rotation; OIDC RFC 7662 introspection | ➕ Vault Enterprise namespace; OIDC introspection `client_secret_post` auth method | ➕ OIDC introspection RFC 8414 discovery-driven auth-method selection; `client_secret_jwt` (RFC 7521 / 7523) | ➕ OIDC introspection `private_key_jwt` (RFC 7521 / 7523, RS256 / ES256 / EdDSA); end-session endpoint helper (OIDC Session Management 1.0) | | | ➕ `ChainedAuthResolver` composite resolver (try children in order; first `Ok` short-circuits) | | | ➕ OIDC introspection `tls_client_auth` (RFC 8705 mTLS) — completes the five-of-five RFC 7662 §2.1 / RFC 8414 auth-method surface | ➕ OIDC introspection `self_signed_tls_client_auth` (RFC 8705 §2.2) — completes the six-of-six RFC 7662 §2.1 / RFC 8414 / RFC 8705 auth-method surface | ➕ `ChainedAuthResolver::with_short_circuit_on_transport_error` (opt-in fail-fast so OIDC-issuer-down doesn't mask as "unknown bearer token") | ➕ `ChainedAuthResolver::with_short_circuit_on_infrastructure_errors` — broader fail-fast covering `RateLimited` / `CircuitOpen` / `BudgetExhausted` | | | | | |
-| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | | | ➕ Streamable HTTP SSE notifications + `Mcp-Session-Id` lifecycle | | | | | | | | | | | | | | | | | | | | |
-| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | |
-| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | | ➕ bounded `mpsc::channel(64)` worker fanout backpressure | | | | | | | | | | | | | | | | |
-| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | ➕ streaming `Verifier::evaluate_streaming` | | | | | | | | | | | | | | | | | | | |
-| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | | | | | | | | | | | | | | | | | | | | | | | |
-| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | | | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | ➕ bounded `mpsc::channel(64)` rollout-event backpressure | | | | | | | | | | | | | | | | |
-| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | | | | | | | | | | | | | | | | | | | | | | | |
-| Streaming verifier (`Verifier::evaluate_streaming`) | | | | | | | | | | | | | ✅ default-impl + Trinity per-delta + `RuleBasedVerifier` override | ➕ Conductor per-delta (worker fanout via mpsc) | ➕ AbMcts per-delta (rollout buffer + mpsc + `tokio::select!`) | ➕ bounded mpsc backpressure on AbMcts + Conductor channels | | | | | | | | | | | | | | | | |
-| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | |
-| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | |
-| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | |
-| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | | | | | | | | | | | | | | | | | | | | | | | |
-| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | |
-| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` | ➕ review-driven hardening (race-free anchor; `0o600` state file; `BasicConstraints` + critical-ext checks) | | ➕ `StateStore` trait + `RedisStateStore` (multi-replica) | | | | | | | | | | | | | | | | | | | |
-| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | |
+| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events | | | | ➕ JWT / OIDC / Vault `AuthResolver` impls (cargo features) | ➕ Vault AppRole / Kubernetes token rotation; OIDC RFC 7662 introspection | ➕ Vault Enterprise namespace; OIDC introspection `client_secret_post` auth method | ➕ OIDC introspection RFC 8414 discovery-driven auth-method selection; `client_secret_jwt` (RFC 7521 / 7523) | ➕ OIDC introspection `private_key_jwt` (RFC 7521 / 7523, RS256 / ES256 / EdDSA); end-session endpoint helper (OIDC Session Management 1.0) | | | ➕ `ChainedAuthResolver` composite resolver (try children in order; first `Ok` short-circuits) | | | ➕ OIDC introspection `tls_client_auth` (RFC 8705 mTLS) — completes the five-of-five RFC 7662 §2.1 / RFC 8414 auth-method surface | ➕ OIDC introspection `self_signed_tls_client_auth` (RFC 8705 §2.2) — completes the six-of-six RFC 7662 §2.1 / RFC 8414 / RFC 8705 auth-method surface | ➕ `ChainedAuthResolver::with_short_circuit_on_transport_error` (opt-in fail-fast so OIDC-issuer-down doesn't mask as "unknown bearer token") | ➕ `ChainedAuthResolver::with_short_circuit_on_infrastructure_errors` — broader fail-fast covering `RateLimited` / `CircuitOpen` / `BudgetExhausted` | | | | | | ➕ OIDC mTLS cert/key rotation (`OidcAuthResolver::reload_mtls_identity` / `_combined`) — atomic-swap primitive for long-running deployments where cert-manager / Vault PKI / filesystem watchers refresh client certs without process restart |
+| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | | | ➕ Streamable HTTP SSE notifications + `Mcp-Session-Id` lifecycle | | | | | | | | | | | | | | | | | | | | | |
+| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | | |
+| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | | ➕ bounded `mpsc::channel(64)` worker fanout backpressure | | | | | | | | | | | | | | | | | |
+| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | ➕ streaming `Verifier::evaluate_streaming` | | | | | | | | | | | | | | | | | | | | |
+| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | | | | | | | | | | | | | | | | | | | | | | | | |
+| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | | | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | ➕ bounded `mpsc::channel(64)` rollout-event backpressure | | | | | | | | | | | | | | | | | |
+| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | | | | | | | | | | | | | | | | | | | | | | | | |
+| Streaming verifier (`Verifier::evaluate_streaming`) | | | | | | | | | | | | | ✅ default-impl + Trinity per-delta + `RuleBasedVerifier` override | ➕ Conductor per-delta (worker fanout via mpsc) | ➕ AbMcts per-delta (rollout buffer + mpsc + `tokio::select!`) | ➕ bounded mpsc backpressure on AbMcts + Conductor channels | | | | | | | | | | | | | | | | | |
+| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | | |
+| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | | |
+| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | | |
+| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | | | | | | | | | | | | | | | | | | | | | | | | |
+| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | | |
+| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` | ➕ review-driven hardening (race-free anchor; `0o600` state file; `BasicConstraints` + critical-ext checks) | | ➕ `StateStore` trait + `RedisStateStore` (multi-replica) | | | | | | | | | | | | | | | | | | | | |
+| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | | | | | | |
 
 ## Roadmap
 
@@ -864,6 +864,45 @@ result = orch.run_sync("Quick question: ...")
   side-by-side. Seven new Python signature smoke tests.
   After Phase 32, the operator allowlist arc is closed.
   Strictly additive — public APIs unchanged shape.
+- **Phase 33 — OIDC mTLS cert/key rotation** *(done,
+  v0.34.0)*: closes the Phase-24/25-deferred operator-UX gap
+  where the mTLS introspection client was built once at
+  builder time and required a process restart to refresh.
+  Phase 33 adds an explicit-reload primitive: operators call
+  `OidcAuthResolver::reload_mtls_identity(cert_pem, key_pem)`
+  from their own scheduler (cert-manager webhook, Vault PKI
+  rotation, filesystem watcher, periodic poll) and the next
+  request uses the new identity. The swap is atomic from the
+  request-handler's perspective — concurrent introspection
+  POSTs either see the old Client or the new one, never a torn
+  state. Two sub-items:
+  (A) [`tako-compat`](crates/tako-compat) — new internal
+  `MtlsClient` newtype wraps an `RwLock<Arc<reqwest::Client>>`;
+  the Phase 24/25 builders construct via `MtlsClient::new`;
+  `introspect()` snapshots via `MtlsClient::current()` (Arc
+  clone under brief read-lock, poison-recoverable); new
+  `OidcAuthResolver::reload_mtls_identity()` and `_combined()`
+  methods atomically swap the inner Client via `&self`
+  (interior mutability lives on the `MtlsClient::inner`
+  RwLock — operators call through `Arc<OidcAuthResolver>`
+  without exclusive access). Reload errors when no prior
+  `with_introspection_mtls` call (operator notices early; not
+  silent no-op); reload PEM/Client failures preserve the
+  previously installed Client (no partial-rollback). Field
+  type widening on `IntrospectionConfig.mtls_client`:
+  `Option<Arc<reqwest::Client>>` → `Option<Arc<MtlsClient>>`
+  (the only public-API change, affecting only callers who
+  construct `IntrospectionConfig` directly with `Some(...)`).
+  Seven new unit tests pinning the swap semantics, error
+  paths, combined-PEM convenience, and self-signed parity.
+  (B) [`tako-py`](crates/tako-py) — new
+  `OidcAuth.reload_mtls_identity(cert_pem, key_pem)` and
+  `_combined(combined_pem)` Python methods mirror the Rust
+  surface. Mutate state in place via internal mutability (no
+  immutable-builder pattern). Three new Python smoke tests.
+  Trait-based `MtlsIdentityProvider`, automatic refresh-on-
+  handshake-failure, and filesystem watcher integration remain
+  Phase 34+ candidates.
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 
