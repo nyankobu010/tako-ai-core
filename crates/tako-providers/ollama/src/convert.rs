@@ -159,7 +159,9 @@ fn message_to_ol(m: &Message) -> OlMessage {
                 tool_result = Some(result.to_string());
             }
             ContentPart::Image { .. } => {
-                // Vision is out of scope for this adapter.
+                // Phase 19 wired vision through Anthropic + OpenAI;
+                // Ollama stays deferred to Phase 20+ — Ollama's
+                // multimodal support is model-specific (LLaVA et al.).
             }
         }
     }

@@ -172,7 +172,9 @@ fn message_to_mi(m: &Message) -> MiMessage {
                 tool_result_content = Some(result.to_string());
             }
             ContentPart::Image { .. } => {
-                // Vision is out of scope for the Mistral adapter.
+                // Phase 19 wired vision through Anthropic + OpenAI;
+                // Mistral stays deferred to Phase 20+ — Mistral's
+                // multimodal API support is newer and model-specific.
             }
         }
     }

@@ -37,22 +37,24 @@ synopsis and quickstart.
 | 16 — Streaming-rollout backpressure + tako-compat auth hardening, continued | v0.17.0 | done (2026-05-01) | [PLAN_PHASE16.md](PLAN_PHASE16.md) | [`## [0.17.0]`](CHANGELOG.md) |
 | 17 — OIDC introspection completeness | v0.18.0 | done (2026-05-01) | [PLAN_PHASE17.md](PLAN_PHASE17.md) | [`## [0.18.0]`](CHANGELOG.md) |
 | 18 — OIDC introspection asymmetric JWT + end-session helper | v0.19.0 | done (2026-05-01) | [PLAN_PHASE18.md](PLAN_PHASE18.md) | [`## [0.19.0]`](CHANGELOG.md) |
+| 19 — Vision content support: Anthropic + OpenAI | v0.20.0 | done (2026-05-01) | [PLAN_PHASE19.md](PLAN_PHASE19.md) | [`## [0.20.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 19 candidates (indicative, not yet committed)
+### Phase 20 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 18's holding pen — the two items that
-landed in Phase 18 (`private_key_jwt` introspection auth method;
-OIDC Session Management 1.0 end-session endpoint helper) are now
-off the list. The remainder:
+Carry-forward from Phase 19's holding pen — Anthropic + OpenAI
+vision content landed in Phase 19. The remainder:
 
-- **Vision / image content support across providers.** Anthropic,
-  Vertex, and Bedrock all have stub markers; multi-crate
-  cross-cutting effort that warrants a focused phase.
+- **Vision / image content for Vertex + Mistral + Ollama.**
+  Phase 19 wired the two flagship providers (Anthropic + OpenAI);
+  the three remaining providers each have a different per-vendor
+  multimodal-content shape (Vertex's `inline_data` / `file_data`,
+  Mistral's model-specific multimodal, Ollama's LLaVA-family
+  embedding). Best handled in a single Phase 20 sweep.
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
   Sandboxed runner needed.
@@ -207,10 +209,12 @@ where the fix would land.
   time and exposed via `OidcAuthResolver::end_session_endpoint()`
   + `build_logout_uri(id_token_hint, post_logout_redirect_uri,
   state)`. Pure URL building; no I/O.
-- [ ] **Vision / image content support across providers.**
-  Anthropic ([convert.rs:171](crates/tako-providers/anthropic/src/convert.rs#L171)),
-  Vertex ([convert.rs:203](crates/tako-providers/vertex/src/convert.rs#L203)),
-  Bedrock ([convert.rs:268](crates/tako-providers/bedrock/src/convert.rs#L268)).
+- [~] **Vision / image content support across providers.**
+  Anthropic + OpenAI closed in Phase 19.A / 19.B (v0.20.0).
+  Vertex ([convert.rs:202-208](crates/tako-providers/vertex/src/convert.rs#L202-L208)),
+  Mistral ([convert.rs:174-178](crates/tako-providers/mistral/src/convert.rs#L174-L178)),
+  Ollama ([convert.rs:161-164](crates/tako-providers/ollama/src/convert.rs#L161-L164))
+  remain deferred to Phase 20+.
 - [ ] **Eval harness real graders.** `swe_bench_lite` and `gpqa_diamond`
   raise `NotImplementedError`; real SWE-Bench (apply patch + run sandboxed
   repo tests) deferred to "a later phase".

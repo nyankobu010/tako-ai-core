@@ -200,7 +200,11 @@ fn message_to_vx(
                 })
             }
             ContentPart::Image { .. } => {
-                // Vision parts deferred; drop silently for now.
+                // Phase 19 wired vision through Anthropic + OpenAI;
+                // Vertex stays deferred to Phase 20+ — Gemini's
+                // `inline_data` / `file_data` parts have a
+                // different shape and need per-part inspection of
+                // the gemini-pro-vision SDK surface.
             }
         }
     }

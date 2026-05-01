@@ -9,6 +9,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.20.0] - 2026-05-01
+
+Phase 19 — closes the long-stale "vision is out of scope for
+Phase 1" markers on the two flagship providers. Anthropic +
+OpenAI now emit outbound `ContentPart::Image` content;
+Bedrock has shipped this since Phase 2.5 (so the three-of-six
+adapters now have it). Vertex / Mistral / Ollama stay deferred
+to Phase 20+. Plan: [PLAN_PHASE19.md](PLAN_PHASE19.md).
+
+### Added
+
+- **Phase 19.A — Outbound image content for Anthropic
+  ([crates/tako-providers/anthropic/src/convert.rs](crates/tako-providers/anthropic/src/convert.rs)).**
+  New `AnBlock::Image { source: AnImageSource }` variant on the
+  Anthropic content-block enum. `AnImageSource` carries `kind`
+  (always `"base64"` in Phase 19), `media_type`, and `data`.
+  Per Anthropic Messages API: `{"type": "image", "source":
+  {"type": "base64", "media_type": "image/jpeg", "data":
+  "<base64>"}}`.
+
+  `is_supported_anthropic_mime` filters to the four MIME types
+  Anthropic accepts (`image/jpeg`, `image/png`, `image/gif`,
+  `image/webp`); other types are silently dropped to match the
+  existing `Text { text: "" } => None` cadence in
+  `content_to_blocks`. `strip_data_url_prefix` normalises
+  `data:image/...;base64,<data>` inputs to the bare-base64 form
+  Anthropic's API requires; idempotent.
+
+  Five new unit tests covering serialised JSON shape, data-URL
+  prefix stripping, unsupported-MIME silent-drop,
+  `strip_data_url_prefix` idempotence, and the supported-MIME
+  matrix. URL-source images (`source.type = "url"`) remain
+  deferred — server-side fetch from request-supplied URLs has
+  security implications we haven't designed yet.
+
+- **Phase 19.B — Outbound image content for OpenAI
+  ([crates/tako-providers/openai/src/convert.rs](crates/tako-providers/openai/src/convert.rs)).**
+  OpenAI's Chat Completions API requires `content` to switch
+  from a flat string to an array of typed blocks when an image
+  is present. The adapter now emits the array form **only when**
+  an image content part is present, preserving byte-for-byte
+  wire shape on existing non-vision traffic (pinned by the new
+  `text_only_message_keeps_flat_string_content` regression test).
+
+  New surfaces:
+  - `OaContent` untagged enum: `Text(String)` (Phase 1 default)
+    | `Blocks(Vec<OaContentBlock>)` (Phase 19.B array form).
+  - `OaContentBlock` tagged enum (`text` / `image_url`).
+  - `OaImageUrl` struct holding the data-URL string.
+  - `OaMessage.content` field type widens from `Option<String>`
+    to `Option<OaContent>`.
+
+  `message_to_oa` walks once, accumulating both `text_parts`
+  (for the flat-string fallback) and ordered `blocks` (text +
+  image entries in source order — preserves narrative ordering).
+  Tool-result messages keep the flat-string shape because
+  OpenAI's API doesn't accept array content on `role=tool`
+  (pinned by `tool_result_message_keeps_flat_string_content`).
+
+  Like the Anthropic adapter, OpenAI accepts the same four MIME
+  types; other types are silently dropped. `build_data_url`
+  normalises double-prefixed inputs.
+
+  Seven new unit tests covering wire-shape regression
+  (text-only + tool-result), array-form emission, data-URL
+  normalisation, unsupported-MIME drop, the supported-MIME
+  matrix, and idempotent `build_data_url`.
+
+- **Phase 19.C — Python facade smoke
+  ([tests/python/test_phase19_vision.py](tests/python/test_phase19_vision.py)).**
+  Pins the Pydantic `ContentPart` mirror's image-field surface:
+  `ContentPart(type="image", mime, data_b64)` constructs cleanly,
+  serialises to the dict shape the Rust adapters consume, and
+  preserves source order in mixed text + image messages. Seven
+  new tests including parameterised coverage for the four
+  supported MIME types. The Python facade's `messages_from`
+  (`tako-py/src/conv.rs`) remains text-only — wiring image
+  content through the wheel's ergonomic Python entry points is
+  a richer surface for a later phase.
+
+### Changed
+
+- `OaMessage.content` field type widens from `Option<String>` to
+  `Option<OaContent>`. `OaContent` is the new top-level public
+  type for OpenAI message content. Existing callers that read
+  this field directly (none in the workspace per `grep`) need
+  to match on the enum.
+- `tako-providers-azure-openai` doesn't read `OaMessage.content`
+  directly — it depends on `tako-providers-openai` only at the
+  public-API level — and its 4 integration tests remain green
+  byte-for-byte.
+- Stub markers on Vertex / Mistral / Ollama image-content arms
+  reframed from "out of scope" to "deferred to Phase 20+", with
+  vendor-specific reasons (Vertex's `inline_data` / `file_data`,
+  Mistral's model-specific multimodal, Ollama's LLaVA-family
+  embedding).
+- Workspace + Python crate version bumped to v0.20.0.
+
+### Carried forward to Phase 20+
+
+- Vision / image content for Vertex + Mistral + Ollama. Best
+  handled in a single Phase 20 sweep — each has a different
+  per-vendor multimodal-content shape.
+- URL-source images (Anthropic's `source.type = "url"` /
+  OpenAI's `image_url.url` with a `https://...` value).
+  Server-side fetch from request-supplied URLs needs a security
+  story.
+- OIDC introspection mTLS auth methods, OIDC refresh-token /
+  revocation-endpoint flows, composite `AuthResolver`s.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
 ## [0.19.0] - 2026-05-01
 
 Phase 18 — clears two more OIDC carry-forward items from the Phase
