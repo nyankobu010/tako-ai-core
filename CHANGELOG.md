@@ -9,6 +9,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.28.0] - 2026-05-01
+
+Phase 27 — closes the Phase-26 carry-forward by extending
+`ChainedAuthResolver`'s opt-in fail-fast to four "definitely
+infrastructure / operator-set guard" `TakoError` variants:
+`Transport`, `RateLimited`, `CircuitOpen`, `BudgetExhausted`.
+Plan: [PLAN_PHASE27.md](PLAN_PHASE27.md).
+
+The case-by-case analysis on which variants to short-circuit:
+
+- `Transport(String)` — network failure; falling through to
+  another resolver gets the wrong-cause error. **Short-circuit ✓**
+- `RateLimited(Duration)` — falling through doesn't reset the
+  upstream rate limit. **Short-circuit ✓**
+- `CircuitOpen` — internal failsafe; falling through doesn't
+  reset. **Short-circuit ✓**
+- `BudgetExhausted(String)` — operator-set cap; falling through
+  circumvents it. **Short-circuit ✓**
+- `Provider { ... }` — vendor error; could be auth-related.
+  **Fall through** (deferred pending finer discrimination)
+- `Invalid(String)` — auth decision. **Fall through**
+- `PolicyDenied(String)` — policy decision. **Fall through**
+
+### Added
+
+- **Phase 27.A — `ChainedAuthResolver::with_short_circuit_on_infrastructure_errors`
+  ([crates/tako-compat/src/auth/chained.rs](crates/tako-compat/src/auth/chained.rs)).**
+
+  Internal refactor: the Phase-26
+  `short_circuit_on_transport_error: bool` field is upgraded
+  to a `ShortCircuitPolicy` enum (`None` / `TransportOnly` /
+  `AllInfrastructure`). The enum is private; public-API churn
+  is zero. Phase 26 callers
+  (`with_short_circuit_on_transport_error()` +
+  `short_circuits_on_transport_error()`) work byte-for-byte.
+
+  New surfaces:
+  - `ChainedAuthResolver::with_short_circuit_on_infrastructure_errors()`
+    builder method (idempotent). Last-write-wins between this
+    and the Phase-26 narrower builder — the policy is
+    overwritten, not merged.
+  - `ChainedAuthResolver::short_circuits_on_infrastructure_errors() -> bool`
+    accessor. Returns `true` only when the broader builder was
+    the most recent policy setter.
+  - The Phase-26 `short_circuits_on_transport_error()` accessor
+    now returns `true` for both `TransportOnly` and
+    `AllInfrastructure` policies (both short-circuit on
+    `Transport`).
+
+  `resolve()` extension uses an explicit `match
+  self.short_circuit_policy` switch over the three enum
+  variants. The `CountingAuth` test mock is extended further to
+  preserve `RateLimited` / `CircuitOpen` / `BudgetExhausted`
+  variants (currently only `Transport` and `Invalid`
+  round-trip; others collapse into `Invalid`).
+
+  Eight new unit tests:
+
+  - `infrastructure_short_circuit_default_falls_through_on_rate_limited`
+    — Phase 21 / 26 regression pin.
+  - `infrastructure_short_circuit_returns_immediately_on_rate_limited`
+  - `infrastructure_short_circuit_returns_immediately_on_circuit_open`
+  - `infrastructure_short_circuit_returns_immediately_on_budget_exhausted`
+  - `infrastructure_short_circuit_falls_through_on_invalid_error`
+    — auth-decision errors still fall through with broader policy.
+  - `transport_only_falls_through_on_rate_limited_when_transport_only_set`
+    — regression: the Phase-26 narrower flag does NOT broaden
+    scope after the policy enum refactor.
+  - `short_circuits_on_infrastructure_errors_accessor_reflects_state`
+    — both accessors track the policy correctly across the three
+    states.
+  - `short_circuit_policy_is_last_write_wins` — calling broader
+    after narrower (and vice versa) overwrites the policy.
+
+- **Phase 27.B — Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `ChainedAuth.with_short_circuit_on_infrastructure_errors()` +
+  `short_circuits_on_infrastructure_errors() -> bool` accessor
+  mirror the Rust API. Returns a NEW `ChainedAuth` (immutable
+  builder; idempotent). `tako.compat` module docstring updated
+  to mention the new builder + the variant coverage. New
+  [`tests/python/test_phase27_chained_infrastructure.py`](tests/python/test_phase27_chained_infrastructure.py)
+  covers facade attribute presence, immutable-builder semantics,
+  last-write-wins between Phase-26 and Phase-27 builders, the
+  regression pin that the narrower flag doesn't flip the
+  broader accessor, and idempotence.
+
+### Changed
+
+- `ChainedAuthResolver`'s private state widens from a single
+  `bool` to a three-state `ShortCircuitPolicy` enum. Public API
+  unchanged byte-for-byte; Phase 21 + 26 callers preserve
+  semantics.
+- The Phase-26 `short_circuits_on_transport_error()` accessor's
+  semantics are now "is this chain configured to short-circuit
+  on transport errors?" — which is `true` for both narrower
+  and broader policies. The doc comment was updated to clarify;
+  the boolean output is unchanged for callers who only set the
+  Phase-26 narrower flag.
+- Workspace + Python crate version bumped to v0.28.0.
+
+### Carried forward to Phase 28+
+
+- `TakoError::Provider` short-circuit — vendor-error
+  short-circuit warrants finer discrimination on the embedded
+  error. Deferred pending real-world need.
+- Per-child `ChainedAuthResolver` policy override — operators
+  may want different short-circuit policies per child. Not yet
+  asked for.
+- OIDC mTLS end-to-end integration test, OIDC mTLS cert
+  rotation, URL-source for Bedrock / Ollama, Vertex File API
+  upload, eval-harness real graders, OIDC refresh-token /
+  revocation.
+
 ## [0.27.0] - 2026-05-01
 
 Phase 26 — closes the Phase-21-deferred operator-UX issue with
