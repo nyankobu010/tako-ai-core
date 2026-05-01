@@ -20,5 +20,6 @@ mod client;
 pub mod convert;
 #[doc(hidden)]
 pub mod stream;
+mod url_prefetch;
 
 pub use client::{OllamaBuilder, OllamaProvider};
