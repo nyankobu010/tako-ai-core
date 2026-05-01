@@ -99,7 +99,8 @@ struct DiscoveryDoc {
     introspection_endpoint_auth_methods_supported: Option<Vec<String>>,
 }
 
-/// Phase 16.B.2 / 17.B — RFC 7662 §2.1 introspection endpoint auth method.
+/// Phase 16.B.2 / 17.B / 18.A — RFC 7662 §2.1 introspection
+/// endpoint auth method.
 ///
 /// Selected via [`OidcAuthResolver::with_introspection_auth_method`]
 /// or, in Phase 17.A, auto-negotiated against the discovery doc via
@@ -111,7 +112,8 @@ struct DiscoveryDoc {
 /// `ClientSecretJwt` (Phase 17.B) signs a short-lived HS256 JWT
 /// over the configured `client_secret` and sends it as the
 /// `client_assertion` + `client_assertion_type` form fields per
-/// RFC 7521 / 7523.
+/// RFC 7521 / 7523; `PrivateKeyJwt` (Phase 18.A) does the same
+/// with an asymmetric (RS256 / ES256 / EdDSA) signing key.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum IntrospectionAuthMethod {
     /// HTTP Basic auth — Phase 15.B.2 default behaviour.
@@ -121,7 +123,7 @@ pub enum IntrospectionAuthMethod {
     /// alongside `token`. Per RFC 7662 §2.1 the server MUST accept
     /// either method when authenticating a confidential client.
     ClientSecretPost,
-    /// Phase 17.B — RFC 7521 / 7523 client-assertion JWT auth.
+    /// Phase 17.B — RFC 7521 / 7523 symmetric client-assertion JWT.
     ///
     /// The resolver builds a short-lived HS256 JWT signed over the
     /// configured `client_secret` (claims: `iss` / `sub` =
@@ -133,12 +135,96 @@ pub enum IntrospectionAuthMethod {
     ///
     /// Errors at request time (`introspect()`) when no
     /// `client_secret` is configured — HS256 needs the symmetric
-    /// key. Asymmetric `private_key_jwt` (RS256 / ES256 with a
-    /// separate signing key) is deferred to Phase 18+.
+    /// key.
     ClientSecretJwt,
+    /// Phase 18.A — RFC 7521 / 7523 asymmetric client-assertion JWT.
+    ///
+    /// Same wire shape as [`Self::ClientSecretJwt`] (form-body
+    /// `client_assertion` + `client_assertion_type`, no
+    /// `Authorization` header) but signed with an RSA / EC / Ed25519
+    /// private key from
+    /// [`IntrospectionConfig::client_assertion_key`] instead of the
+    /// symmetric `client_secret`. Algorithm selection (RS256 / ES256
+    /// / EdDSA) lives on the [`ClientAssertionKey`] itself.
+    ///
+    /// Errors at request time when no
+    /// [`IntrospectionConfig::client_assertion_key`] is configured.
+    PrivateKeyJwt,
 }
 
-/// Phase 15.B.2 — RFC 7662 token-introspection configuration.
+/// Phase 18.A — asymmetric private signing key for the
+/// [`IntrospectionAuthMethod::PrivateKeyJwt`] introspection auth
+/// method. Carries the algorithm alongside the key so the signing
+/// path doesn't need a separate algorithm field on
+/// [`IntrospectionConfig`] (and so an HS-secret can never
+/// accidentally be paired with an RS-algorithm).
+///
+/// Construct via the typed PEM constructors —
+/// [`Self::from_rs256_pem`] / [`Self::from_es256_pem`] /
+/// [`Self::from_ed25519_pem`]. The key is held in an
+/// [`EncodingKey`] under the hood; [`Debug`] is implemented
+/// manually so the key body is redacted.
+pub struct ClientAssertionKey {
+    algorithm: Algorithm,
+    encoding_key: EncodingKey,
+}
+
+impl ClientAssertionKey {
+    /// Load an RSA private key from a PEM encoding and pin the
+    /// signing algorithm to RS256 (industry default for
+    /// `private_key_jwt`).
+    pub fn from_rs256_pem(pem: &[u8]) -> Result<Self, TakoError> {
+        let key = EncodingKey::from_rsa_pem(pem).map_err(|e| {
+            TakoError::Invalid(format!("oidc: invalid RS256 client-assertion key: {e}"))
+        })?;
+        Ok(Self {
+            algorithm: Algorithm::RS256,
+            encoding_key: key,
+        })
+    }
+
+    /// Load an EC P-256 private key from a PEM encoding and pin the
+    /// signing algorithm to ES256.
+    pub fn from_es256_pem(pem: &[u8]) -> Result<Self, TakoError> {
+        let key = EncodingKey::from_ec_pem(pem).map_err(|e| {
+            TakoError::Invalid(format!("oidc: invalid ES256 client-assertion key: {e}"))
+        })?;
+        Ok(Self {
+            algorithm: Algorithm::ES256,
+            encoding_key: key,
+        })
+    }
+
+    /// Load an Ed25519 private key from a PEM encoding and pin the
+    /// signing algorithm to EdDSA. Newer issuers (e.g. Keycloak ≥ 22)
+    /// support EdDSA client assertions.
+    pub fn from_ed25519_pem(pem: &[u8]) -> Result<Self, TakoError> {
+        let key = EncodingKey::from_ed_pem(pem).map_err(|e| {
+            TakoError::Invalid(format!("oidc: invalid EdDSA client-assertion key: {e}"))
+        })?;
+        Ok(Self {
+            algorithm: Algorithm::EdDSA,
+            encoding_key: key,
+        })
+    }
+
+    /// The pinned signing algorithm — exposed so callers can
+    /// log or test against it.
+    pub fn algorithm(&self) -> Algorithm {
+        self.algorithm
+    }
+}
+
+impl std::fmt::Debug for ClientAssertionKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientAssertionKey")
+            .field("algorithm", &self.algorithm)
+            .field("encoding_key", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Phase 15.B.2 / 18.A — RFC 7662 token-introspection configuration.
 ///
 /// When attached to an [`OidcAuthResolver`] via
 /// [`OidcAuthResolver::with_introspection`] or
@@ -157,6 +243,12 @@ pub struct IntrospectionConfig {
     /// Phase 16.B.2 — RFC 7662 §2.1 introspection auth method.
     /// Defaults to `ClientSecretBasic` (Phase 15.B.2 behaviour).
     pub auth_method: IntrospectionAuthMethod,
+    /// Phase 18.A — asymmetric signing key for
+    /// [`IntrospectionAuthMethod::PrivateKeyJwt`]. `Arc` because
+    /// `EncodingKey` doesn't impl `Clone` and
+    /// [`OidcAuthResolver`] is `#[derive(Clone)]` for the Python
+    /// immutable-builder pattern. `None` for symmetric methods.
+    pub client_assertion_key: Option<Arc<ClientAssertionKey>>,
 }
 
 /// Subset of RFC 7662 introspection response. `active` is the only
@@ -301,6 +393,7 @@ impl OidcAuthResolver {
             client_id: client_id.into(),
             client_secret,
             auth_method: IntrospectionAuthMethod::default(),
+            client_assertion_key: None,
         });
         Ok(self)
     }
@@ -318,6 +411,7 @@ impl OidcAuthResolver {
             client_id: client_id.into(),
             client_secret,
             auth_method: IntrospectionAuthMethod::default(),
+            client_assertion_key: None,
         });
         self
     }
@@ -336,10 +430,12 @@ impl OidcAuthResolver {
         self
     }
 
-    /// Phase 17.A / 17.B — auto-select the
+    /// Phase 17.A / 17.B / 18.A — auto-select the
     /// [`IntrospectionAuthMethod`] from the issuer's RFC 8414
     /// `introspection_endpoint_auth_methods_supported` list captured
     /// during discovery. Preference order:
+    /// `private_key_jwt` (Phase 18.A; only when a
+    /// `client_assertion_key` is configured) →
     /// `client_secret_jwt` (Phase 17.B; only when a
     /// `client_secret` is configured — HS256 needs the symmetric
     /// key) → `client_secret_basic` → `client_secret_post`.
@@ -356,11 +452,10 @@ impl OidcAuthResolver {
     ///   supported variant: selects the strongest (preference
     ///   order above).
     /// - When discovery advertised a list with **no** supported
-    ///   variant (e.g. issuer requires only `tls_client_auth` or
-    ///   `private_key_jwt`, both deferred to Phase 18+): returns
-    ///   [`TakoError::Invalid`] so the operator notices at builder
-    ///   time rather than at HTTP-401 from the introspection
-    ///   endpoint.
+    ///   variant (e.g. issuer requires only `tls_client_auth`,
+    ///   deferred to Phase 19+): returns [`TakoError::Invalid`]
+    ///   so the operator notices at builder time rather than at
+    ///   HTTP-401 from the introspection endpoint.
     pub fn with_introspection_auth_method_from_discovery(mut self) -> Result<Self, TakoError> {
         let Some(cfg) = self.introspection.as_mut() else {
             return Ok(self);
@@ -370,8 +465,11 @@ impl OidcAuthResolver {
             None => IntrospectionAuthMethod::ClientSecretBasic,
             Some(list) => {
                 let has_secret = cfg.client_secret.is_some();
+                let has_key = cfg.client_assertion_key.is_some();
                 let supports = |needle: &str| list.iter().any(|m| m == needle);
-                if has_secret && supports("client_secret_jwt") {
+                if has_key && supports("private_key_jwt") {
+                    IntrospectionAuthMethod::PrivateKeyJwt
+                } else if has_secret && supports("client_secret_jwt") {
                     IntrospectionAuthMethod::ClientSecretJwt
                 } else if supports("client_secret_basic") {
                     IntrospectionAuthMethod::ClientSecretBasic
@@ -389,6 +487,58 @@ impl OidcAuthResolver {
         Ok(self)
     }
 
+    /// Phase 18.A — attach an asymmetric [`ClientAssertionKey`] for
+    /// the [`IntrospectionAuthMethod::PrivateKeyJwt`] auth method.
+    /// Chainable on top of [`Self::with_introspection`] /
+    /// [`Self::with_introspection_uri`]; silent no-op when no
+    /// introspection config has been attached yet.
+    ///
+    /// Does **not** also flip the auth method — call
+    /// [`Self::with_introspection_auth_method`] (with
+    /// `IntrospectionAuthMethod::PrivateKeyJwt`) afterwards, or use
+    /// [`Self::with_introspection_auth_method_from_discovery`]
+    /// to auto-negotiate based on the issuer's advertised list.
+    pub fn with_introspection_private_key(mut self, key: ClientAssertionKey) -> Self {
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.client_assertion_key = Some(Arc::new(key));
+        }
+        self
+    }
+
+    /// Phase 18.A — convenience: load an RS256 PEM, attach it as
+    /// the [`ClientAssertionKey`], AND flip the auth method to
+    /// [`IntrospectionAuthMethod::PrivateKeyJwt`].
+    pub fn with_introspection_jwt_rs256_pem(mut self, pem: &[u8]) -> Result<Self, TakoError> {
+        let key = ClientAssertionKey::from_rs256_pem(pem)?;
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.client_assertion_key = Some(Arc::new(key));
+            cfg.auth_method = IntrospectionAuthMethod::PrivateKeyJwt;
+        }
+        Ok(self)
+    }
+
+    /// Phase 18.A — ES256 sibling of
+    /// [`Self::with_introspection_jwt_rs256_pem`].
+    pub fn with_introspection_jwt_es256_pem(mut self, pem: &[u8]) -> Result<Self, TakoError> {
+        let key = ClientAssertionKey::from_es256_pem(pem)?;
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.client_assertion_key = Some(Arc::new(key));
+            cfg.auth_method = IntrospectionAuthMethod::PrivateKeyJwt;
+        }
+        Ok(self)
+    }
+
+    /// Phase 18.A — EdDSA sibling of
+    /// [`Self::with_introspection_jwt_rs256_pem`].
+    pub fn with_introspection_jwt_ed25519_pem(mut self, pem: &[u8]) -> Result<Self, TakoError> {
+        let key = ClientAssertionKey::from_ed25519_pem(pem)?;
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.client_assertion_key = Some(Arc::new(key));
+            cfg.auth_method = IntrospectionAuthMethod::PrivateKeyJwt;
+        }
+        Ok(self)
+    }
+
     /// Phase 15.B.2 / 17.B — POST the token to the introspection
     /// endpoint and confirm `active=true`. Returns `Err` with a
     /// `TakoError::Invalid("oidc: token revoked ...")` payload when
@@ -397,37 +547,54 @@ impl OidcAuthResolver {
         let Some(cfg) = &self.introspection else {
             return Ok(());
         };
-        // Phase 17.B — `ClientSecretJwt` requires a non-`None`
-        // `client_secret` (HS256 signs over the symmetric key).
-        // Build the assertion before the form-body scope so the
-        // JWT-encoding `Result<String, _>` short-circuits cleanly.
-        let assertion: Option<String> =
-            if cfg.auth_method == IntrospectionAuthMethod::ClientSecretJwt {
+        // Phase 17.B / 18.A — `ClientSecretJwt` requires a non-`None`
+        // `client_secret` (HS256 over symmetric key);
+        // `PrivateKeyJwt` requires a `client_assertion_key`
+        // (asymmetric RS256 / ES256 / EdDSA). Build the assertion
+        // before the form-body scope so the encoding
+        // `Result<String, _>` short-circuits cleanly.
+        let assertion: Option<String> = match cfg.auth_method {
+            IntrospectionAuthMethod::ClientSecretJwt => {
                 let secret = cfg.client_secret.as_deref().ok_or_else(|| {
                     TakoError::Invalid(
                         "oidc: client_secret_jwt requires client_secret to be set".into(),
                     )
                 })?;
-                Some(build_client_assertion_hs256(
+                Some(build_client_assertion(
                     &cfg.client_id,
-                    secret,
                     &cfg.introspect_uri,
+                    &EncodingKey::from_secret(secret.as_bytes()),
+                    Algorithm::HS256,
                 )?)
-            } else {
-                None
-            };
+            }
+            IntrospectionAuthMethod::PrivateKeyJwt => {
+                let key = cfg.client_assertion_key.as_deref().ok_or_else(|| {
+                    TakoError::Invalid(
+                        "oidc: private_key_jwt requires client_assertion_key to be set".into(),
+                    )
+                })?;
+                Some(build_client_assertion(
+                    &cfg.client_id,
+                    &cfg.introspect_uri,
+                    &key.encoding_key,
+                    key.algorithm,
+                )?)
+            }
+            _ => None,
+        };
 
         // Workspace reqwest is configured without the `urlencoded`
         // feature; build the form body manually via `url`'s
         // `form_urlencoded`. This is what reqwest's `.form()` does
         // internally.
         //
-        // Phase 16.B.2 / 17.B — credential carriage:
+        // Phase 16.B.2 / 17.B / 18.A — credential carriage:
         // - `ClientSecretBasic`: body credential-free; `Authorization:
         //   Basic` header added below.
         // - `ClientSecretPost`: `client_id` / `client_secret` in body.
-        // - `ClientSecretJwt`: `client_assertion` /
-        //   `client_assertion_type` in body, no Authorization header.
+        // - `ClientSecretJwt` / `PrivateKeyJwt`: `client_assertion` /
+        //   `client_assertion_type` in body, no Authorization
+        //   header.
         //
         // The `Serializer` is not `Send`, so build the body string
         // in a tight scope that drops it before any await.
@@ -443,7 +610,8 @@ impl OidcAuthResolver {
                         form.append_pair("client_secret", secret);
                     }
                 }
-                IntrospectionAuthMethod::ClientSecretJwt => {
+                IntrospectionAuthMethod::ClientSecretJwt
+                | IntrospectionAuthMethod::PrivateKeyJwt => {
                     // RFC 7521 §4.2 — fixed type URI plus the
                     // assertion JWT we built above.
                     form.append_pair(
@@ -473,10 +641,11 @@ impl OidcAuthResolver {
                     req.basic_auth(&cfg.client_id, None::<&str>)
                 }
             }
-            // Phase 16.B.2 / 17.B — neither Post nor Jwt carries an
-            // Authorization header.
+            // Phase 16.B.2 / 17.B / 18.A — neither Post nor either
+            // JWT variant carries an Authorization header.
             IntrospectionAuthMethod::ClientSecretPost
-            | IntrospectionAuthMethod::ClientSecretJwt => req,
+            | IntrospectionAuthMethod::ClientSecretJwt
+            | IntrospectionAuthMethod::PrivateKeyJwt => req,
         };
         let resp = req.send().await.map_err(|e| {
             TakoError::Transport(format!("oidc: introspect POST {}: {e}", cfg.introspect_uri))
@@ -645,8 +814,9 @@ fn make_jti() -> String {
     format!("{nanos:x}-{ctr:x}")
 }
 
-/// Build a short-lived HS256 client-assertion JWT for RFC 7521 / 7523
-/// `client_secret_jwt` introspection auth. Claims:
+/// Phase 17.B / 18.A — build a short-lived client-assertion JWT for
+/// RFC 7521 / 7523 (`client_secret_jwt` or `private_key_jwt`)
+/// introspection auth. Claims:
 /// - `iss` = `sub` = `client_id`
 /// - `aud` = `audience` (the introspection endpoint URI per RFC 7523
 ///   §3 — the assertion is bound to its target endpoint to prevent
@@ -655,10 +825,16 @@ fn make_jti() -> String {
 /// - `iat` = unix-now
 /// - `exp` = `iat + 30s` (RFC 7521 §4.2 recommends a "short lifetime")
 /// - `jti` = monotonic per-call identifier from [`make_jti`]
-fn build_client_assertion_hs256(
+///
+/// The signing algorithm + key are passed in: HS256 over a symmetric
+/// `client_secret` (Phase 17.B `client_secret_jwt`) or RS256 / ES256
+/// / EdDSA over an asymmetric private key (Phase 18.A
+/// `private_key_jwt`).
+fn build_client_assertion(
     client_id: &str,
-    client_secret: &str,
     audience: &str,
+    encoding_key: &EncodingKey,
+    algorithm: Algorithm,
 ) -> Result<String, TakoError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -672,12 +848,9 @@ fn build_client_assertion_hs256(
         "exp": now + 30,
         "jti": make_jti(),
     });
-    encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(client_secret.as_bytes()),
-    )
-    .map_err(|e| TakoError::Invalid(format!("oidc: client_secret_jwt sign: {e}")))
+    encode(&Header::new(algorithm), &claims, encoding_key).map_err(|e| {
+        TakoError::Invalid(format!("oidc: client-assertion sign ({algorithm:?}): {e}"))
+    })
 }
 
 #[async_trait]
@@ -754,6 +927,7 @@ mod tests {
             client_id: "id".into(),
             client_secret: Some("secret".into()),
             auth_method: IntrospectionAuthMethod::default(),
+            client_assertion_key: None,
         };
         let cloned = cfg.clone();
         assert_eq!(cloned.introspect_uri, cfg.introspect_uri);
@@ -1298,5 +1472,248 @@ mod tests {
         for _ in 0..n {
             assert!(seen.insert(make_jti()), "duplicate jti");
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 18.A — `IntrospectionAuthMethod::PrivateKeyJwt` and the
+    // [`ClientAssertionKey`] surface.
+    // -----------------------------------------------------------------
+
+    /// PKCS#8 RSA-2048 private key generated for the Phase 18.A tests.
+    /// Pairs with [`TEST_RSA_PUB_PEM`]. Test fixture only; never used
+    /// for production signing.
+    const TEST_RSA_PRIV_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
+MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC9+b2rgzJ5HJG+\n\
+XxSlxoR/1JSZz1Q+FBg87F1AIR2CTtn0k2phG7f9ScAMvSPD8Vi5d7CNE2Dwy8sD\n\
+GI9OUr6+HX3WDeRjPMmTtdhKUftSGtzT42zfmF3P8KCoIHH1bgCKCzQkbjbN4eTl\n\
+LUsJplOqM6tLeveTbsBSFE3EQPujRjLshMGPhyWVJ4jWsDm62SQWGfHNkaao0pGJ\n\
+vllScJe7EqlEwDw+TyXUb6eS0Zt6W9i2ACp0GuRSbh05gmjq66HAesTKyjqrAkJ6\n\
+ZTmqo6s7kPsr8B/L5EoRN4UrYJ8UsSxCoj/CXxENSVpqYvdZsuRovQFAgfn3jy0f\n\
+T74KkXS3AgMBAAECggEAAvt6MkiXe2uVkCRZpHaW2ujhQlQ3vC0VlP3tmCr3lcrw\n\
+xKmnHbTRMR0+HL/ADCdBn3u/s59DwilOMRNqyy3Psm1abd3+9rMxbkEIZGD1becK\n\
+Y3B/uOI2oCPkvxmZ9bfkiJuUwHj9zEKeah30E8fe1V5aneSQIWo3g7JaPC6m+fus\n\
++eyLD9yLLpz1qkyztykv2XpzO88bHjTFnJz0rRAsh/d1KEIY2lNMHO8zRX/tqQhU\n\
+8/8SIvg4WEDdpkQ56+ouMoOSundZ6QG1MZlrisLDUs4A9zeTJuFFe6cW8bEFrvH3\n\
+/CekZkRD0NmX0h6GbKKU0Axqlt3WgeJKFe8Mr8rCDQKBgQD+bh2ZuGe985Z+lrm1\n\
+g4d2gP4gu8V57KsSQlQ/CIMTmHlCPWrbekVX/6ONV/MRc3WZHMfsx+qxOY9IQp+u\n\
+VyGnQDpVsTcIRuOMWqdXbvwtverxp/gXZOiFGbadF4HDx+8q6Q4cI/3xCtXx5bfg\n\
+UOXLSApYFJXP9BVX3H+IFppKpQKBgQC/JdDzkbctcyq0F3qY/FSJdi4C2mQPNoVZ\n\
+hw420OlYeQcFT5hzR/Ye5AWng1oqZ5yO5GaH5T8XpmZXcMIV/E/Rmo9VleKPvGx2\n\
+BDfbI1FgJ26bMHpTWfsOmLly5M82NlNg06Mt97VU+xd3Wn1A9o10ColyJvbP4i8R\n\
+i6+AbsZPKwKBgQCoBfBmY/Ge8A6i6scZqBL9n5Iz680uB62yETuxpN1rQ3ZQ2F6J\n\
+MuY4hwprfXl4PNeclfUx2ZSUFX8aKWVqrP/8g94CWVYOkUIUnomEpDbFvnY5wMOG\n\
+L42e2KxQcgWwVYkMvXwj+WDqnk1Lwnj8GnCnHpw2LuIAwyCVNXjDVqnuQQKBgQCH\n\
+7s6vyDpqGfKOa/wFe7xqnR6PbNunbfBbAI59MQggoMD7Z+VUZiKDSUk0HVcrvM87\n\
+VvYLQl4h5XX2TPvZQrtIpg+0n4ilCyxeqRVHw9AE/0XLGyiCygSeFsIbENjDBtM4\n\
+kokDEZtkucOwXyuf3TYvBadFBKyUnZc3dQzz2tMwTQKBgQDoeHgjcKYcajW996Zq\n\
+Ytc71DwaT6+cpJbiEBVLH8O40Adwe8ne0oZDPYzFhOtOhDryQtTzbSub4/WnfPUH\n\
+RfN037ltl89z5VGHUUnFiaxhCGY2DDFeVhz1jODsoUrsNFqKLJbwY6IQJMMHUnP7\n\
+WNwjxNHiEmjTyiooqJmBvBm5Eg==\n\
+-----END PRIVATE KEY-----\n";
+
+    /// Public key matching [`TEST_RSA_PRIV_PEM`].
+    const TEST_RSA_PUB_PEM: &[u8] = b"-----BEGIN PUBLIC KEY-----\n\
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvfm9q4MyeRyRvl8UpcaE\n\
+f9SUmc9UPhQYPOxdQCEdgk7Z9JNqYRu3/UnADL0jw/FYuXewjRNg8MvLAxiPTlK+\n\
+vh191g3kYzzJk7XYSlH7Uhrc0+Ns35hdz/CgqCBx9W4Aigs0JG42zeHk5S1LCaZT\n\
+qjOrS3r3k27AUhRNxED7o0Yy7ITBj4cllSeI1rA5utkkFhnxzZGmqNKRib5ZUnCX\n\
+uxKpRMA8Pk8l1G+nktGbelvYtgAqdBrkUm4dOYJo6uuhwHrEyso6qwJCemU5qqOr\n\
+O5D7K/Afy+RKETeFK2CfFLEsQqI/wl8RDUlaamL3WbLkaL0BQIH5948tH0++CpF0\n\
+twIDAQAB\n\
+-----END PUBLIC KEY-----\n";
+
+    /// PKCS#8 EC P-256 private key for the Phase 18.A ES256 smoke
+    /// test. We don't verify a JWT signed by it (that would need a
+    /// matched public key + an extra wiremock test); we just confirm
+    /// the constructor accepts the PEM.
+    const TEST_EC_PRIV_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgcXj4rM9/34aqTR2u\n\
+OKhNOiUerTQ/GPZ6q8rcrfmiykuhRANCAAToAq4Npj+odbH4wU2daxYN3tcoJool\n\
+Hg1uvux+qhVvB6JSr1th1Vbqvs7mLJioou3cLxSuM/AqPKOyBmWl2hf5\n\
+-----END PRIVATE KEY-----\n";
+
+    #[test]
+    fn client_assertion_key_from_rs256_pem_round_trip() {
+        let k = ClientAssertionKey::from_rs256_pem(TEST_RSA_PRIV_PEM).unwrap();
+        assert_eq!(k.algorithm(), Algorithm::RS256);
+        // Debug must redact the key body but expose the algorithm.
+        let dbg = format!("{k:?}");
+        assert!(dbg.contains("RS256"), "got: {dbg}");
+        assert!(dbg.contains("redacted"), "got: {dbg}");
+    }
+
+    #[test]
+    fn client_assertion_key_from_es256_pem_round_trip() {
+        let k = ClientAssertionKey::from_es256_pem(TEST_EC_PRIV_PEM).unwrap();
+        assert_eq!(k.algorithm(), Algorithm::ES256);
+    }
+
+    #[test]
+    fn client_assertion_key_rejects_garbage_pem() {
+        let err = ClientAssertionKey::from_rs256_pem(b"not a pem").unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("invalid RS256"), "got: {msg}");
+    }
+
+    #[test]
+    fn auto_select_prefers_private_key_jwt_when_listed_and_key_present() {
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.discovered_introspection_auth_methods = Some(vec![
+            "client_secret_basic".to_string(),
+            "client_secret_post".to_string(),
+            "client_secret_jwt".to_string(),
+            "private_key_jwt".to_string(),
+        ]);
+        let key = ClientAssertionKey::from_rs256_pem(TEST_RSA_PRIV_PEM).unwrap();
+        let r = r
+            .with_introspection("client", Some("secret".into()))
+            .unwrap()
+            .with_introspection_private_key(key)
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::PrivateKeyJwt,
+        );
+    }
+
+    #[test]
+    fn auto_select_skips_private_key_jwt_when_no_key() {
+        // `private_key_jwt` is listed but no key configured — fall
+        // back to `client_secret_jwt` (also listed; secret present).
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.discovered_introspection_auth_methods = Some(vec![
+            "private_key_jwt".to_string(),
+            "client_secret_jwt".to_string(),
+        ]);
+        let r = r
+            .with_introspection("client", Some("secret".into()))
+            .unwrap()
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::ClientSecretJwt,
+        );
+    }
+
+    #[tokio::test]
+    async fn introspect_private_key_jwt_errors_when_key_missing() {
+        // Auth method is `PrivateKeyJwt` but no `client_assertion_key`
+        // was configured — `introspect()` errors at request time.
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_uri("https://issuer.example/introspect", "client", None)
+            .with_introspection_auth_method(IntrospectionAuthMethod::PrivateKeyJwt);
+        let err = r.introspect("any-token").await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("private_key_jwt requires client_assertion_key"),
+            "got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn introspect_private_key_jwt_carries_client_assertion_form_fields() {
+        // Phase 18.A — `PrivateKeyJwt` MUST send `client_assertion`
+        // and `client_assertion_type` form fields, NOT
+        // `Authorization: Basic`, NOT `client_secret=`.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .and(wiremock::matchers::body_string_contains(
+                "client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer",
+            ))
+            .and(wiremock::matchers::body_string_contains("client_assertion="))
+            .and(wiremock::matchers::body_string_contains("token=abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_uri(format!("{}/introspect", server.uri()), "client", None)
+            .with_introspection_jwt_rs256_pem(TEST_RSA_PRIV_PEM)
+            .unwrap();
+        r.introspect("abc").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn introspect_private_key_jwt_signed_with_rs256() {
+        // Capture the posted body, parse out the `client_assertion`
+        // JWT, verify the RS256 signature against the matching public
+        // key, and assert claims (`iss` / `sub` = `client_id`,
+        // `aud` = `introspect_uri`, `exp` ~30s in the future).
+        let server = MockServer::start().await;
+        let introspect_uri = format!("{}/introspect", server.uri());
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_uri(&introspect_uri, "the-client-id", None)
+            .with_introspection_jwt_rs256_pem(TEST_RSA_PRIV_PEM)
+            .unwrap();
+        r.introspect("abc").await.unwrap();
+
+        // Pull the captured request and parse out `client_assertion`.
+        let received = server.received_requests().await.expect("requests");
+        assert_eq!(received.len(), 1);
+        let body = std::str::from_utf8(&received[0].body).expect("utf8 body");
+        let assertion = url::form_urlencoded::parse(body.as_bytes())
+            .find(|(k, _)| k == "client_assertion")
+            .map(|(_, v)| v.into_owned())
+            .expect("client_assertion form field");
+
+        // Verify signature against the matching public key.
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_audience(std::slice::from_ref(&introspect_uri));
+        validation.set_issuer(&["the-client-id"]);
+        validation.required_spec_claims.clear();
+        validation.required_spec_claims.insert("exp".into());
+        validation.required_spec_claims.insert("iss".into());
+        validation.required_spec_claims.insert("aud".into());
+        let key = DecodingKey::from_rsa_pem(TEST_RSA_PUB_PEM).expect("valid pub PEM");
+        let data = decode::<BTreeMap<String, serde_json::Value>>(&assertion, &key, &validation)
+            .expect("assertion verifies under matching public key");
+
+        assert_eq!(
+            data.claims.get("iss").and_then(|v| v.as_str()),
+            Some("the-client-id"),
+        );
+        assert_eq!(
+            data.claims.get("sub").and_then(|v| v.as_str()),
+            Some("the-client-id"),
+        );
+        assert_eq!(
+            data.claims.get("aud").and_then(|v| v.as_str()),
+            Some(introspect_uri.as_str()),
+        );
+        let iat = data.claims.get("iat").and_then(|v| v.as_u64()).unwrap();
+        let exp = data.claims.get("exp").and_then(|v| v.as_u64()).unwrap();
+        assert_eq!(exp - iat, 30);
+        assert!(data.claims.get("jti").and_then(|v| v.as_str()).is_some());
+    }
+
+    #[test]
+    fn auto_select_errors_when_only_unsupported_methods_advertised_phase18() {
+        // After Phase 18.A `private_key_jwt` is supported when a key
+        // is present. The fail-closed path now fires only on
+        // `tls_client_auth` / unknown methods.
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.discovered_introspection_auth_methods = Some(vec!["tls_client_auth".to_string()]);
+        let r = r
+            .with_introspection("client", Some("secret".into()))
+            .unwrap();
+        let err = r
+            .with_introspection_auth_method_from_discovery()
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("no supported introspection auth method"));
     }
 }
