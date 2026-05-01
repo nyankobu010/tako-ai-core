@@ -347,18 +347,27 @@ impl PyOidcAuth {
             "private_key_jwt" | "private-key-jwt" => {
                 tako_compat::IntrospectionAuthMethod::PrivateKeyJwt
             }
-            // Phase 24.B — RFC 8705 mTLS. Three case-insensitive
-            // aliases covering the OIDC spec name (`tls_client_auth`),
-            // the kebab variant (`tls-client-auth`), and the
-            // operator-friendly shorthand (`mtls`).
+            // Phase 24.B — RFC 8705 §2.1 CA-backed mTLS. Three
+            // case-insensitive aliases: spec name, kebab variant,
+            // operator-friendly shorthand.
             "tls_client_auth" | "tls-client-auth" | "mtls" => {
                 tako_compat::IntrospectionAuthMethod::TlsClientAuth
             }
+            // Phase 25.B — RFC 8705 §2.2 self-signed mTLS.
+            // Issuer matches the cert against a pre-registered
+            // thumbprint or fingerprint instead of a CA chain.
+            // Four case-insensitive aliases: spec name, kebab
+            // variant, two operator-friendly shorthands.
+            "self_signed_tls_client_auth"
+            | "self-signed-tls-client-auth"
+            | "self_signed_mtls"
+            | "self-signed-mtls" => tako_compat::IntrospectionAuthMethod::SelfSignedTlsClientAuth,
             other => {
                 return Err(PyValueError::new_err(format!(
                     "auth_method must be one of: 'basic' / 'client_secret_basic' / \
                      'post' / 'client_secret_post' / 'jwt' / 'client_secret_jwt' / \
-                     'private_key_jwt' / 'tls_client_auth' / 'mtls' \
+                     'private_key_jwt' / 'tls_client_auth' / 'mtls' / \
+                     'self_signed_tls_client_auth' / 'self_signed_mtls' \
                      (got {other:?})",
                 )));
             }
@@ -450,6 +459,36 @@ impl PyOidcAuth {
         let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
         let r = cloned
             .with_introspection_mtls_combined(combined_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 25.B — load a client cert + private key, build an
+    /// mTLS-enabled HTTP client, and switch the introspection
+    /// auth method to RFC 8705 §2.2 `self_signed_tls_client_auth`.
+    /// Identical wire shape to
+    /// [`Self::with_introspection_mtls`]; the only difference is
+    /// the auth-method enum variant. Returns a NEW `OidcAuth`.
+    /// Raises `ValueError` on PEM parse / `Client` build failure.
+    fn with_introspection_self_signed_mtls(
+        &self,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_self_signed_mtls(cert_pem, key_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 25.B — convenience for combined PEM blobs (the
+    /// common `cat cert.pem key.pem` form). Self-signed sibling
+    /// of [`Self::with_introspection_mtls_combined`].
+    fn with_introspection_self_signed_mtls_combined(&self, combined_pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_self_signed_mtls_combined(combined_pem)
             .map_err(map_err)?;
         Ok(PyOidcAuth { inner: Arc::new(r) })
     }

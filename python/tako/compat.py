@@ -81,6 +81,17 @@ def serve_openai(
        case-insensitive aliases ``"tls_client_auth"`` /
        ``"tls-client-auth"`` / ``"mtls"``.
 
+       Phase 25.B — ``OidcAuth`` gains
+       ``with_introspection_self_signed_mtls(cert_pem, key_pem)`` /
+       ``with_introspection_self_signed_mtls_combined(combined_pem)``
+       builders for the RFC 8705 §2.2 self-signed mTLS variant.
+       ``with_introspection_auth_method`` accepts new aliases
+       ``"self_signed_tls_client_auth"`` / ``"self-signed-mtls"``
+       (and kebab variants). The auto-selector prefers CA-backed
+       ``tls_client_auth`` over self-signed when both are listed.
+       After Phase 25 the OIDC introspection auth-method surface
+       covers all six RFC 7662 §2.1 / RFC 8414 / RFC 8705 methods.
+
        Phase 21.B — ``tako.compat.ChainedAuth`` (always-on; no
        cargo feature gate) is a composite resolver that wraps N
        child resolvers and tries them in append order. The first
