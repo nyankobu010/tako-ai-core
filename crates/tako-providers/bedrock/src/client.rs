@@ -104,6 +104,26 @@ impl BedrockBuilder {
         self
     }
 
+    /// Phase 29.A — opt out of the default-on private-IP blocklist
+    /// for tako-side URL pre-fetch.
+    ///
+    /// By default, the URL pre-fetcher rejects URLs that resolve to
+    /// loopback / RFC 1918 / link-local / multicast / IPv6 unique-
+    /// local / IPv6 link-local addresses (and IPv4-mapped variants
+    /// of those). The check runs at DNS-resolve time via a custom
+    /// [`reqwest::dns::Resolve`] impl, validating EVERY returned
+    /// address — which also closes the DNS-rebinding window.
+    ///
+    /// Operators with deployment-level egress filtering (VPC egress
+    /// rules, Pod-level egress NetworkPolicies) can flip this off
+    /// to allow internal artifact servers behind private addresses.
+    /// Does NOT auto-enable [`Self::with_url_prefetch`] — the master
+    /// switch must already be on for this flag to have any effect.
+    pub fn with_url_prefetch_allow_private_ips(mut self) -> Self {
+        self.url_prefetch.block_private_ips = false;
+        self
+    }
+
     /// Resolve credentials and build the provider. Loads the AWS config
     /// from the default credential chain (env, profile, IRSA, IMDS).
     pub async fn build(self) -> Result<BedrockProvider, TakoError> {
