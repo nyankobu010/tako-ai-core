@@ -86,6 +86,24 @@ impl OllamaBuilder {
         self
     }
 
+    /// Phase 30 — add a hostname to the URL pre-fetch allowlist.
+    /// Mirror of
+    /// [`tako_providers_bedrock::BedrockBuilder::with_url_prefetch_allow_host`].
+    ///
+    /// Hosts in the allowlist bypass the private-IP blocklist
+    /// (Phase 29.B) for that hostname only — but the scheme
+    /// check, timeout, size cap, and MIME validation still apply.
+    /// Useful for permitting a local Ollama image host
+    /// (`internal-images.corp.local`) on a private RFC 1918
+    /// address while keeping the rest of the blocklist active.
+    ///
+    /// Chainable; can be called multiple times. Matching is
+    /// exact-string against the URL's host component.
+    pub fn with_url_prefetch_allow_host(mut self, host: impl Into<String>) -> Self {
+        self.url_prefetch.allow_hosts.push(host.into());
+        self
+    }
+
     /// Phase 29.B — opt out of the default-on private-IP blocklist
     /// for tako-side URL pre-fetch. Mirror of
     /// [`crate::client::OllamaBuilder::with_url_prefetch`] semantics:
