@@ -31,9 +31,18 @@
 //! to the introspection endpoint and rejected with `TakoError::Invalid`
 //! when `active=false`.
 //!
-//! Out-of-scope (deferred to Phase 16+): refresh-token flows,
-//! end-session endpoint, `introspection_endpoint_auth_method`
-//! discovery (Phase 15.B.2 supports HTTP Basic only).
+//! Phase 16.B.2 — introspection now supports two
+//! `introspection_endpoint_auth_method` values per RFC 7662 §2.1:
+//! [`IntrospectionAuthMethod::ClientSecretBasic`] (default; Phase
+//! 15.B.2 behaviour, HTTP Basic) and
+//! [`IntrospectionAuthMethod::ClientSecretPost`] (credentials in the
+//! form body). Choose via
+//! [`OidcAuthResolver::with_introspection_auth_method`].
+//!
+//! Out-of-scope (deferred to Phase 17+): refresh-token flows,
+//! end-session endpoint, discovery-driven selection (reading
+//! `introspection_endpoint_auth_methods_supported` per RFC 8414),
+//! `client_secret_jwt` and mTLS (`tls_client_auth`) auth methods.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -66,6 +75,23 @@ struct DiscoveryDoc {
     introspection_endpoint: Option<String>,
 }
 
+/// Phase 16.B.2 — RFC 7662 §2.1 introspection endpoint auth method.
+///
+/// Selected via [`OidcAuthResolver::with_introspection_auth_method`].
+/// `ClientSecretBasic` (the default) carries credentials in the
+/// `Authorization: Basic ...` header; `ClientSecretPost` carries
+/// them as additional fields in the form-encoded request body.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IntrospectionAuthMethod {
+    /// HTTP Basic auth — Phase 15.B.2 default behaviour.
+    #[default]
+    ClientSecretBasic,
+    /// Credentials sent as `client_id` / `client_secret` form fields
+    /// alongside `token`. Per RFC 7662 §2.1 the server MUST accept
+    /// either method when authenticating a confidential client.
+    ClientSecretPost,
+}
+
 /// Phase 15.B.2 — RFC 7662 token-introspection configuration.
 ///
 /// When attached to an [`OidcAuthResolver`] via
@@ -73,14 +99,18 @@ struct DiscoveryDoc {
 /// [`OidcAuthResolver::with_introspection_uri`], every signature-
 /// validated token is additionally POSTed to `introspect_uri` with
 /// the token in the `token` form field and `client_id` /
-/// `client_secret` carried as HTTP Basic auth. A response with
-/// `active=false` rejects the token with `TakoError::Invalid("oidc:
-/// token revoked (introspection)")`.
+/// `client_secret` carried per the configured
+/// [`IntrospectionAuthMethod`] (Phase 16.B.2; defaults to HTTP
+/// Basic). A response with `active=false` rejects the token with
+/// `TakoError::Invalid("oidc: token revoked (introspection)")`.
 #[derive(Debug, Clone)]
 pub struct IntrospectionConfig {
     pub introspect_uri: String,
     pub client_id: String,
     pub client_secret: Option<String>,
+    /// Phase 16.B.2 — RFC 7662 §2.1 introspection auth method.
+    /// Defaults to `ClientSecretBasic` (Phase 15.B.2 behaviour).
+    pub auth_method: IntrospectionAuthMethod,
 }
 
 /// Subset of RFC 7662 introspection response. `active` is the only
@@ -216,6 +246,7 @@ impl OidcAuthResolver {
             introspect_uri: uri,
             client_id: client_id.into(),
             client_secret,
+            auth_method: IntrospectionAuthMethod::default(),
         });
         Ok(self)
     }
@@ -232,7 +263,22 @@ impl OidcAuthResolver {
             introspect_uri: uri.into(),
             client_id: client_id.into(),
             client_secret,
+            auth_method: IntrospectionAuthMethod::default(),
         });
+        self
+    }
+
+    /// Phase 16.B.2 — override the
+    /// [`IntrospectionAuthMethod`] used to authenticate
+    /// introspection requests. Chainable on top of
+    /// [`Self::with_introspection`] or
+    /// [`Self::with_introspection_uri`]; no-op (and silently
+    /// returned unchanged) when no introspection config has been
+    /// attached yet.
+    pub fn with_introspection_auth_method(mut self, method: IntrospectionAuthMethod) -> Self {
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.auth_method = method;
+        }
         self
     }
 
@@ -248,10 +294,24 @@ impl OidcAuthResolver {
         // feature; build the form body manually via `url`'s
         // `form_urlencoded`. This is what reqwest's `.form()` does
         // internally.
-        let body = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("token", token)
-            .append_pair("token_type_hint", "access_token")
-            .finish();
+        //
+        // Phase 16.B.2 — `ClientSecretPost` adds `client_id` and
+        // `client_secret` form fields here; `ClientSecretBasic` keeps
+        // the body credential-free and adds `Authorization: Basic`
+        // below. The `Serializer` is not `Send`, so build the body
+        // string in a tight scope that drops it before any await.
+        let body = {
+            let mut form = url::form_urlencoded::Serializer::new(String::new());
+            form.append_pair("token", token)
+                .append_pair("token_type_hint", "access_token");
+            if cfg.auth_method == IntrospectionAuthMethod::ClientSecretPost {
+                form.append_pair("client_id", &cfg.client_id);
+                if let Some(secret) = &cfg.client_secret {
+                    form.append_pair("client_secret", secret);
+                }
+            }
+            form.finish()
+        };
         let req = self
             .http
             .post(&cfg.introspect_uri)
@@ -260,10 +320,15 @@ impl OidcAuthResolver {
                 "application/x-www-form-urlencoded",
             )
             .body(body);
-        let req = if let Some(secret) = &cfg.client_secret {
-            req.basic_auth(&cfg.client_id, Some(secret))
-        } else {
-            req.basic_auth(&cfg.client_id, None::<&str>)
+        let req = match cfg.auth_method {
+            IntrospectionAuthMethod::ClientSecretBasic => {
+                if let Some(secret) = &cfg.client_secret {
+                    req.basic_auth(&cfg.client_id, Some(secret))
+                } else {
+                    req.basic_auth(&cfg.client_id, None::<&str>)
+                }
+            }
+            IntrospectionAuthMethod::ClientSecretPost => req,
         };
         let resp = req.send().await.map_err(|e| {
             TakoError::Transport(format!("oidc: introspect POST {}: {e}", cfg.introspect_uri))
@@ -484,9 +549,14 @@ mod tests {
             introspect_uri: "https://issuer/introspect".into(),
             client_id: "id".into(),
             client_secret: Some("secret".into()),
+            auth_method: IntrospectionAuthMethod::default(),
         };
         let cloned = cfg.clone();
         assert_eq!(cloned.introspect_uri, cfg.introspect_uri);
+        assert_eq!(
+            cloned.auth_method,
+            IntrospectionAuthMethod::ClientSecretBasic
+        );
         let _ = format!("{cfg:?}");
     }
 
@@ -614,6 +684,93 @@ mod tests {
         // without making any HTTP call.
         let r = test_resolver(Client::new(), "https://issuer.example");
         r.introspect("any-token").await.unwrap();
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 16.B.2 — `IntrospectionAuthMethod::ClientSecretPost`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn introspection_auth_method_default_is_basic() {
+        assert_eq!(
+            IntrospectionAuthMethod::default(),
+            IntrospectionAuthMethod::ClientSecretBasic
+        );
+    }
+
+    #[test]
+    fn with_introspection_auth_method_overrides_default() {
+        let http = Client::new();
+        let r = test_resolver(http, "https://issuer.example")
+            .with_introspection_uri("https://override/introspect", "client-id", None)
+            .with_introspection_auth_method(IntrospectionAuthMethod::ClientSecretPost);
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(cfg.auth_method, IntrospectionAuthMethod::ClientSecretPost);
+    }
+
+    #[test]
+    fn with_introspection_auth_method_no_op_without_introspection_config() {
+        // No introspection attached yet — call is a silent no-op rather
+        // than a panic.
+        let http = Client::new();
+        let r = test_resolver(http, "https://issuer.example")
+            .with_introspection_auth_method(IntrospectionAuthMethod::ClientSecretPost);
+        assert!(r.introspection.is_none());
+    }
+
+    #[tokio::test]
+    async fn introspect_post_carries_credentials_in_form_body() {
+        // Phase 16.B.2 — `ClientSecretPost` must NOT send
+        // `Authorization: Basic`, and MUST include `client_id` /
+        // `client_secret` form fields alongside `token`.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            // RFC 7662 §2.1 ClientSecretPost: credentials in body.
+            .and(wiremock::matchers::body_string_contains("client_id=client"))
+            .and(wiremock::matchers::body_string_contains(
+                "client_secret=topsecret",
+            ))
+            .and(wiremock::matchers::body_string_contains("token=abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Catch-all — any request that included an Authorization
+        // header would NOT match the above (no Authorization matcher)
+        // and would fall through to a 404, which the assertion below
+        // would surface as a failure.
+
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_uri(
+                format!("{}/introspect", server.uri()),
+                "client",
+                Some("topsecret".into()),
+            )
+            .with_introspection_auth_method(IntrospectionAuthMethod::ClientSecretPost);
+        r.introspect("abc").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn introspect_basic_does_not_carry_credentials_in_form_body() {
+        // Conjugate of the above — `ClientSecretBasic` (the default)
+        // must NOT include `client_secret=` in the body.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/introspect"))
+            .and(header("Authorization", "Basic Y2xpZW50OnRvcHNlY3JldA=="))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let r = test_resolver(Client::new(), "https://issuer.example").with_introspection_uri(
+            format!("{}/introspect", server.uri()),
+            "client",
+            Some("topsecret".into()),
+        );
+        // Default = ClientSecretBasic.
+        r.introspect("abc").await.unwrap();
     }
 
     #[test]
