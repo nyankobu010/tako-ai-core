@@ -4520,7 +4520,7 @@ dependencies = [
  "aws-sdk-secretsmanager",
  "base64",
  "chrono",
- "const-oid 0.9.6",
+ "const-oid 0.10.2",
  "futures",
  "hex",
  "opentelemetry",

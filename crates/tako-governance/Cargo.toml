@@ -44,7 +44,7 @@ sigstore               = { workspace = true, optional = true }
 # transitively by `sigstore` already, so this only widens the visible
 # surface.
 x509-cert              = { version = "0.2", default-features = false, features = ["pem"], optional = true }
-const-oid              = { version = "0.9", optional = true }
+const-oid              = { version = "0.10", optional = true }
 pem                    = { version = "3", optional = true }
 
 # Phase 7.C cosign protobuf-bundle adapter (optional, behind
