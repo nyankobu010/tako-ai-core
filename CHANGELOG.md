@@ -9,6 +9,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.27.0] - 2026-05-01
+
+Phase 26 — closes the Phase-21-deferred operator-UX issue with
+the `ChainedAuthResolver` fall-through-on-any-Err default. The
+Phase 21 PLAN explicitly noted the deferral: "If patterns emerge
+for 'fail fast on transport errors' ... a future phase may add
+`with_short_circuit_on_transport_error`." Phase 26 ships that
+opt-in flag. Plan: [PLAN_PHASE26.md](PLAN_PHASE26.md).
+
+The pattern this addresses: chain
+`OidcAuth().then(StaticTokens)`. When the OIDC issuer is
+unreachable, OIDC returns `TakoError::Transport(...)`, which the
+Phase-21 chain unconditionally falls through to StaticTokens,
+which returns `"unknown bearer token"` because the user's OIDC
+token isn't in the static map. The end-user sees a misleading
+401 with a wrong-cause diagnostic; the operator gets paged for
+a wrong-cause symptom. Phase 26's opt-in flag halts the chain
+on transport errors, surfacing the actionable
+`"transport error: oidc unreachable"` instead.
+
+### Added
+
+- **Phase 26.A — `ChainedAuthResolver::with_short_circuit_on_transport_error`
+  ([crates/tako-compat/src/auth/chained.rs](crates/tako-compat/src/auth/chained.rs)).**
+
+  New surfaces:
+  - `ChainedAuthResolver.short_circuit_on_transport_error: bool`
+    field. Default `false` preserves Phase 21
+    fall-through-on-any-Err semantics byte-for-byte.
+  - `ChainedAuthResolver::with_short_circuit_on_transport_error()`
+    builder method (idempotent).
+  - `ChainedAuthResolver::short_circuits_on_transport_error() ->
+    bool` accessor.
+
+  `resolve()` extension: when the flag is set AND a child
+  returns `Err(TakoError::Transport(_))`, return immediately
+  (don't fall through to the next child). Other error variants
+  (`TakoError::Invalid`, `PolicyDenied`, etc.) continue to fall
+  through — those represent auth decisions the next resolver
+  might overturn. Only `Transport` short-circuits in Phase 26;
+  broader infrastructure-error semantics (`RateLimited` /
+  `CircuitOpen` / `BudgetExhausted` / `Provider` source-error)
+  deferred to Phase 27+.
+
+  The existing `CountingAuth` test mock is extended with a
+  `Transport`-preserving arm so tests can construct the
+  specific error variant; other arms continue to collapse into
+  `Invalid` (which the Phase 21 tests rely on).
+
+  Five new unit tests:
+  - `short_circuit_default_falls_through_on_transport_error` —
+    Phase 21 regression pin: without the flag, transport errors
+    fall through exactly like Invalid does.
+  - `short_circuit_enabled_returns_immediately_on_transport_error`
+    — first child returns `Transport`; the second is **not**
+    called; the transport error propagates verbatim.
+  - `short_circuit_enabled_falls_through_on_invalid_error` —
+    only `Transport` short-circuits.
+  - `short_circuit_enabled_first_ok_still_short_circuits_happy_path`
+    — happy-path regression pin.
+  - `short_circuits_on_transport_error_accessor_reflects_state`
+    — accessor + idempotence.
+
+- **Phase 26.B — Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `ChainedAuth.with_short_circuit_on_transport_error()` mirrors
+  the Rust builder. Returns a NEW `ChainedAuth` (immutable-
+  builder cadence). `short_circuits_on_transport_error() ->
+  bool` accessor exposes the flag.
+
+  `tako.compat` module docstring updated to mention the new
+  builder + the operator-UX rationale. New
+  [`tests/python/test_phase26_chained_short_circuit.py`](tests/python/test_phase26_chained_short_circuit.py)
+  covers facade attribute presence, immutable-builder semantics,
+  idempotence, child preservation across the flag flip, and the
+  Phase-21 default-falls-through regression pin from the Python
+  side.
+
+### Changed
+
+- `ChainedAuthResolver` gains a `short_circuit_on_transport_error:
+  bool` field (private; default `false`). The Phase 21 default
+  fall-through-on-any-Err semantics are preserved byte-for-byte
+  for callers who don't opt in.
+- Workspace + Python crate version bumped to v0.27.0.
+
+### Carried forward to Phase 27+
+
+- Broader infrastructure-error short-circuit (RateLimited /
+  CircuitOpen / BudgetExhausted / Provider source-error) —
+  warrants per-variant analysis. Phase 27+ may add
+  `with_short_circuit_on_infrastructure_errors`.
+- OIDC mTLS end-to-end integration test — real TLS server
+  requiring client auth (axum-server + rustls + per-test CA);
+  ~300 lines of test infra.
+- OIDC mTLS cert / key rotation — long-running deployments
+  rotating client certs would need a refresh mechanism.
+- URL-source images for Bedrock / Ollama (need tako-side
+  pre-fetch with SSRF guard), Vertex File API upload flow,
+  eval-harness real graders, OIDC refresh-token / revocation.
+
 ## [0.26.0] - 2026-05-01
 
 Phase 25 — closes the OIDC introspection auth-method surface to
