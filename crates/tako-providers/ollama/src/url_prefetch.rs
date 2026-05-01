@@ -15,6 +15,16 @@
 //! [`OllamaBuilder::with_url_prefetch`]; `https://`-only by
 //! default; 10s timeout; 10 MiB cap; MIME validated.
 //!
+//! Phase 29.B — private-IP blocklist + DNS-rebinding mitigation
+//! mirror Phase 29.A on Bedrock. A custom
+//! [`reqwest::dns::Resolve`] impl validates EVERY returned IP at
+//! resolve time; an inline IP-literal check covers URLs whose
+//! host is already an IP (where reqwest skips the resolver).
+//! Default-on; opt out via
+//! [`OllamaBuilder::with_url_prefetch_allow_private_ips`] for
+//! deployments where the operator has already filtered network
+//! egress.
+//!
 //! Ollama's MIME acceptance is more permissive than the four
 //! formats Bedrock allows (Ollama passes raw bytes to the
 //! underlying model, e.g. LLaVA, which decodes them itself).
@@ -23,10 +33,13 @@
 //! model can decode, so we conservatively match what the other
 //! provider adapters accept.
 
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use tako_core::{ChatRequest, ContentPart, TakoError};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -39,6 +52,11 @@ const DEFAULT_MAX_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) struct UrlPrefetchConfig {
     pub(crate) allow_http: bool,
     pub(crate) max_bytes: usize,
+    /// Phase 29.B — controls both: (a) the DNS resolver
+    /// installed on `http` (for hostname URLs); (b) the
+    /// IP-literal check inline in `fetch_one` (for URLs whose
+    /// host is already an IP, where reqwest skips the resolver).
+    pub(crate) block_private_ips: bool,
     pub(crate) http: reqwest::Client,
 }
 
@@ -47,16 +65,19 @@ impl UrlPrefetchConfig {
         allow_http: bool,
         timeout: Duration,
         max_bytes: usize,
+        block_private_ips: bool,
     ) -> Result<Self, TakoError> {
-        let http = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|e| {
-                TakoError::Invalid(format!("ollama: failed to build prefetch client: {e}"))
-            })?;
+        let mut builder = reqwest::Client::builder().timeout(timeout);
+        if block_private_ips {
+            builder = builder.dns_resolver(Arc::new(BlocklistResolver));
+        }
+        let http = builder.build().map_err(|e| {
+            TakoError::Invalid(format!("ollama: failed to build prefetch client: {e}"))
+        })?;
         Ok(Self {
             allow_http,
             max_bytes,
+            block_private_ips,
             http,
         })
     }
@@ -89,6 +110,23 @@ impl UrlPrefetchConfig {
                 "ollama: prefetch URL scheme `{scheme}` rejected (only `https://` allowed; \
                  use `with_url_prefetch_allow_http` to allow `http://`)",
             )));
+        }
+
+        // Phase 29.B — inline IP-literal check (mirror Phase 29.A).
+        // reqwest's DNS resolver is not consulted for IP-literal
+        // URLs, so the blocklist must be enforced here too.
+        if self.block_private_ips {
+            if let Some(host_str) = parsed.host_str() {
+                let trimmed = host_str.trim_start_matches('[').trim_end_matches(']');
+                if let Ok(ip) = trimmed.parse::<IpAddr>() {
+                    if is_blocked_ip(&ip) {
+                        return Err(TakoError::Invalid(format!(
+                            "ollama: prefetch URL `{url}` resolves to blocked IP `{ip}` \
+                             (use `with_url_prefetch_allow_private_ips` to opt out)",
+                        )));
+                    }
+                }
+            }
         }
 
         let resp = self
@@ -161,13 +199,98 @@ fn is_supported_ollama_mime(mime: &str) -> bool {
     )
 }
 
+/// Phase 29.B — return `true` for IPs that should be blocked
+/// (loopback / private / link-local / multicast / reserved /
+/// IPv6 equivalents). Mirror of `tako_providers_bedrock`'s
+/// `is_blocked_ip` (per-crate copy per ARCHITECTURE.md hard rule
+/// — provider crates depend only on `tako-core` + their vendor
+/// SDK + reqwest; never on each other).
+pub(crate) fn is_blocked_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // Multicast (224/4) + reserved (240/4 except broadcast).
+                || v4.octets()[0] >= 224
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                // unique-local (fc00::/7): leading 7 bits = 1111110.
+                || (v6.segments()[0] & 0xfe00 == 0xfc00)
+                // unicast-link-local (fe80::/10): leading 10 bits = 1111111010.
+                || (v6.segments()[0] & 0xffc0 == 0xfe80)
+                // IPv4-mapped (::ffff:x.x.x.x): recurse on the embedded IPv4.
+                || v6
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| is_blocked_ip(&IpAddr::V4(v4)))
+        }
+    }
+}
+
+/// Phase 29.B — `reqwest::dns::Resolve` impl that wraps
+/// `tokio::net::lookup_host` and rejects any resolution where
+/// ANY returned `SocketAddr` fails [`is_blocked_ip`]. Mirror of
+/// the Bedrock crate's `BlocklistResolver`.
+#[derive(Debug)]
+struct BlocklistResolver;
+
+impl Resolve for BlocklistResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
+                .collect();
+            for addr in &addrs {
+                if is_blocked_ip(&addr.ip()) {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!(
+                            "prefetch URL `{host}` resolves to blocked IP `{}` \
+                             (use with_url_prefetch_allow_private_ips to opt out)",
+                            addr.ip()
+                        ),
+                    ))
+                        as Box<dyn std::error::Error + Send + Sync>);
+                }
+            }
+            let iter: Addrs = Box::new(addrs.into_iter());
+            Ok(iter)
+        })
+    }
+}
+
 /// Phase 28.B — builder-side knobs collected on [`OllamaBuilder`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct UrlPrefetchOpts {
     pub(crate) enabled: bool,
     pub(crate) allow_http: bool,
     pub(crate) timeout: Option<Duration>,
     pub(crate) max_bytes: Option<usize>,
+    /// Phase 29.B — default `true` (block private / loopback /
+    /// link-local IPs). Operators flip to `false` via
+    /// [`OllamaBuilder::with_url_prefetch_allow_private_ips`] when
+    /// deployment-level egress filtering is already enforced.
+    pub(crate) block_private_ips: bool,
+}
+
+impl Default for UrlPrefetchOpts {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            allow_http: false,
+            timeout: None,
+            max_bytes: None,
+            // Phase 29.B — default-deny stance for SSRF.
+            block_private_ips: true,
+        }
+    }
 }
 
 impl UrlPrefetchOpts {
@@ -179,6 +302,7 @@ impl UrlPrefetchOpts {
             self.allow_http,
             self.timeout.unwrap_or(DEFAULT_TIMEOUT),
             self.max_bytes.unwrap_or(DEFAULT_MAX_BYTES),
+            self.block_private_ips,
         )?;
         Ok(Some(cfg))
     }
@@ -239,7 +363,16 @@ mod tests {
             .mount(&server)
             .await;
 
-        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES).unwrap();
+        let cfg = UrlPrefetchConfig::new(
+            true,
+            DEFAULT_TIMEOUT,
+            DEFAULT_MAX_BYTES,
+            // Phase 29.B — wiremock binds to 127.0.0.1, which the
+            // default blocklist would reject. Disable for this test;
+            // dedicated DNS-blocklist tests live below.
+            false,
+        )
+        .unwrap();
         let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
         cfg.rewrite(&mut req).await.unwrap();
 
@@ -256,7 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn rewrite_rejects_http_url_by_default() {
-        let cfg = UrlPrefetchConfig::new(false, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES).unwrap();
+        let cfg = UrlPrefetchConfig::new(false, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, false).unwrap();
         let mut req = req_with_image_url("http://example.com/cat.png");
         let err = cfg.rewrite(&mut req).await.unwrap_err();
         let msg = format!("{err:?}");
@@ -274,7 +407,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES).unwrap();
+        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, false).unwrap();
         let mut req = req_with_image_url(&format!("{}/icon.svg", server.uri()));
         let err = cfg.rewrite(&mut req).await.unwrap_err();
         let msg = format!("{err:?}");
@@ -294,7 +427,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, 100).unwrap();
+        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, 100, false).unwrap();
         let mut req = req_with_image_url(&format!("{}/big.png", server.uri()));
         let err = cfg.rewrite(&mut req).await.unwrap_err();
         let msg = format!("{err:?}");
@@ -310,7 +443,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES).unwrap();
+        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, false).unwrap();
         let mut req = req_with_image_url(&format!("{}/oops", server.uri()));
         let err = cfg.rewrite(&mut req).await.unwrap_err();
         let msg = format!("{err:?}");
@@ -322,5 +455,182 @@ mod tests {
         let opts = UrlPrefetchOpts::default();
         let cfg = opts.into_config().unwrap();
         assert!(cfg.is_none());
+    }
+
+    // ----- Phase 29.B — `is_blocked_ip` + DNS-resolver tests. -----
+
+    use std::net::Ipv4Addr;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn is_blocked_ip_blocks_loopback_v4() {
+        for ip in ["127.0.0.1", "127.255.255.254"] {
+            let addr = IpAddr::V4(ip.parse::<Ipv4Addr>().unwrap());
+            assert!(is_blocked_ip(&addr), "expected {ip} blocked");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_private_v4() {
+        for ip in [
+            "10.0.0.1",
+            "10.255.255.255",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.0.1",
+            "192.168.255.255",
+        ] {
+            let addr = IpAddr::V4(ip.parse::<Ipv4Addr>().unwrap());
+            assert!(is_blocked_ip(&addr), "expected {ip} blocked");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_link_local_v4() {
+        for ip in ["169.254.0.1", "169.254.169.254"] {
+            let addr = IpAddr::V4(ip.parse::<Ipv4Addr>().unwrap());
+            assert!(is_blocked_ip(&addr), "expected {ip} blocked");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_unspecified_and_broadcast_v4() {
+        for ip in ["0.0.0.0", "255.255.255.255"] {
+            let addr = IpAddr::V4(ip.parse::<Ipv4Addr>().unwrap());
+            assert!(is_blocked_ip(&addr), "expected {ip} blocked");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_multicast_and_reserved_v4() {
+        for ip in ["224.0.0.1", "239.255.255.255", "240.0.0.1"] {
+            let addr = IpAddr::V4(ip.parse::<Ipv4Addr>().unwrap());
+            assert!(is_blocked_ip(&addr), "expected {ip} blocked");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_loopback_v6() {
+        let addr = IpAddr::V6("::1".parse::<Ipv6Addr>().unwrap());
+        assert!(is_blocked_ip(&addr));
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_unique_local_v6() {
+        for ip in ["fc00::1", "fd00::ffff", "fdff::1"] {
+            let addr = IpAddr::V6(ip.parse::<Ipv6Addr>().unwrap());
+            assert!(is_blocked_ip(&addr), "expected {ip} blocked");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_link_local_v6() {
+        for ip in ["fe80::1", "febf::ffff"] {
+            let addr = IpAddr::V6(ip.parse::<Ipv6Addr>().unwrap());
+            assert!(is_blocked_ip(&addr), "expected {ip} blocked");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_v4_mapped_loopback() {
+        let addr = IpAddr::V6("::ffff:127.0.0.1".parse::<Ipv6Addr>().unwrap());
+        assert!(is_blocked_ip(&addr));
+    }
+
+    #[test]
+    fn is_blocked_ip_blocks_v4_mapped_private() {
+        let addr = IpAddr::V6("::ffff:10.0.0.1".parse::<Ipv6Addr>().unwrap());
+        assert!(is_blocked_ip(&addr));
+    }
+
+    #[test]
+    fn is_blocked_ip_allows_public_v4() {
+        for ip in ["8.8.8.8", "1.1.1.1", "151.101.65.140"] {
+            let addr = IpAddr::V4(ip.parse::<Ipv4Addr>().unwrap());
+            assert!(!is_blocked_ip(&addr), "expected {ip} ALLOWED");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_allows_public_v6() {
+        for ip in ["2001:db8::1", "2606:4700::1"] {
+            let addr = IpAddr::V6(ip.parse::<Ipv6Addr>().unwrap());
+            assert!(!is_blocked_ip(&addr), "expected {ip} ALLOWED");
+        }
+    }
+
+    #[test]
+    fn opts_default_blocks_private_ips() {
+        let opts = UrlPrefetchOpts::default();
+        assert!(opts.block_private_ips, "default should block private IPs");
+    }
+
+    #[tokio::test]
+    async fn opts_into_config_can_allow_private_ips() {
+        let opts = UrlPrefetchOpts {
+            enabled: true,
+            block_private_ips: false,
+            ..UrlPrefetchOpts::default()
+        };
+        let cfg = opts.into_config().unwrap();
+        assert!(cfg.is_some());
+    }
+
+    /// Phase 29.B end-to-end: with the default-on blocklist, a
+    /// pre-fetch request whose URL points at `127.0.0.1` (the
+    /// wiremock loopback bind) must fail at IP-literal check,
+    /// before any HTTP request is issued.
+    #[tokio::test]
+    async fn rewrite_rejects_resolved_loopback_ip_when_blocking() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "image/png")
+                    .set_body_bytes(TINY_PNG),
+            )
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, true).unwrap();
+
+        let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
+        let err = cfg.rewrite(&mut req).await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("blocked IP") || msg.contains("PermissionDenied"),
+            "expected resolver rejection in error, got: {msg}",
+        );
+    }
+
+    /// Phase 29.B regression pin: with the operator-opt-out flag,
+    /// the same loopback URL succeeds.
+    #[tokio::test]
+    async fn rewrite_allows_resolved_loopback_when_allow_private_ips_set() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/cat.png"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "image/png")
+                    .set_body_bytes(TINY_PNG),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, false).unwrap();
+
+        let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
+        cfg.rewrite(&mut req).await.unwrap();
+
+        match &req.messages[0].content[0] {
+            ContentPart::Image { mime, data_b64 } => {
+                assert_eq!(mime, "image/png");
+                assert_eq!(STANDARD.decode(data_b64).unwrap(), TINY_PNG);
+            }
+            other => panic!("expected ContentPart::Image, got {other:?}"),
+        }
     }
 }

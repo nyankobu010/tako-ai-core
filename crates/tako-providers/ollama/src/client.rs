@@ -86,6 +86,21 @@ impl OllamaBuilder {
         self
     }
 
+    /// Phase 29.B — opt out of the default-on private-IP blocklist
+    /// for tako-side URL pre-fetch. Mirror of
+    /// [`crate::client::OllamaBuilder::with_url_prefetch`] semantics:
+    /// the default-on blocklist rejects URLs that resolve to
+    /// loopback / RFC 1918 / link-local / multicast / IPv6 unique-
+    /// local + link-local addresses (and IPv4-mapped variants).
+    /// Operators with deployment-level egress filtering can flip
+    /// this off. Does NOT auto-enable
+    /// [`Self::with_url_prefetch`] — the master switch must
+    /// already be on for this flag to have any effect.
+    pub fn with_url_prefetch_allow_private_ips(mut self) -> Self {
+        self.url_prefetch.block_private_ips = false;
+        self
+    }
+
     pub fn build(self) -> Result<OllamaProvider, TakoError> {
         let model = self
             .model
