@@ -44,6 +44,26 @@ pub enum VxPart {
         #[serde(rename = "functionResponse")]
         function_response: VxFunctionResponse,
     },
+    /// Phase 20.A — inline image content. Gemini also accepts
+    /// `file_data` for cloud-stored URIs; we don't emit that yet
+    /// (server-side fetch from request-supplied URLs has security
+    /// implications, same reasoning as Phase 19's `source.type =
+    /// "url"` deferral on the Anthropic adapter).
+    InlineData {
+        #[serde(rename = "inlineData")]
+        inline_data: VxInlineData,
+    },
+}
+
+/// Phase 20.A — Gemini `inline_data` payload. `mime_type` is the
+/// image MIME (one of `image/jpeg` / `image/png` / `image/gif` /
+/// `image/webp`); `data` is raw base64 with any data-URL prefix
+/// stripped.
+#[derive(Serialize, Debug)]
+pub struct VxInlineData {
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub data: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -199,12 +219,20 @@ fn message_to_vx(
                     },
                 })
             }
-            ContentPart::Image { .. } => {
-                // Phase 19 wired vision through Anthropic + OpenAI;
-                // Vertex stays deferred to Phase 20+ — Gemini's
-                // `inline_data` / `file_data` parts have a
-                // different shape and need per-part inspection of
-                // the gemini-pro-vision SDK surface.
+            ContentPart::Image { mime, data_b64 } => {
+                // Phase 20.A — Gemini accepts only the four MIME
+                // types listed in `is_supported_vertex_mime`;
+                // anything else is silently dropped to match the
+                // empty-text drop policy elsewhere.
+                if !is_supported_vertex_mime(mime) {
+                    continue;
+                }
+                parts.push(VxPart::InlineData {
+                    inline_data: VxInlineData {
+                        mime_type: mime.clone(),
+                        data: strip_data_url_prefix(data_b64).to_string(),
+                    },
+                });
             }
         }
     }
@@ -323,4 +351,133 @@ pub fn from_vertex_response(resp: VxResponse) -> Result<ChatResponse, TakoError>
         },
         raw: Default::default(),
     })
+}
+
+/// Phase 20.A — accept only the four MIME types Gemini's vision
+/// surface supports (per Google's published Gemini-pro-vision docs).
+fn is_supported_vertex_mime(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    )
+}
+
+/// Phase 20.A — strip a leading `data:image/...;base64,` data-URL
+/// prefix when present; return the input unchanged otherwise.
+/// Idempotent. Mirrors the per-crate copies in
+/// `tako-providers-anthropic` (Phase 19.A) and
+/// `tako-providers-openai` (Phase 19.B) — kept per-crate to
+/// preserve provider-crate independence (no cross-provider deps
+/// per ARCHITECTURE.md hard rules).
+fn strip_data_url_prefix(s: &str) -> &str {
+    if let Some(rest) = s.strip_prefix("data:")
+        && let Some(comma_at) = rest.find(',')
+    {
+        &rest[comma_at + 1..]
+    } else {
+        s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn user_msg(parts: Vec<ContentPart>) -> Message {
+        Message {
+            role: Role::User,
+            content: parts,
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 20.A — outbound image content for Vertex (Gemini).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn image_block_emits_inline_data_part() {
+        let m = user_msg(vec![
+            ContentPart::text("describe this"),
+            ContentPart::Image {
+                mime: "image/png".into(),
+                data_b64: "aGVsbG8=".into(),
+            },
+        ]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        // Gemini's REST API uses camelCase fields throughout —
+        // matches the existing `functionCall` / `functionResponse`
+        // convention in `VxPart`.
+        assert_eq!(
+            serialised["parts"],
+            json!([
+                { "text": "describe this" },
+                {
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": "aGVsbG8=",
+                    },
+                },
+            ]),
+        );
+    }
+
+    #[test]
+    fn image_block_strips_data_url_prefix() {
+        let m = user_msg(vec![ContentPart::Image {
+            mime: "image/jpeg".into(),
+            data_b64: "data:image/jpeg;base64,YWJjZA==".into(),
+        }]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        assert_eq!(serialised["parts"][0]["inlineData"]["data"], "YWJjZA==");
+        assert_eq!(
+            serialised["parts"][0]["inlineData"]["mimeType"],
+            "image/jpeg"
+        );
+    }
+
+    #[test]
+    fn image_block_unsupported_mime_dropped() {
+        // SVG / BMP / etc. — silently dropped, matches the
+        // empty-text drop policy elsewhere.
+        let m = user_msg(vec![
+            ContentPart::Image {
+                mime: "image/svg+xml".into(),
+                data_b64: "<svg/>".into(),
+            },
+            ContentPart::text("fallback"),
+        ]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        // Only the text survives.
+        assert_eq!(serialised["parts"], json!([{ "text": "fallback" }]),);
+    }
+
+    #[test]
+    fn supported_vertex_mime_smoke() {
+        for ok in ["image/jpeg", "image/png", "image/gif", "image/webp"] {
+            assert!(is_supported_vertex_mime(ok), "expected {ok} accepted");
+        }
+        for bad in ["image/svg+xml", "image/bmp", "text/plain", ""] {
+            assert!(!is_supported_vertex_mime(bad), "expected {bad} rejected");
+        }
+    }
+
+    #[test]
+    fn strip_data_url_prefix_idempotent() {
+        assert_eq!(strip_data_url_prefix("YWJjZA=="), "YWJjZA==");
+        assert_eq!(
+            strip_data_url_prefix("data:image/png;base64,YWJjZA=="),
+            "YWJjZA==",
+        );
+        assert_eq!(strip_data_url_prefix(""), "");
+    }
 }
