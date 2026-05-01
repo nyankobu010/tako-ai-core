@@ -59,6 +59,16 @@ pub struct OlMessage {
     pub content: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<OlToolCall>,
+    /// Phase 20.C — Ollama-specific sibling field carrying base64-
+    /// encoded image bytes. Unlike OpenAI / Anthropic / Mistral, the
+    /// Ollama `/api/chat` endpoint does not use content-block
+    /// arrays: images live alongside `content` as a `Vec<String>`
+    /// of bare base64 (no MIME prefix, no data-URL). The
+    /// `Vec::is_empty` skip gate keeps non-vision messages
+    /// byte-for-byte wire-shape-compatible with pre-Phase-20
+    /// traffic.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -146,6 +156,10 @@ fn message_to_ol(m: &Message) -> OlMessage {
     let mut text_parts: Vec<&str> = Vec::new();
     let mut tool_calls: Vec<OlToolCall> = Vec::new();
     let mut tool_result: Option<String> = None;
+    // Phase 20.C — Ollama-specific sibling field. Images are bare
+    // base64 (no MIME prefix, no data-URL); the model decides what
+    // formats it can decode, so we don't filter MIME on the way out.
+    let mut images: Vec<String> = Vec::new();
     for c in &m.content {
         match c {
             ContentPart::Text { text } => text_parts.push(text),
@@ -158,10 +172,10 @@ fn message_to_ol(m: &Message) -> OlMessage {
             ContentPart::ToolResult { result, .. } => {
                 tool_result = Some(result.to_string());
             }
-            ContentPart::Image { .. } => {
-                // Phase 19 wired vision through Anthropic + OpenAI;
-                // Ollama stays deferred to Phase 20+ — Ollama's
-                // multimodal support is model-specific (LLaVA et al.).
+            ContentPart::Image { data_b64, .. } => {
+                // Phase 20.C — Ollama wants bare base64. Strip any
+                // data-URL prefix the caller may have supplied.
+                images.push(strip_data_url_prefix(data_b64).to_string());
             }
         }
     }
@@ -169,6 +183,23 @@ fn message_to_ol(m: &Message) -> OlMessage {
         role: role_to_str(m.role),
         content: tool_result.unwrap_or_else(|| text_parts.join("")),
         tool_calls,
+        images,
+    }
+}
+
+/// Phase 20.C — strip a leading `data:image/...;base64,` data-URL
+/// prefix when present; return the input unchanged otherwise.
+/// Idempotent. Per-crate copy of the helper in
+/// `tako-providers-{anthropic,openai,vertex,mistral}` — kept
+/// per-crate per ARCHITECTURE.md hard rules (no cross-provider
+/// deps).
+fn strip_data_url_prefix(s: &str) -> &str {
+    if let Some(rest) = s.strip_prefix("data:")
+        && let Some(comma_at) = rest.find(',')
+    {
+        &rest[comma_at + 1..]
+    } else {
+        s
     }
 }
 
@@ -214,4 +245,101 @@ pub fn from_ollama_response(resp: OlResponse) -> Result<ChatResponse, TakoError>
         },
         raw: Default::default(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    fn user_msg(parts: Vec<ContentPart>) -> Message {
+        Message {
+            role: Role::User,
+            content: parts,
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 20.C — outbound image content for Ollama.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn text_only_message_omits_images_field() {
+        // Regression: pre-20.C wire shape must be preserved
+        // byte-for-byte for non-vision messages — `images` MUST be
+        // absent from the serialised JSON when no image parts are
+        // present (gated by `skip_serializing_if = "Vec::is_empty"`).
+        let m = user_msg(vec![
+            ContentPart::text("hello "),
+            ContentPart::text("world"),
+        ]);
+        let ol = message_to_ol(&m);
+        let serialised = serde_json::to_value(&ol).unwrap();
+        assert_eq!(serialised["content"], "hello world");
+        assert!(
+            serialised.get("images").is_none(),
+            "expected `images` absent on non-vision message; got: {serialised}"
+        );
+    }
+
+    #[test]
+    fn image_block_populates_images_field() {
+        let m = user_msg(vec![
+            ContentPart::text("describe this"),
+            ContentPart::Image {
+                mime: "image/png".into(),
+                data_b64: "aGVsbG8=".into(),
+            },
+        ]);
+        let ol = message_to_ol(&m);
+        let serialised = serde_json::to_value(&ol).unwrap();
+        // `content` keeps its text. `images` carries the base64
+        // alongside as a sibling field — Ollama-specific shape.
+        assert_eq!(serialised["content"], "describe this");
+        assert_eq!(serialised["images"], serde_json::json!(["aGVsbG8="]));
+    }
+
+    #[test]
+    fn multiple_images_preserve_source_order() {
+        let m = user_msg(vec![
+            ContentPart::Image {
+                mime: "image/png".into(),
+                data_b64: "first".into(),
+            },
+            ContentPart::text("middle"),
+            ContentPart::Image {
+                mime: "image/jpeg".into(),
+                data_b64: "second".into(),
+            },
+        ]);
+        let ol = message_to_ol(&m);
+        let serialised = serde_json::to_value(&ol).unwrap();
+        // Source order is preserved even though the images live in
+        // a sibling field rather than interleaved with text.
+        assert_eq!(serialised["images"], serde_json::json!(["first", "second"]));
+        assert_eq!(serialised["content"], "middle");
+    }
+
+    #[test]
+    fn image_block_strips_data_url_prefix() {
+        // Ollama wants bare base64, not data-URL-prefixed input.
+        let m = user_msg(vec![ContentPart::Image {
+            mime: "image/jpeg".into(),
+            data_b64: "data:image/jpeg;base64,YWJjZA==".into(),
+        }]);
+        let ol = message_to_ol(&m);
+        let serialised = serde_json::to_value(&ol).unwrap();
+        assert_eq!(serialised["images"], serde_json::json!(["YWJjZA=="]));
+    }
+
+    #[test]
+    fn strip_data_url_prefix_idempotent() {
+        assert_eq!(strip_data_url_prefix("YWJjZA=="), "YWJjZA==");
+        assert_eq!(
+            strip_data_url_prefix("data:image/png;base64,YWJjZA=="),
+            "YWJjZA==",
+        );
+        assert_eq!(strip_data_url_prefix(""), "");
+    }
 }
