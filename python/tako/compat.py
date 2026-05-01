@@ -110,6 +110,15 @@ def serve_openai(
        through. Default behaviour preserves Phase 21
        fall-through-on-any-Err semantics.
 
+       Phase 27.B — ``ChainedAuth.with_short_circuit_on_infrastructure_errors()``
+       extends fail-fast to four "definitely infrastructure /
+       operator-set-guard" variants: ``Transport`` (network
+       failure), ``RateLimited`` (upstream rate limit),
+       ``CircuitOpen`` (failsafe circuit), ``BudgetExhausted``
+       (operator-set spend cap). Auth-decision errors and vendor
+       errors still fall through. Last-write-wins between the
+       two builders.
+
     Passing both ``tokens`` and ``auth`` is an error.
     """
     if not hasattr(orch, "_inner"):

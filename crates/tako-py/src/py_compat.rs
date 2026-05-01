@@ -679,9 +679,44 @@ impl PyChainedAuth {
         }
     }
 
-    /// Phase 26.B — accessor for the short-circuit flag, useful
-    /// for assertions in test code.
+    /// Phase 26.B — accessor: returns `True` for both the Phase
+    /// 26 narrower policy
+    /// (`with_short_circuit_on_transport_error`) and the Phase 27
+    /// broader policy
+    /// (`with_short_circuit_on_infrastructure_errors`) — both
+    /// short-circuit on `TakoError::Transport`.
     fn short_circuits_on_transport_error(&self) -> bool {
         self.inner.short_circuits_on_transport_error()
+    }
+
+    /// Phase 27.B — opt in to broader fail-fast: short-circuit
+    /// on infrastructure / operator-set-guard errors that
+    /// fall-through would mask:
+    ///
+    /// - `TakoError::Transport` (network failure)
+    /// - `TakoError::RateLimited` (operator-side limit)
+    /// - `TakoError::CircuitOpen` (failsafe circuit)
+    /// - `TakoError::BudgetExhausted` (operator-set spend cap)
+    ///
+    /// Auth-decision errors (`TakoError::Invalid`,
+    /// `PolicyDenied`) and vendor errors (`Provider`) continue to
+    /// fall through. Returns a NEW `ChainedAuth` (immutable
+    /// builder; idempotent). Last-write-wins between this and
+    /// `with_short_circuit_on_transport_error` — the policy is
+    /// overwritten, not merged.
+    fn with_short_circuit_on_infrastructure_errors(&self) -> Self {
+        let cloned: tako_compat::ChainedAuthResolver = (*self.inner).clone();
+        let next = cloned.with_short_circuit_on_infrastructure_errors();
+        Self {
+            inner: Arc::new(next),
+        }
+    }
+
+    /// Phase 27.B — accessor for the broader policy. Returns
+    /// `True` only when
+    /// `with_short_circuit_on_infrastructure_errors` was the most
+    /// recent policy setter.
+    fn short_circuits_on_infrastructure_errors(&self) -> bool {
+        self.inner.short_circuits_on_infrastructure_errors()
     }
 }
