@@ -9,6 +9,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.17.0] - 2026-05-01
+
+Phase 16 — production hardening of the streaming-verifier and auth
+surfaces shipped in Phases 13–15. Strictly additive: bounded mpsc
+backpressure in the AB-MCTS / Conductor streaming rollout channels
+(closes the unbounded-memory-under-slow-consumer hazard introduced
+when streaming verifiers landed); Vault Enterprise namespace
+support on `VaultAuthResolver`; OIDC RFC 7662 introspection
+`client_secret_post` auth method on `OidcAuthResolver`. Python
+facade mirrors the new auth surfaces.
+Plan: [PLAN_PHASE16.md](PLAN_PHASE16.md).
+
+### Added
+
+- **Phase 16.A — Bounded mpsc backpressure in streaming verifier
+  rollouts.** `AbMcts::stream` and `Conductor::stream` previously
+  used `tokio::sync::mpsc::unbounded_channel` for per-delta event
+  fanout; a slow downstream consumer (or a slow inline
+  `Verifier::evaluate_streaming` impl in Conductor's case) could
+  let `OrchEvent`s / `WorkerStreamEvent`s pile up unbounded.
+
+  - **16.A.1 ([crates/tako-orchestrator/src/ab_mcts.rs](crates/tako-orchestrator/src/ab_mcts.rs#L484-L496)).**
+    Replace `unbounded_channel::<OrchEvent>()` at line 485 with
+    `channel::<OrchEvent>(ROLLOUT_EVENT_BUFFER = 64)`. Producer
+    (`rollout_static_streaming`) blocks on `send().await` once
+    full; three send sites gain the trailing `.await`. Magic
+    number matches the existing
+    [`tako-mcp/src/transport/grpc.rs`](crates/tako-mcp/src/transport/grpc.rs#L45-L46)
+    precedent. New regression test
+    `ab_mcts_stream_bounded_backpressure_high_delta_count` drives
+    256 deltas through the 64-slot channel under a counting
+    streaming verifier.
+  - **16.A.2 ([crates/tako-orchestrator/src/conductor.rs](crates/tako-orchestrator/src/conductor.rs#L543)).**
+    Same swap on the `WorkerStreamEvent` channel — `dispatch_workers_streaming`
+    and `run_one_worker_streaming` signatures change from
+    `mpsc::UnboundedSender` to `mpsc::Sender`. New regression test
+    `conductor_stream_bounded_backpressure_high_delta_count`.
+  - **16.A.3 — Trinity unchanged.** `Trinity::stream` calls
+    `evaluate_streaming` inline on the provider stream (no channel,
+    no fanout) — already serial, no plumbing needed.
+
+- **Phase 16.B.1 — Vault Enterprise namespace support
+  ([crates/tako-compat/src/auth/vault.rs](crates/tako-compat/src/auth/vault.rs)).**
+  `VaultAuthResolver` gains a `namespace: Option<String>` field
+  and a chainable `with_namespace(namespace)` builder method. The
+  value is threaded through
+  [`VaultClientSettingsBuilder::namespace`](https://docs.rs/vaultrs/0.7/vaultrs/client/struct.VaultClientSettingsBuilder.html)
+  in `get_or_build_client` so each cached `VaultClient` sends the
+  `X-Vault-Namespace` header on every KV lookup. Chainable on top
+  of `new` / `with_provider` / `with_approle` / `with_kubernetes` /
+  `with_kubernetes_in_pod` — namespace is orthogonal to auth
+  method. `None` (default) preserves OSS-Vault byte-for-byte.
+  Four new unit tests.
+
+- **Phase 16.B.2 — OIDC introspection `client_secret_post` auth
+  method
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  Phase 15.B.2 shipped RFC 7662 token introspection with HTTP
+  Basic auth only. Phase 16.B.2 adds a sibling auth method per
+  RFC 7662 §2.1: new public
+  `IntrospectionAuthMethod` enum (`#[derive(Default)]`, default
+  variant `ClientSecretBasic`) with a `ClientSecretPost`
+  alternative. `IntrospectionConfig` gains an `auth_method` field;
+  `OidcAuthResolver::with_introspection_auth_method(method)` is a
+  chainable post-`with_introspection*` setter. `introspect()`
+  branches on `auth_method`: `Basic` keeps the
+  `Authorization: Basic` header; `Post` adds `client_id` /
+  `client_secret` form fields and omits the header. Discovery-
+  driven selection (RFC 8414
+  `introspection_endpoint_auth_methods_supported`),
+  `client_secret_jwt`, and mTLS auth methods remain deferred to
+  Phase 17+. Five new wiremock-based unit tests.
+
+- **Phase 16.B.3 — Python facade mirror
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `tako.compat.VaultAuth.with_namespace(namespace)` and
+  `tako.compat.OidcAuth.with_introspection_auth_method(method)`
+  expose the new builders. `auth_method` accepts case-insensitive
+  `"basic"` / `"client_secret_basic"` / `"post"` /
+  `"client_secret_post"` aliases; raises `ValueError` on garbage.
+  `#[derive(Clone)]` added to `VaultAuthResolver` so the facade
+  can implement the immutable-builder pattern. New
+  `tests/python/test_phase16_auth.py` covers the facade surfaces.
+
+### Changed
+
+- `IntrospectionConfig` gains a public `auth_method:
+  IntrospectionAuthMethod` field. The default value
+  (`ClientSecretBasic`) preserves Phase 15.B.2 wire behaviour
+  byte-for-byte; existing struct-literal initialisers need to
+  pass the new field (`auth_method: IntrospectionAuthMethod::default()`).
+- `dispatch_workers_streaming` and `run_one_worker_streaming` in
+  `tako-orchestrator/src/conductor.rs` change from
+  `mpsc::UnboundedSender<WorkerStreamEvent>` to
+  `mpsc::Sender<WorkerStreamEvent>`. Both functions are
+  module-private; no public-API impact.
+- `rollout_static_streaming` in `tako-orchestrator/src/ab_mcts.rs`
+  changes from `mpsc::UnboundedSender<OrchEvent>` to
+  `mpsc::Sender<OrchEvent>`. Module-private; no public-API impact.
+- `VaultAuthResolver` now derives `Clone` to support the Python
+  immutable-builder pattern (`PyVaultAuth.with_namespace`).
+
+### Carried forward to Phase 17+
+
+- OIDC `client_secret_jwt` and mTLS (`tls_client_auth`)
+  introspection auth methods.
+- Discovery-driven `introspection_endpoint_auth_methods_supported`
+  selection.
+- OIDC refresh-token / end-session endpoint flows.
+- Composite `AuthResolver`s (mTLS + bearer chaining).
+- Vision / image content support across Anthropic / Vertex / Bedrock.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
 ## [0.16.0] - 2026-05-01
 
 Phase 15 — clears three more carry-forward items from the Phase 14

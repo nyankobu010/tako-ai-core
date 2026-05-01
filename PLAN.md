@@ -34,18 +34,20 @@ synopsis and quickstart.
 | 13 — Multi-replica `StateStore` + streaming verifier in Trinity | v0.14.0 | done (2026-04-30) | [PLAN_PHASE13.md](PLAN_PHASE13.md) | [`## [0.14.0]`](CHANGELOG.md) |
 | 14 — Streaming verifier in Conductor + tako-compat real auth providers | v0.15.0 | done (2026-04-30) | [PLAN_PHASE14.md](PLAN_PHASE14.md) | [`## [0.15.0]`](CHANGELOG.md) |
 | 15 — Streaming verifier in AbMcts + tako-compat auth hardening | v0.16.0 | done (2026-05-01) | [PLAN_PHASE15.md](PLAN_PHASE15.md) | [`## [0.16.0]`](CHANGELOG.md) |
+| 16 — Streaming-rollout backpressure + tako-compat auth hardening, continued | v0.17.0 | done (2026-05-01) | [PLAN_PHASE16.md](PLAN_PHASE16.md) | [`## [0.17.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 16 candidates (indicative, not yet committed)
+### Phase 17 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 15's holding pen — the three items that
-landed in Phase 15 (per-delta streaming verifier in `AbMcts::stream`;
-Vault dynamic token rotation; OIDC token introspection) are now off
-the list. The remainder:
+Carry-forward from Phase 16's holding pen — the three items that
+landed in Phase 16 (bounded mpsc backpressure in AbMcts + Conductor
+streaming rollouts; Vault Enterprise namespace support; OIDC
+introspection `client_secret_post` auth method) are now off the
+list. The remainder:
 
 - **Vision / image content support across providers.** Anthropic,
   Vertex, and Bedrock all have stub markers; multi-crate
@@ -53,16 +55,16 @@ the list. The remainder:
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
   Sandboxed runner needed.
-- **OIDC `introspection_endpoint_auth_method` discovery.** Phase
-  15.B.2 supports HTTP Basic only; mTLS and `client_secret_jwt`
-  deferred.
+- **OIDC introspection `client_secret_jwt` and mTLS auth methods.**
+  Phase 16.B.2 closed `client_secret_post`; the JWT-signed and
+  mTLS variants are still deferred.
+- **Discovery-driven introspection auth-method selection** (reading
+  RFC 8414 `introspection_endpoint_auth_methods_supported` from the
+  discovery doc rather than the operator opting in by builder).
 - **OIDC refresh-token flows / end-session endpoint.** Orthogonal
   hardening for the `OidcAuthResolver`.
-- **Vault namespace support** (Vault Enterprise) — orthogonal.
 - **Composite `AuthResolver`s** (mTLS + bearer chaining) —
   orthogonal.
-- **Bounded `mpsc` backpressure** for slow per-delta verifiers in
-  AB-MCTS / Conductor / Trinity rollouts.
 
 ### Beyond (speculative)
 
@@ -151,6 +153,28 @@ where the fix would land.
   `with_introspection_uri`); Python facade mirrors them as
   `OidcAuth.with_introspection_*`. Fail-closed when the issuer
   doesn't advertise the endpoint.
+- [x] **Bounded mpsc backpressure for streaming verifier rollouts.**
+  Closed in Phase 16.A (v0.17.0): `AbMcts::stream` and
+  `Conductor::stream` both swap their per-delta `OrchEvent` /
+  `WorkerStreamEvent` channels from `unbounded_channel` to
+  `channel(64)` (matching the `tako-mcp/src/transport/grpc.rs`
+  precedent). Producers block on `send().await` once the consumer
+  is behind, capping in-flight memory under slow `evaluate_streaming`
+  impls or slow downstream sinks. Trinity is naturally serial (no
+  channel) — no plumbing needed.
+- [x] **Vault Enterprise namespace support.** Closed in Phase
+  16.B.1 (v0.17.0): `VaultAuthResolver::with_namespace(ns)`
+  threads the value through `VaultClientSettingsBuilder::namespace`
+  so the cached `VaultClient` sends `X-Vault-Namespace` on every KV
+  lookup. `None` (default) preserves OSS-Vault behaviour. Python
+  facade mirrors as `VaultAuth.with_namespace`.
+- [x] **OIDC introspection `client_secret_post` auth method.**
+  Closed in Phase 16.B.2 (v0.17.0): new public
+  `IntrospectionAuthMethod` enum (`ClientSecretBasic` default,
+  `ClientSecretPost` sibling per RFC 7662 §2.1) plus chainable
+  `OidcAuthResolver::with_introspection_auth_method(method)`.
+  `client_secret_jwt` / mTLS / discovery-driven selection remain
+  deferred to Phase 17+.
 - [ ] **Vision / image content support across providers.**
   Anthropic ([convert.rs:171](crates/tako-providers/anthropic/src/convert.rs#L171)),
   Vertex ([convert.rs:203](crates/tako-providers/vertex/src/convert.rs#L203)),
