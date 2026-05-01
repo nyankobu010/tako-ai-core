@@ -32,15 +32,39 @@ use tako_core::{Principal, TakoError};
 
 use super::AuthResolver;
 
+/// Phase 26 / 27 — short-circuit policy for a
+/// [`ChainedAuthResolver`]. Selects which `TakoError` variants
+/// halt the chain instead of falling through to the next child.
+///
+/// Default [`Self::None`] preserves Phase 21
+/// fall-through-on-any-Err semantics byte-for-byte.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum ShortCircuitPolicy {
+    /// Phase 21 default — every `Err` falls through to the next
+    /// child.
+    #[default]
+    None,
+    /// Phase 26 — short-circuit only on
+    /// [`TakoError::Transport`].
+    TransportOnly,
+    /// Phase 27 — short-circuit on the four "definitely
+    /// infrastructure / operator-set guard" variants:
+    /// `Transport`, `RateLimited`, `CircuitOpen`,
+    /// `BudgetExhausted`. Auth-decision errors (`Invalid`,
+    /// `PolicyDenied`) and vendor errors (`Provider`) still fall
+    /// through.
+    AllInfrastructure,
+}
+
 /// Phase 21.A — try children in order until one returns `Ok`.
 #[derive(Clone, Debug, Default)]
 pub struct ChainedAuthResolver {
     children: Vec<Arc<dyn AuthResolver>>,
-    /// Phase 26 — when `true`, any [`TakoError::Transport`] from
-    /// a child returns immediately instead of falling through to
-    /// the next child. Default `false` preserves Phase 21
-    /// fall-through-on-any-Err semantics byte-for-byte.
-    short_circuit_on_transport_error: bool,
+    /// Phase 26 / 27 — selects which error variants halt the
+    /// chain immediately instead of falling through to the next
+    /// child. Default `ShortCircuitPolicy::None` preserves Phase
+    /// 21 fall-through-on-any-Err semantics byte-for-byte.
+    short_circuit_policy: ShortCircuitPolicy,
 }
 
 impl ChainedAuthResolver {
@@ -78,10 +102,42 @@ impl ChainedAuthResolver {
     /// continue to fall through — those represent auth decisions
     /// the next resolver might overturn.
     ///
-    /// Idempotent. Default `false` preserves Phase 21
+    /// Idempotent. Default behaviour preserves Phase 21
     /// fall-through-on-any-Err semantics byte-for-byte.
+    /// Last-write-wins between this method and Phase 27's
+    /// [`Self::with_short_circuit_on_infrastructure_errors`] —
+    /// the policy is overwritten, not merged.
     pub fn with_short_circuit_on_transport_error(mut self) -> Self {
-        self.short_circuit_on_transport_error = true;
+        self.short_circuit_policy = ShortCircuitPolicy::TransportOnly;
+        self
+    }
+
+    /// Phase 27 — broader fail-fast: short-circuit on
+    /// infrastructure / operator-set-guard errors that masking
+    /// via fall-through would hide:
+    /// - [`TakoError::Transport`] (network failure)
+    /// - [`TakoError::RateLimited`] (operator-side limit)
+    /// - [`TakoError::CircuitOpen`] (failsafe circuit)
+    /// - [`TakoError::BudgetExhausted`] (operator-set spend cap)
+    ///
+    /// Auth-decision errors ([`TakoError::Invalid`],
+    /// [`TakoError::PolicyDenied`]) and vendor errors
+    /// ([`TakoError::Provider`]) continue to fall through — those
+    /// could be auth-related and the next resolver might overturn.
+    /// `Provider` short-circuit warrants finer discrimination on
+    /// the embedded error and is deferred.
+    ///
+    /// Useful when `RateLimited` / `CircuitOpen` /
+    /// `BudgetExhausted` from one resolver shouldn't be masked by
+    /// fall-through to another (each represents an infrastructure
+    /// failure or an operator-set guard that falling through
+    /// would circumvent).
+    ///
+    /// Idempotent. Last-write-wins between this method and Phase
+    /// 26's [`Self::with_short_circuit_on_transport_error`] — the
+    /// policy is overwritten, not merged.
+    pub fn with_short_circuit_on_infrastructure_errors(mut self) -> Self {
+        self.short_circuit_policy = ShortCircuitPolicy::AllInfrastructure;
         self
     }
 
@@ -95,10 +151,23 @@ impl ChainedAuthResolver {
         self.children.is_empty()
     }
 
-    /// Phase 26 — accessor for the short-circuit flag, useful for
-    /// assertions in test code.
+    /// Phase 26 — accessor: returns `true` for both
+    /// [`Self::with_short_circuit_on_transport_error`] and Phase
+    /// 27's [`Self::with_short_circuit_on_infrastructure_errors`]
+    /// (both short-circuit on `Transport`).
     pub fn short_circuits_on_transport_error(&self) -> bool {
-        self.short_circuit_on_transport_error
+        !matches!(self.short_circuit_policy, ShortCircuitPolicy::None)
+    }
+
+    /// Phase 27 — accessor for the broader policy. Returns
+    /// `true` only when
+    /// [`Self::with_short_circuit_on_infrastructure_errors`] was
+    /// the most recent policy setter.
+    pub fn short_circuits_on_infrastructure_errors(&self) -> bool {
+        matches!(
+            self.short_circuit_policy,
+            ShortCircuitPolicy::AllInfrastructure
+        )
     }
 }
 
@@ -115,13 +184,25 @@ impl AuthResolver for ChainedAuthResolver {
             match child.resolve(token).await {
                 Ok(p) => return Ok(p),
                 Err(e) => {
-                    // Phase 26 — short-circuit on transport errors
-                    // when the operator opted in. Other error
-                    // variants still fall through (auth-decision
-                    // errors that the next resolver might
-                    // overturn).
-                    if self.short_circuit_on_transport_error && matches!(e, TakoError::Transport(_))
-                    {
+                    // Phase 26 / 27 — short-circuit when the
+                    // configured policy matches the error variant.
+                    // Auth-decision errors (`Invalid`,
+                    // `PolicyDenied`) and vendor errors
+                    // (`Provider`) always fall through.
+                    let should_short_circuit = match self.short_circuit_policy {
+                        ShortCircuitPolicy::None => false,
+                        ShortCircuitPolicy::TransportOnly => {
+                            matches!(e, TakoError::Transport(_))
+                        }
+                        ShortCircuitPolicy::AllInfrastructure => matches!(
+                            e,
+                            TakoError::Transport(_)
+                                | TakoError::RateLimited(_)
+                                | TakoError::CircuitOpen
+                                | TakoError::BudgetExhausted(_)
+                        ),
+                    };
+                    if should_short_circuit {
                         return Err(e);
                     }
                     last_err = Some(e);
@@ -177,15 +258,21 @@ mod tests {
             self.calls.fetch_add(1, Ordering::Relaxed);
             // `Result` isn't `Clone` for arbitrary `TakoError`, but
             // we only need to return a fresh value per call. Build
-            // a copy by inspecting the mutex contents. Phase 26
-            // adds a `Transport` arm so short-circuit-semantics
-            // tests can preserve the variant; other variants
-            // collapse into `Invalid` (which the existing 21.A
-            // tests already rely on).
+            // a copy by inspecting the mutex contents. Phases 26 +
+            // 27 preserve `Transport` / `RateLimited` /
+            // `CircuitOpen` / `BudgetExhausted` so
+            // short-circuit-semantics tests can preserve the
+            // variant; other variants collapse into `Invalid`
+            // (which the Phase 21 tests rely on).
             let guard = self.result.lock().expect("test mutex");
             match &*guard {
                 Ok(p) => Ok(p.clone()),
                 Err(TakoError::Transport(msg)) => Err(TakoError::Transport(msg.clone())),
+                Err(TakoError::RateLimited(d)) => Err(TakoError::RateLimited(*d)),
+                Err(TakoError::CircuitOpen) => Err(TakoError::CircuitOpen),
+                Err(TakoError::BudgetExhausted(msg)) => {
+                    Err(TakoError::BudgetExhausted(msg.clone()))
+                }
                 Err(TakoError::Invalid(msg)) => Err(TakoError::Invalid(msg.clone())),
                 Err(e) => Err(TakoError::Invalid(format!("{e:?}"))),
             }
@@ -391,6 +478,155 @@ mod tests {
         assert!(chain.short_circuits_on_transport_error());
         // Idempotent — calling twice doesn't break.
         let chain = chain.with_short_circuit_on_transport_error();
+        assert!(chain.short_circuits_on_transport_error());
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 27 — broader infrastructure-error short-circuit. Adds
+    // `RateLimited` / `CircuitOpen` / `BudgetExhausted` to the set
+    // of variants that halt the chain when the operator opts in
+    // via `with_short_circuit_on_infrastructure_errors`.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn infrastructure_short_circuit_default_falls_through_on_rate_limited() {
+        // Phase 21 / 26 regression — without
+        // `with_short_circuit_on_infrastructure_errors`,
+        // `RateLimited` falls through to the next child.
+        let first = CountingAuth::new(Err(TakoError::RateLimited(std::time::Duration::from_secs(
+            60,
+        ))));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>);
+
+        let p = chain.resolve("any").await.unwrap();
+        assert_eq!(p.user_id, "alice");
+        assert_eq!(first.call_count(), 1);
+        assert_eq!(second.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn infrastructure_short_circuit_returns_immediately_on_rate_limited() {
+        let first = CountingAuth::new(Err(TakoError::RateLimited(std::time::Duration::from_secs(
+            60,
+        ))));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_infrastructure_errors();
+
+        let err = chain.resolve("any").await.unwrap_err();
+        assert!(matches!(err, TakoError::RateLimited(_)), "got: {err:?}");
+        assert_eq!(first.call_count(), 1);
+        assert_eq!(
+            second.call_count(),
+            0,
+            "second child must not be called when the first short-circuits on RateLimited",
+        );
+    }
+
+    #[tokio::test]
+    async fn infrastructure_short_circuit_returns_immediately_on_circuit_open() {
+        let first = CountingAuth::new(Err(TakoError::CircuitOpen));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_infrastructure_errors();
+
+        let err = chain.resolve("any").await.unwrap_err();
+        assert!(matches!(err, TakoError::CircuitOpen), "got: {err:?}");
+        assert_eq!(second.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn infrastructure_short_circuit_returns_immediately_on_budget_exhausted() {
+        let first = CountingAuth::new(Err(TakoError::BudgetExhausted("daily cap hit".into())));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_infrastructure_errors();
+
+        let err = chain.resolve("any").await.unwrap_err();
+        assert!(matches!(err, TakoError::BudgetExhausted(_)), "got: {err:?}");
+        let msg = format!("{err:?}");
+        assert!(msg.contains("daily cap hit"), "got: {msg}");
+        assert_eq!(second.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn infrastructure_short_circuit_falls_through_on_invalid_error() {
+        // Auth-decision errors (`Invalid`, `PolicyDenied`,
+        // `Provider`) must still fall through, even with the
+        // broader policy enabled.
+        let first = CountingAuth::new(Err(TakoError::Invalid("bad token".into())));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_infrastructure_errors();
+
+        let p = chain.resolve("any").await.unwrap();
+        assert_eq!(p.user_id, "alice");
+        assert_eq!(first.call_count(), 1);
+        assert_eq!(second.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn transport_only_falls_through_on_rate_limited_when_transport_only_set() {
+        // Regression pin: the Phase-26 narrower flag does NOT
+        // short-circuit on `RateLimited` even after the policy
+        // enum refactor. Falls through like any non-Transport
+        // error.
+        let first = CountingAuth::new(Err(TakoError::RateLimited(std::time::Duration::from_secs(
+            60,
+        ))));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_transport_error();
+
+        let p = chain.resolve("any").await.unwrap();
+        assert_eq!(p.user_id, "alice");
+        assert_eq!(second.call_count(), 1);
+    }
+
+    #[test]
+    fn short_circuits_on_infrastructure_errors_accessor_reflects_state() {
+        let chain = ChainedAuthResolver::new();
+        assert!(!chain.short_circuits_on_transport_error());
+        assert!(!chain.short_circuits_on_infrastructure_errors());
+
+        // Phase 26 narrower flag: transport accessor true, infra
+        // accessor false.
+        let narrow = chain.clone().with_short_circuit_on_transport_error();
+        assert!(narrow.short_circuits_on_transport_error());
+        assert!(!narrow.short_circuits_on_infrastructure_errors());
+
+        // Phase 27 broader flag: both accessors true.
+        let broad = chain.with_short_circuit_on_infrastructure_errors();
+        assert!(broad.short_circuits_on_transport_error());
+        assert!(broad.short_circuits_on_infrastructure_errors());
+    }
+
+    #[test]
+    fn short_circuit_policy_is_last_write_wins() {
+        // Calling the broader builder after the narrower one
+        // overwrites the policy (and vice versa).
+        let chain = ChainedAuthResolver::new()
+            .with_short_circuit_on_transport_error()
+            .with_short_circuit_on_infrastructure_errors();
+        assert!(chain.short_circuits_on_infrastructure_errors());
+
+        let chain = ChainedAuthResolver::new()
+            .with_short_circuit_on_infrastructure_errors()
+            .with_short_circuit_on_transport_error();
+        assert!(!chain.short_circuits_on_infrastructure_errors());
         assert!(chain.short_circuits_on_transport_error());
     }
 }
