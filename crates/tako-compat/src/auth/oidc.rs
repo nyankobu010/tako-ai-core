@@ -157,6 +157,18 @@ pub enum IntrospectionAuthMethod {
     /// Errors at request time when no
     /// [`IntrospectionConfig::client_assertion_key`] is configured.
     PrivateKeyJwt,
+    /// Phase 24 — RFC 8705 mTLS authentication. The client presents
+    /// a TLS certificate during the introspection-endpoint handshake;
+    /// the issuer matches the cert's subject DN / SAN against the
+    /// pre-registered `client_id`. No body credential, no
+    /// `Authorization` header, no JWT.
+    ///
+    /// Requires [`IntrospectionConfig::mtls_client`] to be configured
+    /// (a `reqwest::Client` built with
+    /// [`reqwest::Identity::from_pem`]); errors at request time if
+    /// missing. Configure via
+    /// [`OidcAuthResolver::with_introspection_mtls`].
+    TlsClientAuth,
 }
 
 /// Phase 18.A — asymmetric private signing key for the
@@ -256,6 +268,14 @@ pub struct IntrospectionConfig {
     /// [`OidcAuthResolver`] is `#[derive(Clone)]` for the Python
     /// immutable-builder pattern. `None` for symmetric methods.
     pub client_assertion_key: Option<Arc<ClientAssertionKey>>,
+    /// Phase 24 — mTLS-enabled HTTP client for
+    /// [`IntrospectionAuthMethod::TlsClientAuth`]. Built eagerly at
+    /// builder time (`with_introspection_mtls`) so PEM parsing
+    /// failures surface as `TakoError::Invalid` early rather than
+    /// at first-request time. `Arc<reqwest::Client>` because
+    /// `Client` is already internally `Arc`'d; cloning is cheap.
+    /// `None` for non-mTLS auth methods.
+    pub mtls_client: Option<Arc<reqwest::Client>>,
 }
 
 /// Subset of RFC 7662 introspection response. `active` is the only
@@ -406,6 +426,7 @@ impl OidcAuthResolver {
             client_secret,
             auth_method: IntrospectionAuthMethod::default(),
             client_assertion_key: None,
+            mtls_client: None,
         });
         Ok(self)
     }
@@ -424,6 +445,7 @@ impl OidcAuthResolver {
             client_secret,
             auth_method: IntrospectionAuthMethod::default(),
             client_assertion_key: None,
+            mtls_client: None,
         });
         self
     }
@@ -442,15 +464,16 @@ impl OidcAuthResolver {
         self
     }
 
-    /// Phase 17.A / 17.B / 18.A — auto-select the
+    /// Phase 17.A / 17.B / 18.A / 24 — auto-select the
     /// [`IntrospectionAuthMethod`] from the issuer's RFC 8414
     /// `introspection_endpoint_auth_methods_supported` list captured
-    /// during discovery. Preference order:
-    /// `private_key_jwt` (Phase 18.A; only when a
-    /// `client_assertion_key` is configured) →
-    /// `client_secret_jwt` (Phase 17.B; only when a
-    /// `client_secret` is configured — HS256 needs the symmetric
-    /// key) → `client_secret_basic` → `client_secret_post`.
+    /// during discovery. Preference order (strongest first):
+    /// `tls_client_auth` (Phase 24; only when an mTLS identity is
+    /// configured) → `private_key_jwt` (Phase 18.A; only when a
+    /// `client_assertion_key` is configured) → `client_secret_jwt`
+    /// (Phase 17.B; only when a `client_secret` is configured —
+    /// HS256 needs the symmetric key) → `client_secret_basic` →
+    /// `client_secret_post`.
     ///
     /// Behaviour:
     /// - Silent no-op (returns `Ok(self)` unchanged) when no
@@ -464,10 +487,11 @@ impl OidcAuthResolver {
     ///   supported variant: selects the strongest (preference
     ///   order above).
     /// - When discovery advertised a list with **no** supported
-    ///   variant (e.g. issuer requires only `tls_client_auth`,
-    ///   deferred to Phase 19+): returns [`TakoError::Invalid`]
-    ///   so the operator notices at builder time rather than at
-    ///   HTTP-401 from the introspection endpoint.
+    ///   variant (e.g. issuer requires only
+    ///   `self_signed_tls_client_auth`, deferred to Phase 25+):
+    ///   returns [`TakoError::Invalid`] so the operator notices at
+    ///   builder time rather than at HTTP-401 from the
+    ///   introspection endpoint.
     pub fn with_introspection_auth_method_from_discovery(mut self) -> Result<Self, TakoError> {
         let Some(cfg) = self.introspection.as_mut() else {
             return Ok(self);
@@ -478,8 +502,11 @@ impl OidcAuthResolver {
             Some(list) => {
                 let has_secret = cfg.client_secret.is_some();
                 let has_key = cfg.client_assertion_key.is_some();
+                let has_mtls = cfg.mtls_client.is_some();
                 let supports = |needle: &str| list.iter().any(|m| m == needle);
-                if has_key && supports("private_key_jwt") {
+                if has_mtls && supports("tls_client_auth") {
+                    IntrospectionAuthMethod::TlsClientAuth
+                } else if has_key && supports("private_key_jwt") {
                     IntrospectionAuthMethod::PrivateKeyJwt
                 } else if has_secret && supports("client_secret_jwt") {
                     IntrospectionAuthMethod::ClientSecretJwt
@@ -549,6 +576,56 @@ impl OidcAuthResolver {
             cfg.auth_method = IntrospectionAuthMethod::PrivateKeyJwt;
         }
         Ok(self)
+    }
+
+    /// Phase 24 — load a client cert + private key from separate
+    /// PEM blobs, build an mTLS-enabled [`reqwest::Client`], and
+    /// switch the introspection auth method to
+    /// [`IntrospectionAuthMethod::TlsClientAuth`]. PEM parse failure
+    /// (or `reqwest::Client` build failure) surfaces as
+    /// [`TakoError::Invalid`] at builder time so operators notice
+    /// before the first request.
+    ///
+    /// `cert_pem` should be a PEM-encoded X.509 certificate (or
+    /// chain — [`reqwest::Identity::from_pem`] accepts concatenated
+    /// certs). `key_pem` should be a PKCS#8 or SEC1-encoded private
+    /// key matching the cert.
+    ///
+    /// Silent no-op (returns `Ok(self)` unchanged) when no
+    /// introspection config has been attached yet — matches the
+    /// chainable-builder cadence of the other
+    /// `with_introspection_*` builders.
+    pub fn with_introspection_mtls(
+        mut self,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> Result<Self, TakoError> {
+        // Silent no-op when no introspection config is attached —
+        // skip the cert / Client build to avoid surfacing PEM
+        // errors that the operator will never use.
+        if self.introspection.is_none() {
+            return Ok(self);
+        }
+        let identity = build_mtls_identity(cert_pem, key_pem)?;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .identity(identity)
+            .build()
+            .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))?;
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.mtls_client = Some(Arc::new(client));
+            cfg.auth_method = IntrospectionAuthMethod::TlsClientAuth;
+        }
+        Ok(self)
+    }
+
+    /// Phase 24 — convenience for combined PEM blobs (the common
+    /// output format from `cat cert.pem key.pem`). Delegates to
+    /// [`Self::with_introspection_mtls`] with the same blob passed
+    /// twice; [`reqwest::Identity::from_pem`] locates the cert and
+    /// key blocks by PEM section markers independently.
+    pub fn with_introspection_mtls_combined(self, combined_pem: &[u8]) -> Result<Self, TakoError> {
+        self.with_introspection_mtls(combined_pem, combined_pem)
     }
 
     /// Phase 18.B — return the OIDC Session Management 1.0
@@ -660,18 +737,31 @@ impl OidcAuthResolver {
             _ => None,
         };
 
+        // Phase 24 — `TlsClientAuth` requires a non-`None`
+        // `mtls_client` (the per-resolver mTLS-enabled HTTP client
+        // built at builder time by `with_introspection_mtls`).
+        if cfg.auth_method == IntrospectionAuthMethod::TlsClientAuth && cfg.mtls_client.is_none() {
+            return Err(TakoError::Invalid(
+                "oidc: tls_client_auth requires mtls_client to be set".into(),
+            ));
+        }
+
         // Workspace reqwest is configured without the `urlencoded`
         // feature; build the form body manually via `url`'s
         // `form_urlencoded`. This is what reqwest's `.form()` does
         // internally.
         //
-        // Phase 16.B.2 / 17.B / 18.A — credential carriage:
+        // Phase 16.B.2 / 17.B / 18.A / 24 — credential carriage:
         // - `ClientSecretBasic`: body credential-free; `Authorization:
         //   Basic` header added below.
         // - `ClientSecretPost`: `client_id` / `client_secret` in body.
         // - `ClientSecretJwt` / `PrivateKeyJwt`: `client_assertion` /
         //   `client_assertion_type` in body, no Authorization
         //   header.
+        // - `TlsClientAuth`: body credential-free, no Authorization
+        //   header. The issuer authenticates via the TLS handshake
+        //   cert; tako swaps in the mTLS-enabled `reqwest::Client`
+        //   below.
         //
         // The `Serializer` is not `Send`, so build the body string
         // in a tight scope that drops it before any await.
@@ -699,11 +789,22 @@ impl OidcAuthResolver {
                         form.append_pair("client_assertion", jwt);
                     }
                 }
+                IntrospectionAuthMethod::TlsClientAuth => {}
             }
             form.finish()
         };
-        let req = self
-            .http
+        // Phase 24 — for `TlsClientAuth`, swap to the mTLS-enabled
+        // `reqwest::Client` cached on the config; other auth
+        // methods use the resolver's default HTTP client.
+        let http: &reqwest::Client = match cfg.auth_method {
+            IntrospectionAuthMethod::TlsClientAuth => cfg
+                .mtls_client
+                .as_deref()
+                // Guarded above; safe.
+                .unwrap_or(&self.http),
+            _ => &self.http,
+        };
+        let req = http
             .post(&cfg.introspect_uri)
             .header(
                 reqwest::header::CONTENT_TYPE,
@@ -718,11 +819,12 @@ impl OidcAuthResolver {
                     req.basic_auth(&cfg.client_id, None::<&str>)
                 }
             }
-            // Phase 16.B.2 / 17.B / 18.A — neither Post nor either
-            // JWT variant carries an Authorization header.
+            // Phase 16.B.2 / 17.B / 18.A / 24 — Post, JWT, and mTLS
+            // variants all skip the Authorization header.
             IntrospectionAuthMethod::ClientSecretPost
             | IntrospectionAuthMethod::ClientSecretJwt
-            | IntrospectionAuthMethod::PrivateKeyJwt => req,
+            | IntrospectionAuthMethod::PrivateKeyJwt
+            | IntrospectionAuthMethod::TlsClientAuth => req,
         };
         let resp = req.send().await.map_err(|e| {
             TakoError::Transport(format!("oidc: introspect POST {}: {e}", cfg.introspect_uri))
@@ -930,6 +1032,25 @@ fn build_client_assertion(
     })
 }
 
+/// Phase 24 — build a [`reqwest::Identity`] from separate cert +
+/// key PEM blobs. `reqwest::Identity::from_pem` requires both
+/// pieces in a single concatenated blob; this helper handles the
+/// concatenation (preserving a separating newline).
+///
+/// Errors map to `TakoError::Invalid("oidc: invalid mTLS identity
+/// PEM: ...")` so the operator gets a clear diagnostic when their
+/// cert or key file is malformed.
+fn build_mtls_identity(cert_pem: &[u8], key_pem: &[u8]) -> Result<reqwest::Identity, TakoError> {
+    let mut combined = Vec::with_capacity(cert_pem.len() + key_pem.len() + 1);
+    combined.extend_from_slice(cert_pem);
+    if !cert_pem.ends_with(b"\n") {
+        combined.push(b'\n');
+    }
+    combined.extend_from_slice(key_pem);
+    reqwest::Identity::from_pem(&combined)
+        .map_err(|e| TakoError::Invalid(format!("oidc: invalid mTLS identity PEM: {e}")))
+}
+
 #[async_trait]
 impl AuthResolver for OidcAuthResolver {
     async fn resolve(&self, token: &str) -> Result<Principal, TakoError> {
@@ -1006,6 +1127,7 @@ mod tests {
             client_secret: Some("secret".into()),
             auth_method: IntrospectionAuthMethod::default(),
             client_assertion_key: None,
+            mtls_client: None,
         };
         let cloned = cfg.clone();
         assert_eq!(cloned.introspect_uri, cfg.introspect_uri);
@@ -1891,5 +2013,180 @@ Hg1uvux+qhVvB6JSr1th1Vbqvs7mLJioou3cLxSuM/AqPKOyBmWl2hf5\n\
         assert!(uri.contains("id_token_hint=hint"), "got: {uri}");
         assert!(uri.contains("state=xyz"), "got: {uri}");
         assert!(!uri.contains("post_logout_redirect_uri"), "got: {uri}");
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 24 — `IntrospectionAuthMethod::TlsClientAuth` and
+    // [`OidcAuthResolver::with_introspection_mtls`].
+    // -----------------------------------------------------------------
+
+    /// Self-signed X.509 cert generated for the Phase 24 tests.
+    /// CN = `tako-test-client`, RSA-2048, validity ~100 years.
+    /// Test fixture only; never used for production auth.
+    const TEST_MTLS_CERT_PEM: &[u8] = b"-----BEGIN CERTIFICATE-----\n\
+MIIDGTCCAgGgAwIBAgIUDgBxyYdSvB715hZ2wo2vg58ajPEwDQYJKoZIhvcNAQEL\n\
+BQAwGzEZMBcGA1UEAwwQdGFrby10ZXN0LWNsaWVudDAgFw0yNjA1MDEwODQyNDJa\n\
+GA8yMTI2MDQwNzA4NDI0MlowGzEZMBcGA1UEAwwQdGFrby10ZXN0LWNsaWVudDCC\n\
+ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAKn2gHS5FrOc6Kjx1aZDzmpB\n\
+3CLeVWMYfXtVJO+p6mtJkIYUhqPLt1BesbdABmIBByjghtlenEP9xbOYbEe5qPxQ\n\
+ihy9VmgITrq3DXUhdZhCxGHp99dzLPaE1XBaUHH3eYqlbbxd8dc1qRiULA6/f7mR\n\
+92q6sZzUp5znDRwvwRGgf0x3JowfzeIetoKtNJ/RH1LmyCeqGd1djtyVe/2atsbL\n\
+6DfDoEdT4en0WcIkZGtw9LYKvTImCidqTd8N+dpNSMPJTn4KctVHXmOdBpDK5U/u\n\
+XF+SsGFg+4lFO/JTGTCowBGv7KeIoBf5vrJe9w/L01rCExnZhYQVTs8wjNZ1VBsC\n\
+AwEAAaNTMFEwHQYDVR0OBBYEFEqlQohkpj9ddcSoQ57Onk0c5iwGMB8GA1UdIwQY\n\
+MBaAFEqlQohkpj9ddcSoQ57Onk0c5iwGMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZI\n\
+hvcNAQELBQADggEBACtlr1SIz6YsRijnj9oMhGei1CVRXRnFHD8z2poa7A1Zh3vC\n\
+nFdBOACHpmJ++A8Z1xOFyM064U/lYNybFw0/kyhk+9x5LlV3XCnT2r3CjVeacyfF\n\
+kWy8kmaZ2j6JRTL/O0j8+ZlSZkf4utt/3+uGFUQ/qmmnXsYbhsyvHpnUmhZAnQxc\n\
+Y+zVlpb9xALf3F2RuHZmhngdbIBaRFuExhcnktIdHbUUCq+Lc45or0gCk1yqf2GX\n\
++PIVp3MWA9hwQP3Obx88GzGaLZ/MpfzE41vVjtlnyBirt0lFqAyM8JT+vFjcrg0n\n\
+ZVBd2WsafuufFwi8IZInM7P/gTi57eNbhpQMYzc=\n\
+-----END CERTIFICATE-----\n";
+
+    /// PKCS#8 RSA private key matching [`TEST_MTLS_CERT_PEM`].
+    const TEST_MTLS_KEY_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCp9oB0uRaznOio\n\
+8dWmQ85qQdwi3lVjGH17VSTvqeprSZCGFIajy7dQXrG3QAZiAQco4IbZXpxD/cWz\n\
+mGxHuaj8UIocvVZoCE66tw11IXWYQsRh6ffXcyz2hNVwWlBx93mKpW28XfHXNakY\n\
+lCwOv3+5kfdqurGc1Kec5w0cL8ERoH9MdyaMH83iHraCrTSf0R9S5sgnqhndXY7c\n\
+lXv9mrbGy+g3w6BHU+Hp9FnCJGRrcPS2Cr0yJgonak3fDfnaTUjDyU5+CnLVR15j\n\
+nQaQyuVP7lxfkrBhYPuJRTvyUxkwqMARr+yniKAX+b6yXvcPy9NawhMZ2YWEFU7P\n\
+MIzWdVQbAgMBAAECggEAUnySalO7207/MaMw5AELiFFPY9LQ0Qe9OqKfivtFjG1H\n\
+CXOjxpHjdUuH555Ymq7SCToy6AL9Rxg+H4QNpR/Lji0OYpVXfqTthLu7ecnT1yIs\n\
+SjLxeGxq+XeNWPpUCYOoRqwz3lQfv6lI2GdtHHk/JVJcqD1UXv9sG3+dQr1Ab+tQ\n\
+tVmVRNHA7E297v5kwYjKxEvobBjtRqDS3mVh21Fcfd+YNvAzbQ5MJpc1fqJ6TzLD\n\
+4vs3yNZ2Utww4ItMFi1jf4AGxJ+s9887rJffV96g8fmaAAVJPHX6aHj+J2yibLiY\n\
+TBpImZgd5x/sis9nNQdfA4749gb/vn/d+wt5Nq8o4QKBgQDbHtW/eDIJzQrj4djB\n\
+pJXvGiQzp7dwgd5zxjpRmMpWMOymyJfu4LOW0hGH+YOmKV4DTdJ0OsNlpnccsQFT\n\
+d0Xnpbmz0KXDybaUwqEsExpkNiPruC3Nq5ID03l89q1usyoLZfYPSWESfazmjG6h\n\
+VlS2kKLwrTK3pLdKWbEBLIptewKBgQDGkaICZdgLbu5zbTszUi0zjZuVH59lIu3+\n\
+CrxgGdjPTyCrot0qzxiYWnc6auvm8VVKoO8YqWyGaknwUmI8AwU9tETgTh4cv6gu\n\
+YzOr6EhBYfNkUoTAkdyDu7Vbje7zSJY8YsjJCrdazj5gIOq4hLazXE9JFQnBoWln\n\
+BQjXehbh4QKBgQDDHiQMCYXVQGZwIc4YMOzqKwcNkE1CvAJQabXIrxuNwKcapQjV\n\
+x/VjWdAOmtrl/XQf0Q6UPTd9rsvmGqApqM3wxpwkSKkzPM1+jgli6+fWUHeQEUOI\n\
+Hz04dvl5k1dAef34hGSlnBv6kTqDWY2x0ORCZW0Sj8fXy68DX/bEKtthPQKBgExe\n\
+NDXB334+Mrz31J3fS/0YyC5pFA98iJV8oYhASI8qeoEoSPEu5uGpYVN5TbLrPAdQ\n\
+r8QHXPKxLDCeLqOv8bMSgq7VvGUIHPGCO5ww4KEsv8PkrKO3NV0AszY79xtf3k/p\n\
+Ghmf4nas/XZREpTWjcGbje6ohbEPmA8D86uTi/thAoGAZVuIdoETvKNVpT0O0qBX\n\
+yxjBYrLoXdkns6ZR5I+jD42jvtv9UkASFydzHI6k5ZCJ38HN7hRoLHCSB46cEcOX\n\
+GyKEFEUINrmViWeq1ysFaNzOu0EjypVCwvN6/Jx8kmfNFuHGdpqjoaNRecAYyGOr\n\
+h7ACptP3tF94pcBzOgJ3bhM=\n\
+-----END PRIVATE KEY-----\n";
+
+    fn test_resolver_with_introspection_for_mtls() -> OidcAuthResolver {
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.with_introspection("client-id", None).unwrap()
+    }
+
+    #[test]
+    fn with_introspection_mtls_accepts_valid_pem() {
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap();
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(cfg.auth_method, IntrospectionAuthMethod::TlsClientAuth);
+        assert!(cfg.mtls_client.is_some());
+    }
+
+    #[test]
+    fn with_introspection_mtls_combined_accepts_concatenated_pem() {
+        // Concat cert + key into a single blob — the common output of
+        // `cat cert.pem key.pem`.
+        let mut combined = Vec::with_capacity(TEST_MTLS_CERT_PEM.len() + TEST_MTLS_KEY_PEM.len());
+        combined.extend_from_slice(TEST_MTLS_CERT_PEM);
+        combined.extend_from_slice(TEST_MTLS_KEY_PEM);
+
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls_combined(&combined)
+            .unwrap();
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(cfg.auth_method, IntrospectionAuthMethod::TlsClientAuth);
+        assert!(cfg.mtls_client.is_some());
+    }
+
+    #[test]
+    fn with_introspection_mtls_rejects_garbage_pem() {
+        let err = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls(b"not a pem", b"also not a pem")
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("invalid mTLS identity PEM"), "got: {msg}");
+    }
+
+    #[test]
+    fn with_introspection_mtls_no_op_without_introspection() {
+        // No `with_introspection*` called yet — the mTLS builder
+        // returns `Ok(self)` without trying to parse the PEM (so
+        // operators can chain in any order without surfacing
+        // unrelated PEM errors).
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_mtls(b"garbage", b"garbage")
+            .unwrap();
+        assert!(r.introspection.is_none());
+    }
+
+    #[test]
+    fn auto_select_prefers_tls_client_auth_when_listed_and_identity_present() {
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.discovered_introspection_auth_methods = Some(vec![
+            "client_secret_basic".to_string(),
+            "client_secret_post".to_string(),
+            "client_secret_jwt".to_string(),
+            "private_key_jwt".to_string(),
+            "tls_client_auth".to_string(),
+        ]);
+        let r = r
+            .with_introspection("client", Some("secret".into()))
+            .unwrap()
+            .with_introspection_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap()
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        // Even though all five methods are listed and we have
+        // secret + (no asymmetric key), mTLS is the strongest
+        // method tako can perform here.
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::TlsClientAuth,
+        );
+    }
+
+    #[test]
+    fn auto_select_skips_tls_client_auth_when_no_identity() {
+        // `tls_client_auth` is listed but no mTLS identity
+        // configured — fall back to `client_secret_basic`.
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.discovered_introspection_auth_methods = Some(vec![
+            "tls_client_auth".to_string(),
+            "client_secret_basic".to_string(),
+        ]);
+        let r = r
+            .with_introspection("client", Some("secret".into()))
+            .unwrap()
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::ClientSecretBasic,
+        );
+    }
+
+    #[tokio::test]
+    async fn introspect_tls_client_auth_errors_when_mtls_client_missing() {
+        // Auth method flipped to `TlsClientAuth` directly (without
+        // `with_introspection_mtls`) — `introspect()` errors at
+        // request time.
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_uri("https://issuer.example/introspect", "client", None)
+            .with_introspection_auth_method(IntrospectionAuthMethod::TlsClientAuth);
+        let err = r.introspect("any-token").await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("tls_client_auth requires mtls_client"),
+            "got: {msg}"
+        );
     }
 }
