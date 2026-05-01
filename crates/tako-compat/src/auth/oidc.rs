@@ -169,6 +169,22 @@ pub enum IntrospectionAuthMethod {
     /// missing. Configure via
     /// [`OidcAuthResolver::with_introspection_mtls`].
     TlsClientAuth,
+    /// Phase 25 — RFC 8705 §2.2 self-signed mTLS authentication.
+    /// Wire-identical to [`Self::TlsClientAuth`] (both present a
+    /// TLS client cert during the handshake), but the issuer
+    /// matches the cert directly against a pre-registered cert
+    /// thumbprint or public-key fingerprint instead of validating
+    /// against a CA chain.
+    ///
+    /// Requires [`IntrospectionConfig::mtls_client`] to be
+    /// configured (same as [`Self::TlsClientAuth`]); errors at
+    /// request time if missing. Configure via
+    /// [`OidcAuthResolver::with_introspection_self_signed_mtls`].
+    /// The discovery-list entry is distinct from `tls_client_auth`
+    /// — issuers advertise either or both; the auto-selector
+    /// prefers the CA-backed `tls_client_auth` when both are
+    /// listed.
+    SelfSignedTlsClientAuth,
 }
 
 /// Phase 18.A — asymmetric private signing key for the
@@ -487,11 +503,15 @@ impl OidcAuthResolver {
     ///   supported variant: selects the strongest (preference
     ///   order above).
     /// - When discovery advertised a list with **no** supported
-    ///   variant (e.g. issuer requires only
-    ///   `self_signed_tls_client_auth`, deferred to Phase 25+):
-    ///   returns [`TakoError::Invalid`] so the operator notices at
-    ///   builder time rather than at HTTP-401 from the
+    ///   variant: returns [`TakoError::Invalid`] so the operator
+    ///   notices at builder time rather than at HTTP-401 from the
     ///   introspection endpoint.
+    ///
+    /// Phase 25 extends the order to a six-tier preference:
+    /// `tls_client_auth` (CA-backed) is preferred over
+    /// `self_signed_tls_client_auth` because the CA chain provides
+    /// ongoing trust validation (revocation, etc.) — both gated on
+    /// having an mTLS identity configured.
     pub fn with_introspection_auth_method_from_discovery(mut self) -> Result<Self, TakoError> {
         let Some(cfg) = self.introspection.as_mut() else {
             return Ok(self);
@@ -506,6 +526,8 @@ impl OidcAuthResolver {
                 let supports = |needle: &str| list.iter().any(|m| m == needle);
                 if has_mtls && supports("tls_client_auth") {
                     IntrospectionAuthMethod::TlsClientAuth
+                } else if has_mtls && supports("self_signed_tls_client_auth") {
+                    IntrospectionAuthMethod::SelfSignedTlsClientAuth
                 } else if has_key && supports("private_key_jwt") {
                     IntrospectionAuthMethod::PrivateKeyJwt
                 } else if has_secret && supports("client_secret_jwt") {
@@ -628,6 +650,57 @@ impl OidcAuthResolver {
         self.with_introspection_mtls(combined_pem, combined_pem)
     }
 
+    /// Phase 25 — load a client cert + private key from separate
+    /// PEM blobs, build an mTLS-enabled [`reqwest::Client`], and
+    /// switch the introspection auth method to RFC 8705 §2.2
+    /// [`IntrospectionAuthMethod::SelfSignedTlsClientAuth`].
+    ///
+    /// Identical wire shape to [`Self::with_introspection_mtls`];
+    /// the only difference is the `auth_method` enum variant
+    /// (which determines which discovery-list entry the
+    /// auto-selector matches). Operators with issuers that
+    /// advertise both `tls_client_auth` and
+    /// `self_signed_tls_client_auth` should prefer
+    /// [`Self::with_introspection_auth_method_from_discovery`] —
+    /// the auto-selector picks the CA-backed
+    /// `tls_client_auth` over `self_signed_tls_client_auth` when
+    /// both are advertised.
+    ///
+    /// PEM parse / `reqwest::Client` build failures surface as
+    /// [`TakoError::Invalid`] at builder time, matching
+    /// [`Self::with_introspection_mtls`]'s behaviour. Silent no-op
+    /// when no introspection config has been attached yet.
+    pub fn with_introspection_self_signed_mtls(
+        mut self,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> Result<Self, TakoError> {
+        if self.introspection.is_none() {
+            return Ok(self);
+        }
+        let identity = build_mtls_identity(cert_pem, key_pem)?;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .identity(identity)
+            .build()
+            .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))?;
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.mtls_client = Some(Arc::new(client));
+            cfg.auth_method = IntrospectionAuthMethod::SelfSignedTlsClientAuth;
+        }
+        Ok(self)
+    }
+
+    /// Phase 25 — convenience for combined PEM blobs (the common
+    /// `cat cert.pem key.pem` form). Self-signed sibling of
+    /// [`Self::with_introspection_mtls_combined`].
+    pub fn with_introspection_self_signed_mtls_combined(
+        self,
+        combined_pem: &[u8],
+    ) -> Result<Self, TakoError> {
+        self.with_introspection_self_signed_mtls(combined_pem, combined_pem)
+    }
+
     /// Phase 18.B — return the OIDC Session Management 1.0
     /// `end_session_endpoint` URL the issuer advertised at discovery
     /// time. `None` when the issuer doesn't implement OIDC Session
@@ -737,13 +810,21 @@ impl OidcAuthResolver {
             _ => None,
         };
 
-        // Phase 24 — `TlsClientAuth` requires a non-`None`
+        // Phase 24 / 25 — both mTLS variants require a non-`None`
         // `mtls_client` (the per-resolver mTLS-enabled HTTP client
-        // built at builder time by `with_introspection_mtls`).
-        if cfg.auth_method == IntrospectionAuthMethod::TlsClientAuth && cfg.mtls_client.is_none() {
-            return Err(TakoError::Invalid(
-                "oidc: tls_client_auth requires mtls_client to be set".into(),
-            ));
+        // built at builder time by `with_introspection_mtls` /
+        // `with_introspection_self_signed_mtls`).
+        let mtls_method_name: Option<&'static str> = match cfg.auth_method {
+            IntrospectionAuthMethod::TlsClientAuth => Some("tls_client_auth"),
+            IntrospectionAuthMethod::SelfSignedTlsClientAuth => Some("self_signed_tls_client_auth"),
+            _ => None,
+        };
+        if let Some(name) = mtls_method_name
+            && cfg.mtls_client.is_none()
+        {
+            return Err(TakoError::Invalid(format!(
+                "oidc: {name} requires mtls_client to be set",
+            )));
         }
 
         // Workspace reqwest is configured without the `urlencoded`
@@ -789,15 +870,18 @@ impl OidcAuthResolver {
                         form.append_pair("client_assertion", jwt);
                     }
                 }
-                IntrospectionAuthMethod::TlsClientAuth => {}
+                IntrospectionAuthMethod::TlsClientAuth
+                | IntrospectionAuthMethod::SelfSignedTlsClientAuth => {}
             }
             form.finish()
         };
-        // Phase 24 — for `TlsClientAuth`, swap to the mTLS-enabled
-        // `reqwest::Client` cached on the config; other auth
-        // methods use the resolver's default HTTP client.
+        // Phase 24 / 25 — for either mTLS variant, swap to the
+        // mTLS-enabled `reqwest::Client` cached on the config;
+        // other auth methods use the resolver's default HTTP
+        // client.
         let http: &reqwest::Client = match cfg.auth_method {
-            IntrospectionAuthMethod::TlsClientAuth => cfg
+            IntrospectionAuthMethod::TlsClientAuth
+            | IntrospectionAuthMethod::SelfSignedTlsClientAuth => cfg
                 .mtls_client
                 .as_deref()
                 // Guarded above; safe.
@@ -819,12 +903,14 @@ impl OidcAuthResolver {
                     req.basic_auth(&cfg.client_id, None::<&str>)
                 }
             }
-            // Phase 16.B.2 / 17.B / 18.A / 24 — Post, JWT, and mTLS
-            // variants all skip the Authorization header.
+            // Phase 16.B.2 / 17.B / 18.A / 24 / 25 — Post, JWT,
+            // and both mTLS variants all skip the Authorization
+            // header.
             IntrospectionAuthMethod::ClientSecretPost
             | IntrospectionAuthMethod::ClientSecretJwt
             | IntrospectionAuthMethod::PrivateKeyJwt
-            | IntrospectionAuthMethod::TlsClientAuth => req,
+            | IntrospectionAuthMethod::TlsClientAuth
+            | IntrospectionAuthMethod::SelfSignedTlsClientAuth => req,
         };
         let resp = req.send().await.map_err(|e| {
             TakoError::Transport(format!("oidc: introspect POST {}: {e}", cfg.introspect_uri))
@@ -2186,6 +2272,121 @@ h7ACptP3tF94pcBzOgJ3bhM=\n\
         let msg = format!("{err:?}");
         assert!(
             msg.contains("tls_client_auth requires mtls_client"),
+            "got: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 25 — `IntrospectionAuthMethod::SelfSignedTlsClientAuth`.
+    // RFC 8705 §2.2: same wire shape as `TlsClientAuth` (both
+    // present a TLS client cert), but the issuer matches the cert
+    // directly against a pre-registered thumbprint or fingerprint
+    // instead of validating against a CA chain. The auto-selector
+    // treats them as separate discovery-list entries.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn with_introspection_self_signed_mtls_accepts_valid_pem() {
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_self_signed_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap();
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(
+            cfg.auth_method,
+            IntrospectionAuthMethod::SelfSignedTlsClientAuth,
+        );
+        assert!(cfg.mtls_client.is_some());
+    }
+
+    #[test]
+    fn with_introspection_self_signed_mtls_combined_accepts_concatenated_pem() {
+        let mut combined = Vec::with_capacity(TEST_MTLS_CERT_PEM.len() + TEST_MTLS_KEY_PEM.len());
+        combined.extend_from_slice(TEST_MTLS_CERT_PEM);
+        combined.extend_from_slice(TEST_MTLS_KEY_PEM);
+
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_self_signed_mtls_combined(&combined)
+            .unwrap();
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(
+            cfg.auth_method,
+            IntrospectionAuthMethod::SelfSignedTlsClientAuth,
+        );
+        assert!(cfg.mtls_client.is_some());
+    }
+
+    #[test]
+    fn with_introspection_self_signed_mtls_rejects_garbage_pem() {
+        let err = test_resolver_with_introspection_for_mtls()
+            .with_introspection_self_signed_mtls(b"not a pem", b"also not a pem")
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("invalid mTLS identity PEM"), "got: {msg}");
+    }
+
+    #[test]
+    fn auto_select_prefers_tls_client_auth_over_self_signed_when_both_listed() {
+        // RFC 8705 §2.2 — CA-backed `tls_client_auth` is stronger
+        // than `self_signed_tls_client_auth` because the CA chain
+        // provides ongoing trust validation (revocation, etc.).
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.discovered_introspection_auth_methods = Some(vec![
+            "self_signed_tls_client_auth".to_string(),
+            "tls_client_auth".to_string(),
+            "client_secret_basic".to_string(),
+        ]);
+        let r = r
+            .with_introspection("client", None)
+            .unwrap()
+            .with_introspection_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap()
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        // Even though the operator called `with_introspection_mtls`
+        // (which flips to `TlsClientAuth`) and then re-ran the
+        // auto-selector, the result is still `TlsClientAuth` —
+        // the CA-backed variant wins over self-signed.
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::TlsClientAuth,
+        );
+    }
+
+    #[test]
+    fn auto_select_picks_self_signed_when_only_self_signed_listed() {
+        // `tls_client_auth` not advertised; `self_signed_tls_client_auth`
+        // is. The auto-selector picks it when an mTLS identity is
+        // configured (regardless of which mTLS builder set it up).
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.discovered_introspection_auth_methods = Some(vec![
+            "self_signed_tls_client_auth".to_string(),
+            "client_secret_basic".to_string(),
+        ]);
+        let r = r
+            .with_introspection("client", None)
+            .unwrap()
+            .with_introspection_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap()
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::SelfSignedTlsClientAuth,
+        );
+    }
+
+    #[tokio::test]
+    async fn introspect_self_signed_tls_client_auth_errors_when_mtls_client_missing() {
+        // Mirror of the TlsClientAuth request-time fail test.
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_uri("https://issuer.example/introspect", "client", None)
+            .with_introspection_auth_method(IntrospectionAuthMethod::SelfSignedTlsClientAuth);
+        let err = r.introspect("any-token").await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("self_signed_tls_client_auth requires mtls_client"),
             "got: {msg}"
         );
     }
