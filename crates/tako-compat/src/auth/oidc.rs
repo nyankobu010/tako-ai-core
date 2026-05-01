@@ -99,6 +99,7 @@ struct CachedJwks {
     fetched_at: Instant,
 }
 
+#[derive(Clone)]
 pub struct OidcAuthResolver {
     issuer: String,
     audience: String,

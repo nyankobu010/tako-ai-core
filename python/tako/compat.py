@@ -38,6 +38,13 @@ def serve_openai(
        require the wheel to be built with the matching ``auth-*`` feature
        (e.g. ``maturin build --features auth-jwt``).
 
+       Phase 15.B.1 / 15.B.2 — ``VaultAuth`` gains ``with_approle``,
+       ``with_kubernetes`` and ``with_kubernetes_in_pod`` static
+       constructors for AppRole / Kubernetes auth-method rotation.
+       ``OidcAuth`` gains ``with_introspection`` /
+       ``with_introspection_uri`` builder methods for RFC 7662 token
+       introspection (revocation-aware checks).
+
     Passing both ``tokens`` and ``auth`` is an error.
     """
     if not hasattr(orch, "_inner"):

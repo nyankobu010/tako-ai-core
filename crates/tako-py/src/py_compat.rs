@@ -124,11 +124,13 @@ fn extract_auth_resolver(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn Au
     }
     #[cfg(feature = "auth-oidc")]
     if let Ok(a) = bound.cast::<PyOidcAuth>() {
-        return Ok(a.borrow().inner.clone());
+        let oidc = a.borrow();
+        return Ok(Arc::clone(&oidc.inner) as Arc<dyn AuthResolver>);
     }
     #[cfg(feature = "auth-vault")]
     if let Ok(a) = bound.cast::<PyVaultAuth>() {
-        return Ok(a.borrow().inner.clone());
+        let vault = a.borrow();
+        return Ok(Arc::clone(&vault.inner) as Arc<dyn AuthResolver>);
     }
     let _ = bound;
     Err(PyValueError::new_err(
@@ -249,12 +251,13 @@ impl PyJwtAuth {
 
 // ---------------------------------------------------------------------------
 // Phase 14.B — OidcAuth pyclass.
+// Phase 15.B.2 — `with_introspection` / `with_introspection_uri`.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "auth-oidc")]
 #[pyclass(name = "OidcAuth", module = "tako._native")]
 pub struct PyOidcAuth {
-    inner: Arc<dyn AuthResolver>,
+    inner: Arc<tako_compat::OidcAuthResolver>,
 }
 
 #[cfg(feature = "auth-oidc")]
@@ -282,16 +285,48 @@ impl PyOidcAuth {
             Ok(PyOidcAuth { inner: Arc::new(r) })
         })
     }
+
+    /// Phase 15.B.2 — enable RFC 7662 token introspection using the
+    /// `introspection_endpoint` advertised by the issuer's discovery
+    /// doc. Returns a NEW `OidcAuth` instance (immutable builder);
+    /// raises `ValueError` if the issuer didn't advertise an endpoint.
+    #[pyo3(signature = (client_id, client_secret=None))]
+    fn with_introspection(
+        &self,
+        client_id: String,
+        client_secret: Option<String>,
+    ) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection(client_id, client_secret)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 15.B.2 — enable RFC 7662 token introspection with an
+    /// explicit endpoint URL (bypasses discovery). Infallible.
+    #[pyo3(signature = (uri, client_id, client_secret=None))]
+    fn with_introspection_uri(
+        &self,
+        uri: String,
+        client_id: String,
+        client_secret: Option<String>,
+    ) -> Self {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned.with_introspection_uri(uri, client_id, client_secret);
+        PyOidcAuth { inner: Arc::new(r) }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Phase 14.B — VaultAuth pyclass.
+// Phase 15.B.1 — `with_approle` / `with_kubernetes` / `with_kubernetes_in_pod`.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "auth-vault")]
 #[pyclass(name = "VaultAuth", module = "tako._native")]
 pub struct PyVaultAuth {
-    inner: Arc<dyn AuthResolver>,
+    inner: Arc<tako_compat::VaultAuthResolver>,
 }
 
 #[cfg(feature = "auth-vault")]
@@ -304,13 +339,47 @@ impl std::fmt::Debug for PyVaultAuth {
 #[cfg(feature = "auth-vault")]
 #[pymethods]
 impl PyVaultAuth {
-    /// Sync constructor. `addr` looks like `http://127.0.0.1:8200`;
-    /// `token` is the Vault token tako uses to authenticate to Vault
-    /// itself (separate from user bearer tokens). Vault token rotation
-    /// is out of scope — see the Rust-side rustdoc.
+    /// Static-token constructor. `addr` looks like
+    /// `http://127.0.0.1:8200`; `token` is a fixed Vault token tako
+    /// uses to authenticate to Vault itself. For dynamic rotation,
+    /// use `with_approle` / `with_kubernetes` / `with_kubernetes_in_pod`.
     #[new]
     fn new(addr: &str, token: &str) -> PyResult<Self> {
         let r = tako_compat::VaultAuthResolver::new(addr, token).map_err(map_err)?;
+        Ok(Self { inner: Arc::new(r) })
+    }
+
+    /// Phase 15.B.1 — AppRole-rotating Vault token. POSTs
+    /// `{role_id, secret_id}` to `<addr>/v1/auth/approle/login`
+    /// lazily on each request whose cached lease has expired.
+    #[staticmethod]
+    fn with_approle(addr: &str, role_id: &str, secret_id: &str) -> PyResult<Self> {
+        let r = tako_compat::VaultAuthResolver::with_approle(addr, role_id, secret_id)
+            .map_err(map_err)?;
+        Ok(Self { inner: Arc::new(r) })
+    }
+
+    /// Phase 15.B.1 — Kubernetes-auth rotating Vault token. Reads the
+    /// SA JWT from `jwt_path` on each (re-)auth so SA-token rotation
+    /// is picked up.
+    #[staticmethod]
+    fn with_kubernetes(addr: &str, role: &str, jwt_path: &str) -> PyResult<Self> {
+        let r = tako_compat::VaultAuthResolver::with_kubernetes(
+            addr,
+            role,
+            std::path::PathBuf::from(jwt_path),
+        )
+        .map_err(map_err)?;
+        Ok(Self { inner: Arc::new(r) })
+    }
+
+    /// Phase 15.B.1 — convenience constructor for in-pod Kubernetes
+    /// auth: `jwt_path` defaults to
+    /// `/var/run/secrets/kubernetes.io/serviceaccount/token`.
+    #[staticmethod]
+    fn with_kubernetes_in_pod(addr: &str, role: &str) -> PyResult<Self> {
+        let r =
+            tako_compat::VaultAuthResolver::with_kubernetes_in_pod(addr, role).map_err(map_err)?;
         Ok(Self { inner: Arc::new(r) })
     }
 }
