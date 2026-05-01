@@ -9,6 +9,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.33.0] - 2026-05-02
+
+Phase 32 — URL pre-fetch CIDR allowlist. Closes the
+Phase-31-deferred operator-UX gap where allowlists could only
+match host strings (exact + wildcard suffix). Operators with
+private subnets hosting many dynamic hosts — or raw IP literals
+with no DNS at all — now get a CIDR-based bypass:
+`with_url_prefetch_allow_cidr("10.0.5.0/24")` permits any IP in
+that subnet whether reached via hostname resolution or as an IP
+literal in the URL.
+
+After Phase 32 the operator allowlist surface covers three
+semantic forms:
+  - Exact string  ("registry.corp")     — URL host string
+  - Wildcard      ("*.internal.corp")   — URL host suffix
+  - CIDR subnet   ("10.0.5.0/24")       — Resolved IP (any)
+
+Three sub-items, all strictly additive — public APIs unchanged
+shape. Plan: [PLAN_PHASE32.md](PLAN_PHASE32.md).
+
+### Added
+
+- **Phase 32.A — Bedrock URL pre-fetch CIDR allowlist
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/bedrock/src/client.rs](crates/tako-providers/bedrock/src/client.rs)).**
+
+  New `ipnet = "2"` workspace dep (small, well-maintained,
+  zero transitive deps). `AllowList` gains `cidrs: Vec<IpNet>`
+  field; constructor renamed `from_strings(hosts) -> Self`
+  → `from_strings_and_cidrs(hosts, cidrs) -> Result<Self,
+  TakoError>` with parse-time CIDR validation. CIDR parse
+  failures surface from the builder as `TakoError::Invalid`
+  so operators notice early — consistent with Phase 24/25 mTLS
+  PEM parse-time failure cadence.
+
+  New `AllowList::contains_ip(&IpAddr) -> bool` checks if an
+  IP falls inside any allowlisted CIDR. The runtime check is a
+  short linear scan over CIDRs (typical operator allowlists are
+  small).
+
+  `BlocklistResolver::resolve` and `fetch_one`'s inline IP-
+  literal check both gain CIDR honouring: bypass triggers when
+  EITHER the host string is allowlisted (Phase 30/31) OR the
+  IP is in an allowlisted CIDR (Phase 32). Per-IP check in the
+  resolver — a host that resolves only to allowlisted-CIDR IPs
+  is allowed even if the hostname itself isn't allowlisted.
+
+  New `UrlPrefetchOpts.allow_cidrs: Vec<String>` builder field.
+  New `BedrockBuilder::with_url_prefetch_allow_cidr(cidr)`
+  chainable builder. Does NOT auto-enable
+  `with_url_prefetch()`.
+
+  Eight new unit tests covering: IPv4 CIDR match/no-match
+  (`10.0.5.0/24`), IPv6 CIDR match/no-match (`2001:db8::/32`),
+  single-host `/32`, invalid-CIDR parse error, three-mode
+  coexistence (exact + wildcard + CIDR in one allowlist),
+  end-to-end wiremock with `127.0.0.0/8` allowlist permitting
+  the loopback binding.
+
+- **Phase 32.B — Ollama URL pre-fetch CIDR allowlist
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/ollama/src/client.rs](crates/tako-providers/ollama/src/client.rs)).**
+  Per-crate copy of all 32.A surfaces. Per ARCHITECTURE.md
+  hard rule, the `AllowList` struct is duplicated rather than
+  shared. Same `OllamaBuilder::with_url_prefetch_allow_cidr(cidr)`
+  builder. Same test surface (8 new unit tests).
+
+- **Phase 32.C — Python facade
+  ([crates/tako-py/src/py_bedrock.rs](crates/tako-py/src/py_bedrock.rs)
+  +
+  [crates/tako-py/src/py_ollama.rs](crates/tako-py/src/py_ollama.rs)
+  +
+  [python/tako/providers.py](python/tako/providers.py)).**
+
+  Both `PyBedrock::new` and `PyOllama::new` gain a
+  `url_prefetch_allow_cidrs: Option<Vec<String>>` kwarg
+  (positioned between `url_prefetch_allow_hosts` and
+  `url_prefetch_timeout_secs`). When `Some(cidrs)`, the PyO3
+  ctor calls `with_url_prefetch_allow_cidr(cidr)` for each
+  entry on the underlying builder. `None` (default) means
+  empty CIDR list. CIDR parse failures surface from the
+  constructor (TakoError::Invalid → Python exception via
+  `map_err`).
+
+  [`python/tako/providers.py`](python/tako/providers.py): both
+  `Bedrock` and `Ollama` `__init__` gain the new kwarg. Both
+  class docstrings rewritten to describe the three allowlist
+  forms (exact host, wildcard host, CIDR subnet) side-by-side
+  with examples. The Ollama docstring example shows all three
+  forms together.
+
+  [`python/tako/_native.pyi`](python/tako/_native.pyi) extended
+  with the new kwarg on both stubs.
+
+  Seven new tests in
+  [`tests/python/test_phase32_allow_cidrs.py`](tests/python/test_phase32_allow_cidrs.py)
+  pin: kwarg presence on both providers; default `None`;
+  docstring documents the kwarg with CIDR examples; Bedrock
+  docstring mentions all three allowlist forms together
+  (`url_prefetch_allow_hosts` + `url_prefetch_allow_cidrs` +
+  `*.` wildcard syntax marker).
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.33.0.
+- `UrlPrefetchOpts` gains `allow_cidrs: Vec<String>` field
+  (default empty; existing callers unaffected).
+- `AllowList::from_strings(...)` renamed to
+  `from_strings_and_cidrs(hosts, cidrs)` and the return type
+  widens to `Result<Self, TakoError>`. Internal pub(crate)
+  signature only — no public-API impact.
+
+### Carried forward to Phase 33+
+
+- **Wildcard at non-leftmost positions** — patterns like
+  `registry.*.corp`. No operator ask yet.
+- **Strict-allowlist mode** — currently all allowlists are
+  per-rule BYPASSes of the blocklist. A strict mode would
+  REQUIRE every URL host to match an allowlist entry.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+
 ## [0.32.0] - 2026-05-01
 
 Phase 31 — URL pre-fetch wildcard host patterns. Closes the
