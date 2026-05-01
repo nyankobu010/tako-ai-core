@@ -9,6 +9,161 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.19.0] - 2026-05-01
+
+Phase 18 — clears two more OIDC carry-forward items from the Phase
+17 holding pen. Strictly additive: asymmetric `private_key_jwt`
+introspection auth method per RFC 7521 / 7523 (RS256 / ES256 /
+EdDSA), and an OIDC Session Management 1.0 end-session endpoint
+helper. Python facade mirrors both. Plan:
+[PLAN_PHASE18.md](PLAN_PHASE18.md).
+
+### Added
+
+- **Phase 18.A — `private_key_jwt` OIDC introspection auth method
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  Asymmetric sibling of Phase 17.B's `client_secret_jwt`. New
+  `IntrospectionAuthMethod::PrivateKeyJwt` variant signs the same
+  RFC 7521 / 7523 client-assertion JWT but with an RSA / EC /
+  Ed25519 private key instead of the symmetric `client_secret`.
+  Same wire shape: form-body
+  `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
+  + `client_assertion=<jwt>`, no `Authorization` header.
+
+  New surfaces:
+  - `ClientAssertionKey` struct holding the algorithm +
+    `EncodingKey`. Three typed PEM constructors:
+    `from_rs256_pem`, `from_es256_pem`, `from_ed25519_pem`.
+    `Debug` impl redacts the key body but exposes the algorithm.
+  - `IntrospectionConfig.client_assertion_key:
+    Option<Arc<ClientAssertionKey>>`. `Arc` because `EncodingKey`
+    doesn't impl `Clone` and `OidcAuthResolver` is `Clone` for
+    the Python immutable-builder pattern.
+  - `OidcAuthResolver::with_introspection_private_key(key)` —
+    attach a key without flipping the auth method.
+  - `with_introspection_jwt_rs256_pem(pem)` /
+    `with_introspection_jwt_es256_pem(pem)` /
+    `with_introspection_jwt_ed25519_pem(pem)` — convenience
+    combos that load the PEM AND flip `auth_method` to
+    `PrivateKeyJwt`.
+
+  The 17.A auto-selector is extended to a four-tier preference
+  order: `private_key_jwt` (only when an asymmetric key is
+  configured) > `client_secret_jwt` (only when a symmetric secret
+  is configured) > `client_secret_basic` > `client_secret_post`.
+  The fail-closed branch now fires only when the issuer
+  advertises methods deferred to Phase 19+ (`tls_client_auth`)
+  or unknown.
+
+  `introspect()` refactored:
+  - Existing `build_client_assertion_hs256(client_id,
+    client_secret, audience)` renamed to
+    `build_client_assertion(client_id, audience, &EncodingKey,
+    Algorithm)` — a single signing path used by both
+    `ClientSecretJwt` and `PrivateKeyJwt`.
+  - `PrivateKeyJwt` errors at request time
+    (`TakoError::Invalid("oidc: private_key_jwt requires
+    client_assertion_key to be set")`) when no key configured.
+
+  Nine new tests including a wiremock test that captures the
+  posted body, parses out the `client_assertion` JWT, verifies
+  the RS256 signature against the matching public key, and
+  asserts the claim layout (`iss` / `sub` = `client_id`, `aud` =
+  `introspect_uri`, `exp` ~ 30s in the future). 2048-bit RSA and
+  P-256 EC test keypairs embedded as `static` PEM fixtures (test
+  use only).
+
+- **Phase 18.B — OIDC Session Management 1.0 end-session
+  endpoint helper
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  The OIDC Session Management 1.0 spec defines `end_session_endpoint`
+  as a discovery-doc field (§2.2.1) and a query-string-formatted
+  URL for relying-party-initiated logout (§5).
+  `DiscoveryDoc.end_session_endpoint:
+  Option<String>` is now captured at construction time, threaded
+  into a new private
+  `OidcAuthResolver.discovered_end_session_uri: Option<String>`.
+
+  Two new public methods:
+  - `OidcAuthResolver::end_session_endpoint() -> Option<&str>` —
+    returns the captured URI; `None` when the issuer doesn't
+    implement OIDC Session Management.
+  - `OidcAuthResolver::build_logout_uri(id_token_hint,
+    post_logout_redirect_uri, state) -> Option<String>` — builds
+    the redirect URL per the spec. All params optional. Returns
+    `None` when the issuer didn't advertise the endpoint. URL-
+    encodes via `url::form_urlencoded::Serializer`. Joins with
+    `?` or `&` depending on whether the configured endpoint
+    already carries a query string (RFC 3986 conformance).
+
+  Pure URL building; no I/O. Seven new tests covering discovery-
+  doc parsing, accessor plumbing, the bare-endpoint case, all-
+  params formatting (with URL-encoded `post_logout_redirect_uri`
+  containing `https%3A%2F%2F...`), the existing-query-string
+  separator semantics, and partial-param sets.
+
+- **Phase 18.C — Python facade mirror
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `tako.compat.OidcAuth` gains:
+  - `with_introspection_jwt_rs256_pem(pem: bytes)` /
+    `with_introspection_jwt_es256_pem(pem: bytes)` /
+    `with_introspection_jwt_ed25519_pem(pem: bytes)` — load an
+    asymmetric private-key PEM and switch the introspection auth
+    method to `private_key_jwt`. Raises `ValueError` on PEM
+    parse failure.
+  - `with_introspection_auth_method(method)` alias parser
+    extended to accept case-insensitive `"private_key_jwt"` /
+    `"private-key-jwt"` (in addition to the existing aliases for
+    Basic / Post / `client_secret_jwt`).
+  - `end_session_endpoint() -> Optional[str]` — returns the
+    captured URI.
+  - `build_logout_uri(id_token_hint=None,
+    post_logout_redirect_uri=None, state=None) -> Optional[str]` —
+    the URL-builder helper.
+
+  `tako.compat` module docstring updated to mention the new
+  entry points. New
+  [`tests/python/test_phase18_oidc.py`](tests/python/test_phase18_oidc.py)
+  covers facade attribute presence; the 16 new Rust unit tests
+  across 18.A + 18.B remain the source of truth for behaviour.
+
+### Changed
+
+- `IntrospectionAuthMethod` gains a fourth unit variant
+  `PrivateKeyJwt`. The enum keeps
+  `#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]` — all
+  variants are unit-shaped, no field-bearing variants. The
+  default remains `ClientSecretBasic`; existing wire shape on
+  Basic / Post / `client_secret_jwt` paths is byte-for-byte
+  preserved.
+- `IntrospectionConfig` gains a public `client_assertion_key:
+  Option<Arc<ClientAssertionKey>>` field; existing struct-literal
+  initialisers (test code) need to pass the new field
+  (`client_assertion_key: None`).
+- `OidcAuthResolver` gains a private `discovered_end_session_uri:
+  Option<String>` field; existing struct-literal initialisers
+  (test code) need to pass the new field
+  (`discovered_end_session_uri: None`). The runtime constructor
+  (`discover()`) auto-populates from the discovery doc.
+- The internal `build_client_assertion_hs256` helper is renamed
+  to `build_client_assertion` and accepts `&EncodingKey` +
+  `Algorithm` directly. Both JWT auth-method variants share the
+  same signing path. Module-private; no public-API impact.
+- Workspace + Python crate version bumped to v0.19.0.
+
+### Carried forward to Phase 19+
+
+- OIDC introspection mTLS (`tls_client_auth` /
+  `self_signed_tls_client_auth`) auth methods — needs reqwest
+  TLS feature changes at workspace scope.
+- OIDC refresh-token / revocation-endpoint (RFC 7009) flows —
+  tako as token consumer rather than validator (different model
+  from the existing `AuthResolver` surface).
+- Composite `AuthResolver`s (mTLS + bearer chaining).
+- Vision / image content support across Anthropic / Vertex /
+  Bedrock.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
 ## [0.18.0] - 2026-05-01
 
 Phase 17 — closes the two OIDC introspection auth-method items
