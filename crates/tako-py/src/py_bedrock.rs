@@ -34,6 +34,14 @@ impl PyBedrock {
     /// `http://` URLs (off by default; HTTPS-only).
     /// `url_prefetch_timeout_secs` and `url_prefetch_max_bytes`
     /// override the 10s / 10 MiB defaults.
+    ///
+    /// Phase 29.C — `url_prefetch_allow_private_ips` opts out of
+    /// the default-on private-IP blocklist (loopback / RFC 1918
+    /// / link-local / multicast / IPv6 unique-local + link-local
+    /// + IPv4-mapped variants). Operators with deployment-level
+    /// egress filtering can flip this on for internal artifact
+    /// servers behind private addresses. Does NOT auto-enable
+    /// `url_prefetch=True`.
     #[new]
     #[pyo3(signature = (
         model,
@@ -42,6 +50,7 @@ impl PyBedrock {
         profile_name=None,
         url_prefetch=false,
         url_prefetch_allow_http=false,
+        url_prefetch_allow_private_ips=false,
         url_prefetch_timeout_secs=None,
         url_prefetch_max_bytes=None,
     ))]
@@ -54,6 +63,7 @@ impl PyBedrock {
         profile_name: Option<String>,
         url_prefetch: bool,
         url_prefetch_allow_http: bool,
+        url_prefetch_allow_private_ips: bool,
         url_prefetch_timeout_secs: Option<u64>,
         url_prefetch_max_bytes: Option<usize>,
     ) -> PyResult<Self> {
@@ -74,6 +84,10 @@ impl PyBedrock {
         }
         if url_prefetch_allow_http {
             b = b.with_url_prefetch_allow_http();
+        }
+        // Phase 29.C — opt-out for private-IP blocklist.
+        if url_prefetch_allow_private_ips {
+            b = b.with_url_prefetch_allow_private_ips();
         }
         if let Some(secs) = url_prefetch_timeout_secs {
             b = b.with_url_prefetch_timeout(std::time::Duration::from_secs(secs));

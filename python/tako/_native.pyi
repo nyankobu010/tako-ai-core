@@ -60,6 +60,21 @@ class Bedrock:
         profile_name: str | None = ...,
         url_prefetch: bool = ...,
         url_prefetch_allow_http: bool = ...,
+        url_prefetch_allow_private_ips: bool = ...,
+        url_prefetch_timeout_secs: int | None = ...,
+        url_prefetch_max_bytes: int | None = ...,
+    ) -> None: ...
+    def id(self) -> str: ...
+
+class Ollama:
+    def __init__(
+        self,
+        model: str,
+        base_url: str | None = ...,
+        timeout_secs: int | None = ...,
+        url_prefetch: bool = ...,
+        url_prefetch_allow_http: bool = ...,
+        url_prefetch_allow_private_ips: bool = ...,
         url_prefetch_timeout_secs: int | None = ...,
         url_prefetch_max_bytes: int | None = ...,
     ) -> None: ...

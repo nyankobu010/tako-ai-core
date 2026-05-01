@@ -21,6 +21,7 @@ mod py_conductor;
 mod py_governance;
 mod py_http_generic;
 mod py_mcp;
+mod py_ollama;
 mod py_orch_event;
 mod py_orchestrator;
 mod py_provider;
@@ -43,6 +44,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_provider::PyFakeProvider>()?;
     m.add_class::<py_azure::PyAzureOpenAi>()?;
     m.add_class::<py_bedrock::PyBedrock>()?;
+    m.add_class::<py_ollama::PyOllama>()?;
     m.add_class::<py_vertex::PyVertex>()?;
     m.add_class::<py_http_generic::PyHttpGeneric>()?;
     m.add_class::<py_python_provider::PyPythonProvider>()?;

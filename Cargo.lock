@@ -4784,6 +4784,7 @@ dependencies = [
  "tako-providers-azure-openai",
  "tako-providers-bedrock",
  "tako-providers-http-generic",
+ "tako-providers-ollama",
  "tako-providers-openai",
  "tako-providers-vertex",
  "tako-runtime",
