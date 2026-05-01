@@ -1,6 +1,7 @@
 //! Bedrock HTTP client + `LlmProvider` impl.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
@@ -12,6 +13,7 @@ use tako_core::{
 
 use crate::convert;
 use crate::stream::into_chat_stream;
+use crate::url_prefetch::{UrlPrefetchConfig, UrlPrefetchOpts};
 
 #[derive(Debug, Default, Clone)]
 pub struct BedrockBuilder {
@@ -20,6 +22,7 @@ pub struct BedrockBuilder {
     endpoint_url: Option<String>,
     profile_name: Option<String>,
     capabilities: Option<Capabilities>,
+    url_prefetch: UrlPrefetchOpts,
 }
 
 impl BedrockBuilder {
@@ -49,6 +52,55 @@ impl BedrockBuilder {
 
     pub fn capabilities(mut self, capabilities: Capabilities) -> Self {
         self.capabilities = Some(capabilities);
+        self
+    }
+
+    /// Phase 28.A — opt in to tako-side pre-fetch for
+    /// `ContentPart::ImageUrl` content. Bedrock's `ImageSource`
+    /// has no URL variant, so URL-source images require tako to
+    /// fetch the bytes and pass them inline.
+    ///
+    /// Default behaviour is silent-drop (Phase 22.A semantics).
+    /// SSRF mitigations baked in: `https://`-only by default
+    /// (opt-in to `http://` via
+    /// [`Self::with_url_prefetch_allow_http`]); 10s timeout
+    /// (override via [`Self::with_url_prefetch_timeout`]); 10
+    /// MiB response-size cap (override via
+    /// [`Self::with_url_prefetch_max_bytes`]); MIME validated
+    /// against the four `image/{jpeg,png,gif,webp}` types
+    /// Bedrock accepts.
+    ///
+    /// Operators must enforce network egress at deployment level
+    /// (VPC egress rules, Pod-level egress NetworkPolicies) for
+    /// defence in depth — Phase 28 does not include CIDR-block
+    /// or DNS-rebinding mitigation.
+    pub fn with_url_prefetch(mut self) -> Self {
+        self.url_prefetch.enabled = true;
+        self
+    }
+
+    /// Phase 28.A — opt in to `http://` URLs alongside `https://`.
+    /// Useful for internal artifact servers. Implies
+    /// [`Self::with_url_prefetch`].
+    pub fn with_url_prefetch_allow_http(mut self) -> Self {
+        self.url_prefetch.enabled = true;
+        self.url_prefetch.allow_http = true;
+        self
+    }
+
+    /// Phase 28.A — override the default 10s connect+read timeout
+    /// for URL pre-fetch. Implies [`Self::with_url_prefetch`].
+    pub fn with_url_prefetch_timeout(mut self, timeout: Duration) -> Self {
+        self.url_prefetch.enabled = true;
+        self.url_prefetch.timeout = Some(timeout);
+        self
+    }
+
+    /// Phase 28.A — override the default 10 MiB response-size
+    /// cap. Implies [`Self::with_url_prefetch`].
+    pub fn with_url_prefetch_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.url_prefetch.enabled = true;
+        self.url_prefetch.max_bytes = Some(max_bytes);
         self
     }
 
@@ -83,12 +135,18 @@ impl BedrockBuilder {
             usd_per_output_mtok: None,
         });
 
+        // Phase 28.A — build the URL-prefetch reqwest client now
+        // (eager) so PEM-style failures or invalid timeout settings
+        // surface at builder time rather than at first request.
+        let url_prefetch = self.url_prefetch.into_config()?;
+
         Ok(BedrockProvider {
             inner: Arc::new(Inner {
                 id,
                 model,
                 client,
                 capabilities,
+                url_prefetch,
             }),
         })
     }
@@ -100,6 +158,11 @@ struct Inner {
     model: String,
     client: Client,
     capabilities: Capabilities,
+    /// Phase 28.A — opt-in URL pre-fetch config. `None` when the
+    /// builder wasn't called with [`BedrockBuilder::with_url_prefetch`];
+    /// in that case `ContentPart::ImageUrl` content is silently
+    /// dropped at convert time (Phase 22.A semantics).
+    url_prefetch: Option<UrlPrefetchConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -130,6 +193,12 @@ impl LlmProvider for BedrockProvider {
     ) -> Result<ChatResponse, TakoError> {
         if req.model.is_empty() {
             req.model.clone_from(&self.inner.model);
+        }
+        // Phase 28.A — when the operator opted in, pre-fetch any
+        // `ContentPart::ImageUrl` content and rewrite to inline
+        // `ContentPart::Image { mime, data_b64 }` before convert.
+        if let Some(prefetch) = &self.inner.url_prefetch {
+            prefetch.rewrite(&mut req).await?;
         }
         let inputs = convert::to_converse_inputs(&req)?;
 
@@ -163,6 +232,10 @@ impl LlmProvider for BedrockProvider {
     ) -> Result<BoxStream<'static, Result<ChatChunk, TakoError>>, TakoError> {
         if req.model.is_empty() {
             req.model.clone_from(&self.inner.model);
+        }
+        // Phase 28.A — same pre-fetch pre-pass as `chat()`.
+        if let Some(prefetch) = &self.inner.url_prefetch {
+            prefetch.rewrite(&mut req).await?;
         }
         let inputs = convert::to_converse_inputs(&req)?;
 

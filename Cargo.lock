@@ -4650,12 +4650,14 @@ dependencies = [
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
  "futures",
+ "reqwest 0.13.1",
  "serde",
  "serde_json",
  "tako-core",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]
