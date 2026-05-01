@@ -317,9 +317,12 @@ impl PyOidcAuth {
         PyOidcAuth { inner: Arc::new(r) }
     }
 
-    /// Phase 16.B.2 — set the RFC 7662 §2.1 introspection-endpoint
-    /// auth method. Accepts case-insensitive `"basic"` (default,
-    /// HTTP Basic header) or `"post"` (credentials in form body).
+    /// Phase 16.B.2 / 17.B — set the RFC 7662 §2.1 introspection-
+    /// endpoint auth method. Accepts case-insensitive aliases:
+    /// `"basic"` / `"client_secret_basic"` (default; HTTP Basic
+    /// header), `"post"` / `"client_secret_post"` (credentials in
+    /// form body), or `"jwt"` / `"client_secret_jwt"` (Phase 17.B;
+    /// HS256-signed JWT client assertion per RFC 7521 / 7523).
     /// Any other value raises `ValueError`. Silent no-op when no
     /// introspection config has been attached yet.
     fn with_introspection_auth_method(&self, auth_method: &str) -> PyResult<Self> {
@@ -328,14 +331,39 @@ impl PyOidcAuth {
                 tako_compat::IntrospectionAuthMethod::ClientSecretBasic
             }
             "post" | "client_secret_post" => tako_compat::IntrospectionAuthMethod::ClientSecretPost,
+            "jwt" | "client_secret_jwt" => tako_compat::IntrospectionAuthMethod::ClientSecretJwt,
             other => {
                 return Err(PyValueError::new_err(format!(
-                    "auth_method must be one of: 'basic' / 'client_secret_basic' / 'post' / 'client_secret_post' (got {other:?})",
+                    "auth_method must be one of: 'basic' / 'client_secret_basic' / \
+                     'post' / 'client_secret_post' / 'jwt' / 'client_secret_jwt' \
+                     (got {other:?})",
                 )));
             }
         };
         let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
         let r = cloned.with_introspection_auth_method(am);
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 17.A — auto-select the introspection-endpoint auth
+    /// method against the issuer's RFC 8414
+    /// `introspection_endpoint_auth_methods_supported` list captured
+    /// during discovery. Returns a NEW `OidcAuth`. Silent no-op
+    /// (returns a clone) when no introspection config has been
+    /// attached yet. Raises `ValueError` when discovery advertised
+    /// a list with no supported variant (so the operator notices at
+    /// builder time rather than at HTTP-401 from the introspection
+    /// endpoint).
+    ///
+    /// Preference order (Phase 17.B):
+    /// `client_secret_jwt` (only when a `client_secret` is
+    /// configured — HS256 needs the symmetric key) →
+    /// `client_secret_basic` → `client_secret_post`.
+    fn with_introspection_auth_method_from_discovery(&self) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_auth_method_from_discovery()
+            .map_err(map_err)?;
         Ok(PyOidcAuth { inner: Arc::new(r) })
     }
 }

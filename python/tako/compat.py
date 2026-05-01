@@ -51,6 +51,14 @@ def serve_openai(
        selects between ``"basic"`` (default; HTTP Basic header) and
        ``"post"`` (credentials in form body) per RFC 7662 §2.1.
 
+       Phase 17.C — ``OidcAuth.with_introspection_auth_method`` now
+       accepts ``"jwt"`` / ``"client_secret_jwt"`` for the RFC 7521 /
+       7523 HS256-signed client-assertion auth method.
+       ``OidcAuth.with_introspection_auth_method_from_discovery()``
+       auto-selects the strongest auth method advertised by the
+       issuer's RFC 8414 discovery doc (preference order: JWT > Basic
+       > Post).
+
     Passing both ``tokens`` and ``auth`` is an error.
     """
     if not hasattr(orch, "_inner"):
