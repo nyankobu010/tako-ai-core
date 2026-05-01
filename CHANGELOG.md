@@ -9,6 +9,176 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.30.0] - 2026-05-01
+
+Phase 29 — URL pre-fetch SSRF hardening + Ollama Python facade.
+Closes the Phase 28-deferred CIDR-block + DNS-rebinding
+mitigation gap, and the Phase 28.C asymmetry where
+`url_prefetch` was threaded through `tako.providers.Bedrock`
+but not Ollama (which had no Python binding in tako-py).
+
+The Phase 28 SSRF mitigations were `https`-only / timeout /
+size cap / MIME validation; operators were left to enforce
+network egress at deployment level. Phase 29 adds
+defence-in-depth at two layers: (a) a custom DNS resolver
+that rejects private/loopback/link-local/multicast/IPv6-
+unique-local IPs at resolve time AND validates EVERY returned
+`SocketAddr` (closing the DNS-rebinding window); (b) an inline
+IP-literal check for URLs whose host is already an IP (where
+reqwest skips the resolver). Default-on; opt out via the new
+`with_url_prefetch_allow_private_ips()` builder for deployments
+that already filter network egress.
+
+After Phase 29 the tako-side URL pre-fetch surface ships with a
+complete SSRF-mitigation stack, and both URL-prefetching
+providers (Bedrock + Ollama) have full Python parity.
+Plan: [PLAN_PHASE29.md](PLAN_PHASE29.md).
+
+### Added
+
+- **Phase 29.A — Bedrock URL pre-fetch private-IP blocklist +
+  DNS-rebind mitigation
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)).**
+  New public-to-crate `is_blocked_ip(&IpAddr) -> bool` helper
+  rejects: IPv4 loopback (`127/8`), RFC 1918 (`10/8`,
+  `172.16/12`, `192.168/16`), link-local (`169.254/16`),
+  unspecified (`0.0.0.0`), broadcast (`255.255.255.255`),
+  multicast (`224/4`), and reserved (`240/4`); IPv6 loopback
+  (`::1`), unspecified (`::`), multicast (`ff00::/8`),
+  unique-local (`fc00::/7`), unicast-link-local (`fe80::/10`),
+  and IPv4-mapped variants (`::ffff:x.x.x.x`) recursively
+  checked via `Ipv6Addr::to_ipv4_mapped` (stable on workspace
+  MSRV 1.85). Pure stdlib; no new deps.
+
+  New `BlocklistResolver` impl of `reqwest::dns::Resolve` wraps
+  `tokio::net::lookup_host` and validates EVERY returned
+  `SocketAddr` against `is_blocked_ip`. Validating all
+  addresses (not just first) is the DNS-rebinding mitigation —
+  a malicious resolver returning two A records (one public,
+  one private) can't slip the private IP through alongside a
+  public one, and there's no second resolution between
+  validation and connection.
+
+  New inline IP-literal check in `fetch_one` after URL parse:
+  reqwest skips the DNS resolver for IP-literal URLs (e.g.
+  `http://127.0.0.1/...`), so the blocklist must be enforced
+  here too. Parses `host_str` as `IpAddr` (stripping IPv6
+  brackets); on parse failure it's a domain name and the
+  resolver path takes over.
+
+  `UrlPrefetchOpts.block_private_ips: bool` field defaults to
+  `true` (Phase 29 default-deny stance for SSRF). Plumbed
+  through `UrlPrefetchConfig::new()` to conditionally install
+  the resolver. New
+  `BedrockBuilder::with_url_prefetch_allow_private_ips()`
+  builder method opts out for deployments where the network
+  layer already filters egress. Does NOT auto-enable the
+  master `with_url_prefetch()` switch.
+
+  Thirteen new unit tests covering all blocked + allowed IP
+  categories (including the `169.254.169.254` cloud-metadata
+  canary and `::ffff:127.0.0.1` IPv4-mapped variant); two
+  wiremock integration tests pinning end-to-end loopback
+  rejection and the operator opt-out.
+
+- **Phase 29.B — Ollama URL pre-fetch private-IP blocklist +
+  DNS-rebind mitigation
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)).**
+  Per-crate copy of all 29.A surfaces (per ARCHITECTURE.md
+  hard rule — provider crates depend only on `tako-core` +
+  their vendor SDK + reqwest; never on each other). Phase 28.B
+  established the duplication; Phase 29.B extends each copy.
+  Same `is_blocked_ip` / `BlocklistResolver` /
+  `UrlPrefetchOpts.block_private_ips` /
+  `OllamaBuilder::with_url_prefetch_allow_private_ips()`
+  surface. Same test surface as 29.A.
+
+- **Phase 29.C — `tako.providers.Ollama` Python facade +
+  `url_prefetch_allow_private_ips` kwarg on Bedrock
+  ([crates/tako-py/src/py_ollama.rs](crates/tako-py/src/py_ollama.rs)
+  +
+  [crates/tako-py/src/py_bedrock.rs](crates/tako-py/src/py_bedrock.rs)
+  +
+  [python/tako/providers.py](python/tako/providers.py)).**
+
+  New `PyOllama` pyclass mirrors the Phase 28.C `PyBedrock`
+  cadence. Constructor signature:
+  ```python
+  Ollama(
+      model: str,
+      *,
+      base_url: str | None = None,
+      timeout_secs: int | None = None,
+      url_prefetch: bool = False,
+      url_prefetch_allow_http: bool = False,
+      url_prefetch_allow_private_ips: bool = False,
+      url_prefetch_timeout_secs: int | None = None,
+      url_prefetch_max_bytes: int | None = None,
+  )
+  ```
+  `OllamaBuilder::build()` is sync (no async credential chain),
+  so the constructor calls `b.build()?` directly without
+  `py.detach + rt.block_on` (Bedrock's async path).
+
+  `PyBedrock::new` gains the new
+  `url_prefetch_allow_private_ips: bool = False` kwarg between
+  `url_prefetch_allow_http` and `url_prefetch_timeout_secs`,
+  plumbing through to
+  `BedrockBuilder::with_url_prefetch_allow_private_ips()`.
+
+  Wiring:
+  [`crates/tako-py/Cargo.toml`](crates/tako-py/Cargo.toml) adds
+  `tako-providers-ollama` workspace dep;
+  [`crates/tako-py/src/lib.rs`](crates/tako-py/src/lib.rs)
+  registers `mod py_ollama` and adds `PyOllama` to the
+  `_native` module; [`python/tako/providers.py`](python/tako/providers.py)
+  adds new `class Ollama(_ProviderBase)` and the new kwarg on
+  `class Bedrock`; [`python/tako/_native.pyi`](python/tako/_native.pyi)
+  adds new `Ollama` stub and the extended `Bedrock` stub.
+
+  Six new tests in
+  [`tests/python/test_phase29_ssrf_hardening.py`](tests/python/test_phase29_ssrf_hardening.py)
+  pin the kwarg presence + default + docstring on both
+  providers; seven new tests in
+  [`tests/python/test_phase29_ollama_facade.py`](tests/python/test_phase29_ollama_facade.py)
+  pin the new `Ollama` class exists, has the expected
+  signature, has sensible defaults, and inherits from
+  `_ProviderBase`. Both files validate the Python-facing
+  *signature* rather than constructing live providers
+  (Bedrock needs AWS credentials; Ollama needs a daemon).
+  Behaviour pinned in the Rust unit tests.
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.30.0.
+- Phase 28 wiremock tests in
+  `crates/tako-providers/{bedrock,ollama}/src/url_prefetch.rs`
+  now pass `block_private_ips: false` in their
+  `UrlPrefetchConfig::new()` calls — they pre-date the new
+  Phase 29 default and bind to `127.0.0.1`. Public
+  `BedrockBuilder` / `OllamaBuilder` API unchanged byte-for-
+  byte for callers who didn't opt in to URL pre-fetch.
+
+### Carried forward to Phase 30+
+
+- **Per-domain allowlist for URL pre-fetch** — operators may
+  want to permit specific internal hostnames (e.g., a private
+  artifact registry on `10.0.x.x`) while still blocking
+  everything else. Phase 29 ships only the binary on/off
+  allow-private-IPs flag; an allowlist would need a chainable
+  `with_url_prefetch_allow_host(host)` builder + matching
+  Python kwarg.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **OIDC mTLS cert / key rotation** for long-running
+  deployments rotating client certs (Phase 24/25 carry-
+  forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+- **Per-child `ChainedAuthResolver` policy override**
+  (Phase 27 carry-forward).
+
 ## [0.29.0] - 2026-05-01
 
 Phase 28 — closes the URL-source-image gap on Bedrock + Ollama.

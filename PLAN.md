@@ -47,29 +47,31 @@ synopsis and quickstart.
 | 26 — ChainedAuthResolver fail-fast on transport errors | v0.27.0 | done (2026-05-01) | [PLAN_PHASE26.md](PLAN_PHASE26.md) | [`## [0.27.0]`](CHANGELOG.md) |
 | 27 — ChainedAuthResolver broader infrastructure-error short-circuit | v0.28.0 | done (2026-05-01) | [PLAN_PHASE27.md](PLAN_PHASE27.md) | [`## [0.28.0]`](CHANGELOG.md) |
 | 28 — URL-source images: Bedrock + Ollama (opt-in tako-side pre-fetch) | v0.29.0 | done (2026-05-01) | [PLAN_PHASE28.md](PLAN_PHASE28.md) | [`## [0.29.0]`](CHANGELOG.md) |
+| 29 — URL pre-fetch SSRF hardening (private-IP blocklist + DNS-rebind) + Ollama Python facade | v0.30.0 | done (2026-05-01) | [PLAN_PHASE29.md](PLAN_PHASE29.md) | [`## [0.30.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 29 candidates (indicative, not yet committed)
+### Phase 30 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 28's holding pen — URL-source pre-fetch
-for Bedrock + Ollama landed in Phase 28, completing the
-vision-content arc: every shipped provider adapter (Anthropic /
-OpenAI / Vertex / Bedrock / Mistral / Ollama — six of six) now
-handles BOTH inline-base64 (Phase 19/20) AND URL-source images
-(Phase 22-23 vendor-fetch + Phase 28 tako-side pre-fetch). The
-remainder:
+Carry-forward from Phase 29's holding pen — URL pre-fetch SSRF
+hardening (private-IP blocklist + DNS-rebinding mitigation) and
+the `tako.providers.Ollama` Python facade landed in Phase 29.
+The tako-side URL pre-fetch surface now ships with a complete
+SSRF mitigation stack (https-only / timeout / size cap / MIME
+validation **+ private-IP blocklist + DNS-rebinding mitigation**),
+and both URL-prefetching providers (Bedrock + Ollama) have full
+Python parity. The remainder:
 
-- **CIDR blocklist** for tako-side URL pre-fetch (private /
-  link-local / loopback IPs). Needs DNS-resolve-once-then-connect
-  to mitigate DNS rebinding. ~150 lines of additional security
-  logic on top of Phase 28's `https`-only / size-cap guards.
-- **Ollama Python facade** — Phase 28.C threaded `url_prefetch`
-  through `tako.providers.Bedrock` only; Ollama doesn't have a
-  Python binding in tako-py yet.
+- **Per-domain allowlist for URL pre-fetch** — operators may
+  want to permit specific internal hostnames (e.g., a private
+  artifact registry on `10.0.x.x`) while still blocking
+  everything else. Phase 29 ships only the binary on/off
+  allow-private-IPs flag; an allowlist would need a chainable
+  `with_url_prefetch_allow_host(host)` builder + matching Python
+  kwarg.
 - **OIDC mTLS end-to-end integration test** — Phases 24 + 25
   ship builder-level tests; a real TLS server requiring client
   auth (axum-server + rustls + per-test CA) would close the
