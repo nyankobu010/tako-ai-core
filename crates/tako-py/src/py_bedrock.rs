@@ -26,14 +26,36 @@ impl PyBedrock {
     /// (env, profile, IRSA). `endpoint_url` overrides the default
     /// Bedrock endpoint — useful for VPC-private endpoints or local
     /// mocks.
+    ///
+    /// Phase 28.C — `url_prefetch` opts in to tako-side fetch of
+    /// `ContentPart::ImageUrl` content (Bedrock's `ImageSource`
+    /// has no URL variant; URL-source images require pre-fetch).
+    /// Default is silent-drop. `url_prefetch_allow_http` allows
+    /// `http://` URLs (off by default; HTTPS-only).
+    /// `url_prefetch_timeout_secs` and `url_prefetch_max_bytes`
+    /// override the 10s / 10 MiB defaults.
     #[new]
-    #[pyo3(signature = (model, region=None, endpoint_url=None, profile_name=None))]
+    #[pyo3(signature = (
+        model,
+        region=None,
+        endpoint_url=None,
+        profile_name=None,
+        url_prefetch=false,
+        url_prefetch_allow_http=false,
+        url_prefetch_timeout_secs=None,
+        url_prefetch_max_bytes=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         model: String,
         region: Option<String>,
         endpoint_url: Option<String>,
         profile_name: Option<String>,
+        url_prefetch: bool,
+        url_prefetch_allow_http: bool,
+        url_prefetch_timeout_secs: Option<u64>,
+        url_prefetch_max_bytes: Option<usize>,
     ) -> PyResult<Self> {
         let mut b = BedrockProvider::builder().model(model);
         if let Some(r) = region {
@@ -44,6 +66,20 @@ impl PyBedrock {
         }
         if let Some(p) = profile_name {
             b = b.profile_name(p);
+        }
+        // Phase 28.C — URL pre-fetch knobs. Any of the four
+        // url_prefetch_* flags enables pre-fetch.
+        if url_prefetch {
+            b = b.with_url_prefetch();
+        }
+        if url_prefetch_allow_http {
+            b = b.with_url_prefetch_allow_http();
+        }
+        if let Some(secs) = url_prefetch_timeout_secs {
+            b = b.with_url_prefetch_timeout(std::time::Duration::from_secs(secs));
+        }
+        if let Some(n) = url_prefetch_max_bytes {
+            b = b.with_url_prefetch_max_bytes(n);
         }
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         let provider = py.detach(|| rt.block_on(b.build())).map_err(map_err)?;

@@ -156,6 +156,19 @@ class Bedrock(_ProviderBase):
     Credentials come from the AWS default credential chain (env, profile,
     IRSA, IMDS) — pass ``profile_name`` to pin a specific named profile,
     or ``endpoint_url`` to talk to a VPC-private endpoint or local mock.
+
+    Phase 28.C — opt in to tako-side URL-source image pre-fetch via
+    ``url_prefetch=True``. Bedrock's ``ImageSource`` has no URL variant,
+    so URL-source images (``ContentPart::ImageUrl``) require tako to
+    fetch the bytes itself. SSRF mitigations baked in: ``https://``-only
+    by default (set ``url_prefetch_allow_http=True`` to allow ``http://``);
+    10s timeout (override via ``url_prefetch_timeout_secs``); 10 MiB
+    response cap (override via ``url_prefetch_max_bytes``); MIME
+    validated against ``image/{jpeg,png,gif,webp}``.
+
+    Operators must enforce network egress at the deployment level (VPC
+    egress rules, Pod-level egress NetworkPolicies) — Phase 28 does not
+    include CIDR-block or DNS-rebinding mitigation.
     """
 
     def __init__(
@@ -165,12 +178,20 @@ class Bedrock(_ProviderBase):
         region: str | None = None,
         endpoint_url: str | None = None,
         profile_name: str | None = None,
+        url_prefetch: bool = False,
+        url_prefetch_allow_http: bool = False,
+        url_prefetch_timeout_secs: int | None = None,
+        url_prefetch_max_bytes: int | None = None,
     ) -> None:
         self._handle = _native.Bedrock(
             model,
             region=region,
             endpoint_url=endpoint_url,
             profile_name=profile_name,
+            url_prefetch=url_prefetch,
+            url_prefetch_allow_http=url_prefetch_allow_http,
+            url_prefetch_timeout_secs=url_prefetch_timeout_secs,
+            url_prefetch_max_bytes=url_prefetch_max_bytes,
         )
 
 
