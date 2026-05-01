@@ -46,22 +46,30 @@ synopsis and quickstart.
 | 25 — OIDC `self_signed_tls_client_auth` | v0.26.0 | done (2026-05-01) | [PLAN_PHASE25.md](PLAN_PHASE25.md) | [`## [0.26.0]`](CHANGELOG.md) |
 | 26 — ChainedAuthResolver fail-fast on transport errors | v0.27.0 | done (2026-05-01) | [PLAN_PHASE26.md](PLAN_PHASE26.md) | [`## [0.27.0]`](CHANGELOG.md) |
 | 27 — ChainedAuthResolver broader infrastructure-error short-circuit | v0.28.0 | done (2026-05-01) | [PLAN_PHASE27.md](PLAN_PHASE27.md) | [`## [0.28.0]`](CHANGELOG.md) |
+| 28 — URL-source images: Bedrock + Ollama (opt-in tako-side pre-fetch) | v0.29.0 | done (2026-05-01) | [PLAN_PHASE28.md](PLAN_PHASE28.md) | [`## [0.29.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 28 candidates (indicative, not yet committed)
+### Phase 29 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 27's holding pen — broader
-infrastructure-error short-circuit landed in Phase 27, covering
-`Transport` / `RateLimited` / `CircuitOpen` / `BudgetExhausted`.
-The `ChainedAuthResolver` short-circuit-policy line is now
-complete enough that further extension warrants per-variant
-analysis on `Provider` (which can be auth or infra). The
-remainder of the carry-forward:
+Carry-forward from Phase 28's holding pen — URL-source pre-fetch
+for Bedrock + Ollama landed in Phase 28, completing the
+vision-content arc: every shipped provider adapter (Anthropic /
+OpenAI / Vertex / Bedrock / Mistral / Ollama — six of six) now
+handles BOTH inline-base64 (Phase 19/20) AND URL-source images
+(Phase 22-23 vendor-fetch + Phase 28 tako-side pre-fetch). The
+remainder:
 
+- **CIDR blocklist** for tako-side URL pre-fetch (private /
+  link-local / loopback IPs). Needs DNS-resolve-once-then-connect
+  to mitigate DNS rebinding. ~150 lines of additional security
+  logic on top of Phase 28's `https`-only / size-cap guards.
+- **Ollama Python facade** — Phase 28.C threaded `url_prefetch`
+  through `tako.providers.Bedrock` only; Ollama doesn't have a
+  Python binding in tako-py yet.
 - **OIDC mTLS end-to-end integration test** — Phases 24 + 25
   ship builder-level tests; a real TLS server requiring client
   auth (axum-server + rustls + per-test CA) would close the
@@ -69,10 +77,6 @@ remainder of the carry-forward:
 - **OIDC mTLS cert / key rotation** — Phases 24 + 25 build the
   mTLS Client once at builder time; long-running deployments
   rotating client certs would need a refresh mechanism.
-- **URL-source images for Bedrock / Ollama** — both need
-  tako-side pre-fetch with an SSRF guard. Different design
-  problem from the vendor-fetched-URL case Phases 22 + 23
-  covered.
 - **Vertex File API upload flow** — separate API surface; the
   Phase 23 `VxFileData` already accepts uploaded URIs.
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
@@ -81,12 +85,8 @@ remainder of the carry-forward:
   token *consumer* rather than validator.
 - **`TakoError::Provider` short-circuit** — vendor-error
   short-circuit warrants finer discrimination on the embedded
-  error (auth failure vs. rate limit vs. internal). Deferred
-  pending real-world need.
-- **Per-child `ChainedAuthResolver` policy override** —
-  operators may want different short-circuit policies per child
-  (e.g. "OIDC short-circuits but Vault doesn't"). Not yet asked
-  for.
+  error.
+- **Per-child `ChainedAuthResolver` policy override.**
 
 ### Beyond (speculative)
 

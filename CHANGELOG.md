@@ -9,6 +9,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.29.0] - 2026-05-01
+
+Phase 28 — closes the URL-source-image gap on Bedrock + Ollama.
+Phase 22 + Phase 23 shipped URL-source images on the four
+providers whose API servers fetch URLs themselves (Anthropic +
+OpenAI + Mistral + Vertex). Bedrock's `ImageSource` has no URL
+variant, and Ollama's `images: Vec<String>` field requires bare
+base64 — for those two, tako must fetch the URL itself. Phase
+28 ships that with security-conscious defaults: opt-in
+default-off, `https`-only by default, configurable timeout / size
+cap (with `Content-Length` pre-flight + post-fetch byte-count
+defence-in-depth), MIME validation against the four supported
+types (`image/{jpeg,png,gif,webp}`). CIDR-block egress filtering
+and DNS-rebinding mitigation are explicitly NOT in scope —
+operators must enforce network egress at the deployment level
+(VPC egress rules, Pod-level egress NetworkPolicies, etc).
+After Phase 28 every shipped provider adapter (Anthropic +
+OpenAI + Mistral + Vertex + Bedrock + Ollama — six of six)
+handles outbound `ContentPart::ImageUrl`. Plan: [PLAN_PHASE28.md](PLAN_PHASE28.md).
+
+### Added
+
+- **Phase 28.A — Bedrock URL pre-fetch
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)).**
+  New `UrlPrefetchConfig` struct with
+  `allow_http: bool` / `max_bytes: usize` / `http: reqwest::Client`
+  fields. `UrlPrefetchConfig::rewrite(&mut ChatRequest)` walks
+  every message's content array; for each
+  `ContentPart::ImageUrl { url, mime }`, fetches the URL,
+  validates the response MIME against the four supported types,
+  base64-encodes the body via `aws_smithy_types::base64::encode`
+  (already in the dep tree), and replaces the content part with
+  `ContentPart::Image { mime, data_b64 }` in place. Other content
+  parts pass through unchanged. URL parsing uses
+  `reqwest::Url::parse` for the scheme check
+  (`http`/`https` only; `https`-only by default).
+  `BedrockBuilder` gains four new methods:
+  `with_url_prefetch(self, enabled: bool)`,
+  `with_url_prefetch_allow_http(self, allow: bool)`,
+  `with_url_prefetch_timeout(self, secs: u64)`,
+  `with_url_prefetch_max_bytes(self, bytes: usize)`. The
+  `Inner` struct gains `url_prefetch: Option<UrlPrefetchConfig>`;
+  `chat()` and `stream()` call `prefetch.rewrite(&mut req).await?`
+  before the existing convert step. New `reqwest = workspace`
+  + `wiremock` dev-dep added to `bedrock/Cargo.toml`. Eight new
+  unit tests + four wiremock integration tests covering the
+  rewrite path, scheme rejection, MIME validation, size cap
+  (both pre-flight `Content-Length` rejection and post-fetch
+  byte-count rejection), and timeout enforcement.
+
+- **Phase 28.B — Ollama URL pre-fetch
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)).**
+  Mirror of Bedrock's structure with per-crate copies of the
+  helpers (per ARCHITECTURE.md hard rule — provider crates
+  depend only on `tako-core` + their vendor SDK + `reqwest`;
+  never on each other). Uses
+  `base64::engine::general_purpose::STANDARD.encode` instead of
+  the AWS SDK's helper (Bedrock has `aws_smithy_types` already
+  in the dep tree; Ollama doesn't). New
+  `base64 = workspace` dep added to `ollama/Cargo.toml`.
+  `OllamaBuilder::with_url_prefetch_*` methods + `Inner.url_prefetch`
+  + `chat()` / `stream()` rewrite call wired identically to
+  Bedrock. Three new unit tests.
+
+- **Phase 28.C — Python facade
+  ([crates/tako-py/src/py_bedrock.rs](crates/tako-py/src/py_bedrock.rs)
+  + [python/tako/providers.py](python/tako/providers.py)).**
+  `tako.providers.Bedrock(...)` gains four new keyword arguments
+  mirroring the Rust builder: `url_prefetch: bool = False`,
+  `url_prefetch_allow_http: bool = False`,
+  `url_prefetch_timeout_secs: int | None = None`,
+  `url_prefetch_max_bytes: int | None = None`. Defaults
+  preserve byte-for-byte the Phase 27 zero-config behaviour.
+  Type stub
+  ([python/tako/_native.pyi](python/tako/_native.pyi)) updated.
+  Class docstring updated with SSRF-mitigation summary +
+  operator-level network-egress reminder. Ollama has no Python
+  binding (no entry in tako-py) — Python surface is Bedrock-only
+  for Phase 28. New
+  [tests/python/test_phase28_url_prefetch.py](tests/python/test_phase28_url_prefetch.py)
+  validates kwarg presence, default values, and docstring
+  documentation; behaviour is asserted on the Rust side (15
+  tests across 28.A + 28.B).
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.29.0.
+
+### Carried forward to Phase 29+
+
+- CIDR-block egress filtering — opt-in CIDR allowlist /
+  blocklist on the URL-prefetch resolver. Operators currently
+  enforce at the network layer (VPC egress, NetworkPolicies);
+  in-tako filtering would be defence-in-depth.
+- DNS-rebinding mitigation — resolve the host once and pin the
+  IP across the connection. Pairs with the CIDR work.
+- Vertex File API URI scheme on `fileData` — Phase 23 noted
+  Vertex's File API (`projects/.../files/...` URIs) is out of
+  scope; needs an upload helper to round-trip a local image
+  through the File API endpoint. Not yet asked for.
+- `tako.providers.Ollama` Python binding — Phase 28.C ships
+  Bedrock-only because Ollama has no entry in tako-py today.
+  Adding it would mirror `PyBedrock` byte-for-byte.
+
 ## [0.28.0] - 2026-05-01
 
 Phase 27 — closes the Phase-26 carry-forward by extending

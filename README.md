@@ -85,25 +85,25 @@ result = orch.run_sync("Quick question: ...")
 
 ## Feature matrix
 
-| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 | Phase 11 | Phase 12 | Phase 13 | Phase 14 | Phase 15 | Phase 16 | Phase 17 | Phase 18 | Phase 19 | Phase 20 | Phase 21 | Phase 22 | Phase 23 | Phase 24 | Phase 25 | Phase 26 | Phase 27 |
-|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|
-| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | | ➕ Python custom provider streaming | ➕ `http-generic` streaming (`StreamConfig`) | ➕ `tako.providers.HttpGeneric` Python facade | | | | | | | ➕ outbound vision content (`ContentPart::Image`) on Anthropic + OpenAI | ➕ outbound vision content on Vertex (Gemini `inlineData`) + Mistral (OpenAI-compatible `image_url`) + Ollama (sibling `images` field) — completes the six-of-six provider sweep | | ➕ URL-source images (`ContentPart::ImageUrl`) on Anthropic + OpenAI + Mistral; vendor's API server fetches the URL | ➕ URL-source images on Vertex (Gemini `fileData` — accepts `gs://` GCS + `https://` URLs Google fetches) | | | | |
-| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events | | | | ➕ JWT / OIDC / Vault `AuthResolver` impls (cargo features) | ➕ Vault AppRole / Kubernetes token rotation; OIDC RFC 7662 introspection | ➕ Vault Enterprise namespace; OIDC introspection `client_secret_post` auth method | ➕ OIDC introspection RFC 8414 discovery-driven auth-method selection; `client_secret_jwt` (RFC 7521 / 7523) | ➕ OIDC introspection `private_key_jwt` (RFC 7521 / 7523, RS256 / ES256 / EdDSA); end-session endpoint helper (OIDC Session Management 1.0) | | | ➕ `ChainedAuthResolver` composite resolver (try children in order; first `Ok` short-circuits) | | | ➕ OIDC introspection `tls_client_auth` (RFC 8705 mTLS) — completes the five-of-five RFC 7662 §2.1 / RFC 8414 auth-method surface | ➕ OIDC introspection `self_signed_tls_client_auth` (RFC 8705 §2.2) — completes the six-of-six RFC 7662 §2.1 / RFC 8414 / RFC 8705 auth-method surface | ➕ `ChainedAuthResolver::with_short_circuit_on_transport_error` (opt-in fail-fast so OIDC-issuer-down doesn't mask as "unknown bearer token") | ➕ `ChainedAuthResolver::with_short_circuit_on_infrastructure_errors` — broader fail-fast covering `RateLimited` / `CircuitOpen` / `BudgetExhausted` |
-| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | | | ➕ Streamable HTTP SSE notifications + `Mcp-Session-Id` lifecycle | | | | | | | | | | | | | | | |
-| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | | | | | | | | | | | | | | | | | | |
-| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | | ➕ bounded `mpsc::channel(64)` worker fanout backpressure | | | | | | | | | | | |
-| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | ➕ streaming `Verifier::evaluate_streaming` | | | | | | | | | | | | | | |
-| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | | | | | | | | | | | | | | | | | | |
-| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | | | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | ➕ bounded `mpsc::channel(64)` rollout-event backpressure | | | | | | | | | | | |
-| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | | | | | | | | | | | | | | | | | | |
-| Streaming verifier (`Verifier::evaluate_streaming`) | | | | | | | | | | | | | ✅ default-impl + Trinity per-delta + `RuleBasedVerifier` override | ➕ Conductor per-delta (worker fanout via mpsc) | ➕ AbMcts per-delta (rollout buffer + mpsc + `tokio::select!`) | ➕ bounded mpsc backpressure on AbMcts + Conductor channels | | | | | | | | | | | |
-| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | |
-| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | |
-| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | |
-| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | | | | | | | | | | | | | | | | | | |
-| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | |
-| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` | ➕ review-driven hardening (race-free anchor; `0o600` state file; `BasicConstraints` + critical-ext checks) | | ➕ `StateStore` trait + `RedisStateStore` (multi-replica) | | | | | | | | | | | | | | |
-| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | |
+| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 | Phase 11 | Phase 12 | Phase 13 | Phase 14 | Phase 15 | Phase 16 | Phase 17 | Phase 18 | Phase 19 | Phase 20 | Phase 21 | Phase 22 | Phase 23 | Phase 24 | Phase 25 | Phase 26 | Phase 27 | Phase 28 |
+|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|
+| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | | ➕ Python custom provider streaming | ➕ `http-generic` streaming (`StreamConfig`) | ➕ `tako.providers.HttpGeneric` Python facade | | | | | | | ➕ outbound vision content (`ContentPart::Image`) on Anthropic + OpenAI | ➕ outbound vision content on Vertex (Gemini `inlineData`) + Mistral (OpenAI-compatible `image_url`) + Ollama (sibling `images` field) — completes the six-of-six provider sweep | | ➕ URL-source images (`ContentPart::ImageUrl`) on Anthropic + OpenAI + Mistral; vendor's API server fetches the URL | ➕ URL-source images on Vertex (Gemini `fileData` — accepts `gs://` GCS + `https://` URLs Google fetches) | | | | | ➕ URL-source images on Bedrock + Ollama via opt-in tako-side pre-fetch (`url_prefetch=true`; `https`-only, configurable timeout / size cap, MIME validation) |
+| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events | | | | ➕ JWT / OIDC / Vault `AuthResolver` impls (cargo features) | ➕ Vault AppRole / Kubernetes token rotation; OIDC RFC 7662 introspection | ➕ Vault Enterprise namespace; OIDC introspection `client_secret_post` auth method | ➕ OIDC introspection RFC 8414 discovery-driven auth-method selection; `client_secret_jwt` (RFC 7521 / 7523) | ➕ OIDC introspection `private_key_jwt` (RFC 7521 / 7523, RS256 / ES256 / EdDSA); end-session endpoint helper (OIDC Session Management 1.0) | | | ➕ `ChainedAuthResolver` composite resolver (try children in order; first `Ok` short-circuits) | | | ➕ OIDC introspection `tls_client_auth` (RFC 8705 mTLS) — completes the five-of-five RFC 7662 §2.1 / RFC 8414 auth-method surface | ➕ OIDC introspection `self_signed_tls_client_auth` (RFC 8705 §2.2) — completes the six-of-six RFC 7662 §2.1 / RFC 8414 / RFC 8705 auth-method surface | ➕ `ChainedAuthResolver::with_short_circuit_on_transport_error` (opt-in fail-fast so OIDC-issuer-down doesn't mask as "unknown bearer token") | ➕ `ChainedAuthResolver::with_short_circuit_on_infrastructure_errors` — broader fail-fast covering `RateLimited` / `CircuitOpen` / `BudgetExhausted` | |
+| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | | | ➕ Streamable HTTP SSE notifications + `Mcp-Session-Id` lifecycle | | | | | | | | | | | | | | | | |
+| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | | | | | | | | | | | | | | | | | | | |
+| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | | ➕ bounded `mpsc::channel(64)` worker fanout backpressure | | | | | | | | | | | | |
+| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | ➕ streaming `Verifier::evaluate_streaming` | | | | | | | | | | | | | | | |
+| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | | | | | | | | | | | | | | | | | | | |
+| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | | | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | ➕ bounded `mpsc::channel(64)` rollout-event backpressure | | | | | | | | | | | | |
+| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | | | | | | | | | | | | | | | | | | | |
+| Streaming verifier (`Verifier::evaluate_streaming`) | | | | | | | | | | | | | ✅ default-impl + Trinity per-delta + `RuleBasedVerifier` override | ➕ Conductor per-delta (worker fanout via mpsc) | ➕ AbMcts per-delta (rollout buffer + mpsc + `tokio::select!`) | ➕ bounded mpsc backpressure on AbMcts + Conductor channels | | | | | | | | | | | | |
+| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | |
+| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | |
+| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | |
+| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | | | | | | | | | | | | | | | | | | | |
+| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | |
+| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` | ➕ review-driven hardening (race-free anchor; `0o600` state file; `BasicConstraints` + critical-ext checks) | | ➕ `StateStore` trait + `RedisStateStore` (multi-replica) | | | | | | | | | | | | | | | |
+| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | | | | | | | | | | | | | | | | | | | |
 
 ## Roadmap
 
@@ -658,6 +658,54 @@ result = orch.run_sync("Quick question: ...")
   new Python tests; strictly additive — public APIs unchanged
   shape. The Phase-21 + Phase-26 chained tests pass byte-for-
   byte unchanged through the policy enum refactor.
+- **Phase 28 — URL-source images: Bedrock + Ollama via opt-in
+  tako-side pre-fetch** *(done, v0.29.0)*: closes the
+  URL-source-image gap on the two providers Phase 22 + Phase 23
+  explicitly deferred. Anthropic + OpenAI + Mistral (Phase 22) +
+  Vertex (Phase 23) had vendor-side fetch — `ContentPart::ImageUrl`
+  forwards to a vendor-specific URL field and the vendor's
+  servers fetch. Bedrock's `ImageSource` has no URL variant,
+  and Ollama's `images: Vec<String>` field requires bare base64;
+  both vendors' wire formats simply don't accept a URL. The only
+  way to ship URL-source images for those two is for tako to
+  pre-fetch the bytes itself — which Phase 22 + 23 deferred
+  pending an SSRF mitigation design. Phase 28 ships that design
+  with security-conscious defaults: opt-in default-off
+  (`url_prefetch=false`), `https`-only (operator opt-in via
+  `url_prefetch_allow_http=true`), 10-second default timeout
+  (override via `url_prefetch_timeout_secs`), 10 MiB default size
+  cap (override via `url_prefetch_max_bytes`; checked both via
+  `Content-Length` pre-flight and post-fetch byte-count
+  defence-in-depth), MIME validation against the four supported
+  types (`image/{jpeg,png,gif,webp}` — same surface as Phases 19
+  / 20 / 22). CIDR-block egress filtering and DNS-rebinding
+  mitigation are explicitly NOT in scope — operators must enforce
+  network egress at the deployment level (VPC egress rules,
+  Pod-level egress NetworkPolicies, etc). (A)
+  [`tako_providers_bedrock`](crates/tako-providers/bedrock):
+  new `url_prefetch.rs` helper (`UrlPrefetchConfig::rewrite`
+  pre-pass on each `ChatRequest` rewrites
+  `ContentPart::ImageUrl { url, mime }` → `ContentPart::Image
+  { mime, data_b64 }` in place; uses
+  `aws_smithy_types::base64::encode` already in the dep tree).
+  `BedrockBuilder::with_url_prefetch_*` methods + `Inner.url_prefetch:
+  Option<UrlPrefetchConfig>` field; `chat()` and `stream()` call
+  `prefetch.rewrite(&mut req).await?` before convert. Eight new
+  unit tests + four wiremock integration tests. (B)
+  [`tako_providers_ollama`](crates/tako-providers/ollama): mirror
+  structure with per-crate copy of helpers (per ARCHITECTURE.md
+  hard rule — no cross-provider deps); `base64` workspace dep
+  added. Three new unit tests. (C)
+  [`tako-py`](crates/tako-py)
+  Python facade: `tako.providers.Bedrock(url_prefetch=...,
+  url_prefetch_allow_http=..., url_prefetch_timeout_secs=...,
+  url_prefetch_max_bytes=...)` mirrors the Rust builder; signature
+  smoke test pins the four kwargs + their defaults. Ollama has no
+  Python binding so the Python surface is Bedrock-only. After
+  Phase 28 every shipped provider adapter (Anthropic + OpenAI +
+  Mistral + Vertex + Bedrock + Ollama — six of six) handles
+  URL-source `ContentPart::ImageUrl`. Three items strictly
+  additive — public APIs unchanged shape.
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 
