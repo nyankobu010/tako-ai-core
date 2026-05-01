@@ -30,7 +30,7 @@ pub use auth::{
     AppRoleTokenProvider, DEFAULT_KUBERNETES_JWT_PATH, KubernetesTokenProvider, StaticVaultToken,
     VaultTokenProvider,
 };
-pub use auth::{AuthResolver, StaticTokens};
+pub use auth::{AuthResolver, ChainedAuthResolver, StaticTokens};
 #[cfg(feature = "oidc")]
 pub use auth::{IntrospectionAuthMethod, IntrospectionConfig, OidcAuthResolver};
 pub use server::{ServeConfig, serve_openai};
