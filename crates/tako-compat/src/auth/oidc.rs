@@ -284,14 +284,77 @@ pub struct IntrospectionConfig {
     /// [`OidcAuthResolver`] is `#[derive(Clone)]` for the Python
     /// immutable-builder pattern. `None` for symmetric methods.
     pub client_assertion_key: Option<Arc<ClientAssertionKey>>,
-    /// Phase 24 — mTLS-enabled HTTP client for
+    /// Phase 24 / 33 — mTLS-enabled HTTP client for
     /// [`IntrospectionAuthMethod::TlsClientAuth`]. Built eagerly at
     /// builder time (`with_introspection_mtls`) so PEM parsing
     /// failures surface as `TakoError::Invalid` early rather than
-    /// at first-request time. `Arc<reqwest::Client>` because
-    /// `Client` is already internally `Arc`'d; cloning is cheap.
-    /// `None` for non-mTLS auth methods.
-    pub mtls_client: Option<Arc<reqwest::Client>>,
+    /// at first-request time. `None` for non-mTLS auth methods.
+    ///
+    /// Phase 33 widens the inner type from
+    /// `Arc<reqwest::Client>` to `Arc<MtlsClient>` (a swap-able
+    /// holder). The Phase 24 builders construct a fresh
+    /// [`MtlsClient`] internally; the
+    /// [`OidcAuthResolver::reload_mtls_identity`] method swaps
+    /// the inner Client at runtime when operators rotate the
+    /// underlying cert+key.
+    pub mtls_client: Option<Arc<MtlsClient>>,
+}
+
+/// Phase 33 — swap-able holder for the mTLS-enabled
+/// `reqwest::Client` used by the OIDC introspection endpoint.
+/// Built by [`OidcAuthResolver::with_introspection_mtls`] /
+/// [`OidcAuthResolver::with_introspection_self_signed_mtls`];
+/// swapped at runtime by
+/// [`OidcAuthResolver::reload_mtls_identity`] when operators
+/// rotate the underlying cert+key (cert-manager webhook,
+/// Vault PKI rotation, filesystem watcher, etc).
+///
+/// The swap is atomic from the request-handler's perspective:
+/// concurrent introspection POSTs each take a snapshot of the
+/// current Client (Arc clone, wait-free except for the lock
+/// acquisition) and that snapshot lives for the duration of
+/// the request. A swap that lands while a request is in flight
+/// affects only the NEXT request.
+#[derive(Debug)]
+pub struct MtlsClient {
+    inner: std::sync::RwLock<Arc<reqwest::Client>>,
+}
+
+impl MtlsClient {
+    /// Construct from a freshly-built reqwest Client.
+    /// pub(crate) — operators should never construct this
+    /// directly; use the `OidcAuthResolver::with_introspection_*`
+    /// builders.
+    pub(crate) fn new(client: reqwest::Client) -> Self {
+        Self {
+            inner: std::sync::RwLock::new(Arc::new(client)),
+        }
+    }
+
+    /// Snapshot the current Client for one request. Cheap: an
+    /// `Arc::clone` plus a brief `RwLock::read` acquisition.
+    pub(crate) fn current(&self) -> Arc<reqwest::Client> {
+        match self.inner.read() {
+            Ok(guard) => guard.clone(),
+            // Poisoned: another thread panicked while holding
+            // the write lock. The data behind the lock is still
+            // valid; just the lock state is dirty. Recover by
+            // reading through the poison.
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// Atomically replace the inner Client. Concurrent readers
+    /// either see the old Client or the new one — never a torn
+    /// state.
+    pub(crate) fn swap(&self, client: reqwest::Client) {
+        let new_arc = Arc::new(client);
+        let mut guard = match self.inner.write() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *guard = new_arc;
+    }
 }
 
 /// Subset of RFC 7662 introspection response. `active` is the only
@@ -635,7 +698,7 @@ impl OidcAuthResolver {
             .build()
             .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))?;
         if let Some(cfg) = self.introspection.as_mut() {
-            cfg.mtls_client = Some(Arc::new(client));
+            cfg.mtls_client = Some(Arc::new(MtlsClient::new(client)));
             cfg.auth_method = IntrospectionAuthMethod::TlsClientAuth;
         }
         Ok(self)
@@ -685,7 +748,7 @@ impl OidcAuthResolver {
             .build()
             .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))?;
         if let Some(cfg) = self.introspection.as_mut() {
-            cfg.mtls_client = Some(Arc::new(client));
+            cfg.mtls_client = Some(Arc::new(MtlsClient::new(client)));
             cfg.auth_method = IntrospectionAuthMethod::SelfSignedTlsClientAuth;
         }
         Ok(self)
@@ -699,6 +762,58 @@ impl OidcAuthResolver {
         combined_pem: &[u8],
     ) -> Result<Self, TakoError> {
         self.with_introspection_self_signed_mtls(combined_pem, combined_pem)
+    }
+
+    /// Phase 33 — atomically replace the mTLS identity used for
+    /// OIDC introspection POSTs. Useful for cert rotation in
+    /// long-running deployments (cert-manager webhook, Vault PKI
+    /// rotation, filesystem watcher, periodic poll).
+    ///
+    /// Errors when no introspection mTLS config has been attached
+    /// (no prior [`Self::with_introspection_mtls`] /
+    /// [`Self::with_introspection_self_signed_mtls`] call) — operators
+    /// notice early rather than silent no-op.
+    ///
+    /// PEM parse / `reqwest::Client` build failures surface as
+    /// [`TakoError::Invalid`] AND leave the previously installed
+    /// Client unchanged. The swap is atomic: concurrent
+    /// introspection POSTs either see the old Client or the new
+    /// one, never a torn state.
+    ///
+    /// `cert_pem` should be a PEM-encoded X.509 certificate (or
+    /// chain — [`reqwest::Identity::from_pem`] accepts concatenated
+    /// certs). `key_pem` should be a PKCS#8 or SEC1-encoded private
+    /// key matching the cert.
+    ///
+    /// Takes `&self` (not `&mut self`) so operators can call this
+    /// through an `Arc<OidcAuthResolver>` shared across request
+    /// handlers — no exclusive access needed.
+    pub fn reload_mtls_identity(&self, cert_pem: &[u8], key_pem: &[u8]) -> Result<(), TakoError> {
+        let holder = self
+            .introspection
+            .as_ref()
+            .and_then(|cfg| cfg.mtls_client.as_ref())
+            .ok_or_else(|| {
+                TakoError::Invalid(
+                    "oidc: reload_mtls_identity called but no mTLS identity configured \
+                     (call with_introspection_mtls or with_introspection_self_signed_mtls first)"
+                        .into(),
+                )
+            })?;
+        let identity = build_mtls_identity(cert_pem, key_pem)?;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .identity(identity)
+            .build()
+            .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))?;
+        holder.swap(client);
+        Ok(())
+    }
+
+    /// Phase 33 — convenience for combined PEM blobs (matches the
+    /// Phase 24 [`Self::with_introspection_mtls_combined`] cadence).
+    pub fn reload_mtls_identity_combined(&self, combined_pem: &[u8]) -> Result<(), TakoError> {
+        self.reload_mtls_identity(combined_pem, combined_pem)
     }
 
     /// Phase 18.B — return the OIDC Session Management 1.0
@@ -875,19 +990,21 @@ impl OidcAuthResolver {
             }
             form.finish()
         };
-        // Phase 24 / 25 — for either mTLS variant, swap to the
-        // mTLS-enabled `reqwest::Client` cached on the config;
-        // other auth methods use the resolver's default HTTP
-        // client.
-        let http: &reqwest::Client = match cfg.auth_method {
+        // Phase 24 / 25 / 33 — for either mTLS variant, snapshot
+        // the current mTLS-enabled `reqwest::Client` from the
+        // swap-able [`MtlsClient`] holder. Snapshot lives for
+        // the duration of the request; concurrent reloads via
+        // `OidcAuthResolver::reload_mtls_identity` affect only
+        // the next request, never an in-flight one. Other auth
+        // methods use the resolver's default HTTP client.
+        let mtls_snapshot: Option<Arc<reqwest::Client>> = match cfg.auth_method {
             IntrospectionAuthMethod::TlsClientAuth
-            | IntrospectionAuthMethod::SelfSignedTlsClientAuth => cfg
-                .mtls_client
-                .as_deref()
-                // Guarded above; safe.
-                .unwrap_or(&self.http),
-            _ => &self.http,
+            | IntrospectionAuthMethod::SelfSignedTlsClientAuth => {
+                cfg.mtls_client.as_ref().map(|m| m.current())
+            }
+            _ => None,
         };
+        let http: &reqwest::Client = mtls_snapshot.as_deref().unwrap_or(&self.http);
         let req = http
             .post(&cfg.introspect_uri)
             .header(
@@ -2389,5 +2506,163 @@ h7ACptP3tF94pcBzOgJ3bhM=\n\
             msg.contains("self_signed_tls_client_auth requires mtls_client"),
             "got: {msg}"
         );
+    }
+
+    // ----- Phase 33 — mTLS cert/key rotation. -----
+
+    fn build_test_mtls_client() -> reqwest::Client {
+        let identity = build_mtls_identity(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .expect("test fixture mTLS PEM should parse");
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .identity(identity)
+            .build()
+            .expect("test mTLS client should build")
+    }
+
+    #[test]
+    fn mtls_client_current_returns_arc_clone() {
+        // Two `current()` calls before any swap return Arcs that
+        // point at the same Client instance.
+        let holder = MtlsClient::new(build_test_mtls_client());
+        let a = holder.current();
+        let b = holder.current();
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "current() before swap should return Arc-equal snapshots",
+        );
+    }
+
+    #[test]
+    fn mtls_client_swap_replaces_inner() {
+        let holder = MtlsClient::new(build_test_mtls_client());
+        let pre = holder.current();
+        holder.swap(build_test_mtls_client());
+        let post = holder.current();
+        assert!(
+            !Arc::ptr_eq(&pre, &post),
+            "current() after swap should return a NEW Arc, not the old one",
+        );
+    }
+
+    #[test]
+    fn reload_mtls_identity_swaps_under_arc_resolver() {
+        // Wrap the resolver in `Arc` (the way operators use it
+        // through the AuthResolver trait); reload should still
+        // work via &self.
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap();
+        let r = Arc::new(r);
+
+        // Snapshot the current mTLS client Arc.
+        let holder_pre = r
+            .introspection
+            .as_ref()
+            .unwrap()
+            .mtls_client
+            .as_ref()
+            .unwrap()
+            .clone();
+        let pre = holder_pre.current();
+
+        // Reload through the &Arc<OidcAuthResolver>.
+        r.reload_mtls_identity(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .expect("reload with valid PEM should succeed");
+
+        // Same holder Arc (we didn't swap the holder itself);
+        // but the inner Client Arc has changed.
+        let post = holder_pre.current();
+        assert!(
+            !Arc::ptr_eq(&pre, &post),
+            "reload should swap the inner Client Arc on the existing holder",
+        );
+    }
+
+    #[test]
+    fn reload_mtls_identity_errs_when_no_mtls_configured() {
+        // Resolver with introspection but NO prior `with_introspection_mtls`
+        // call — reload should error with operator guidance, not
+        // silent no-op.
+        let r = test_resolver_with_introspection_for_mtls();
+        let err = r
+            .reload_mtls_identity(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("no mTLS identity configured"), "got: {msg}");
+        assert!(
+            msg.contains("with_introspection_mtls"),
+            "operator guidance should mention the right builder; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn reload_mtls_identity_errs_on_invalid_pem_and_preserves_old() {
+        // Set up with valid PEM, then attempt reload with garbage
+        // — the old Client must remain installed (no
+        // partial-rollback of the cached identity).
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap();
+        let holder = r
+            .introspection
+            .as_ref()
+            .unwrap()
+            .mtls_client
+            .as_ref()
+            .unwrap()
+            .clone();
+        let pre = holder.current();
+
+        let err = r
+            .reload_mtls_identity(b"not a pem", b"also not a pem")
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("invalid mTLS identity PEM"), "got: {msg}");
+
+        // Old Client unchanged.
+        let post = holder.current();
+        assert!(
+            Arc::ptr_eq(&pre, &post),
+            "reload failure must preserve the previously installed Client",
+        );
+    }
+
+    #[test]
+    fn reload_mtls_identity_combined_works_for_combined_pem() {
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap();
+        let mut combined = Vec::with_capacity(TEST_MTLS_CERT_PEM.len() + TEST_MTLS_KEY_PEM.len());
+        combined.extend_from_slice(TEST_MTLS_CERT_PEM);
+        combined.extend_from_slice(TEST_MTLS_KEY_PEM);
+
+        r.reload_mtls_identity_combined(&combined)
+            .expect("combined-PEM reload should succeed");
+    }
+
+    #[test]
+    fn reload_mtls_identity_works_for_self_signed_too() {
+        // Set up via the self-signed builder (Phase 25); reload
+        // should work identically — both Phase 24 and Phase 25
+        // store the Client in the same `mtls_client` field.
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_self_signed_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap();
+        let holder = r
+            .introspection
+            .as_ref()
+            .unwrap()
+            .mtls_client
+            .as_ref()
+            .unwrap()
+            .clone();
+        let pre = holder.current();
+
+        r.reload_mtls_identity(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .expect("reload should work with self-signed config too");
+
+        let post = holder.current();
+        assert!(!Arc::ptr_eq(&pre, &post));
     }
 }
