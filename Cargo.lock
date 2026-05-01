@@ -4650,6 +4650,7 @@ dependencies = [
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
  "futures",
+ "ipnet",
  "reqwest 0.13.1",
  "serde",
  "serde_json",

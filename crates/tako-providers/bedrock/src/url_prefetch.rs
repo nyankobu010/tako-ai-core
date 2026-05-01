@@ -153,11 +153,19 @@ impl UrlPrefetchConfig {
             if let Some(host_str) = parsed.host_str() {
                 let trimmed = host_str.trim_start_matches('[').trim_end_matches(']');
                 if let Ok(ip) = trimmed.parse::<IpAddr>() {
-                    if !self.allow_hosts.contains(host_str) && is_blocked_ip(&ip) {
+                    // Phase 32 — bypass the blocklist when EITHER
+                    // the host string is allowlisted (Phase 30/31)
+                    // OR the IP falls inside an allowlisted CIDR
+                    // (Phase 32). Otherwise the standard blocklist
+                    // applies.
+                    let bypass =
+                        self.allow_hosts.contains(host_str) || self.allow_hosts.contains_ip(&ip);
+                    if !bypass && is_blocked_ip(&ip) {
                         return Err(TakoError::Invalid(format!(
                             "bedrock: prefetch URL `{url}` resolves to blocked IP `{ip}` \
                              (use `with_url_prefetch_allow_private_ips` to opt out, \
-                             or `with_url_prefetch_allow_host` to permit this host)",
+                             `with_url_prefetch_allow_host` to permit this host, \
+                             or `with_url_prefetch_allow_cidr` to permit this subnet)",
                         )));
                     }
                 }
@@ -304,21 +312,28 @@ impl Resolve for BlocklistResolver {
                 .await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
                 .collect();
-            // Phase 30 — bypass the blocklist for allowlisted hosts.
-            if !allow_hosts.contains(&host) {
-                for addr in &addrs {
-                    if is_blocked_ip(&addr.ip()) {
-                        return Err(Box::new(std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            format!(
-                                "prefetch URL `{host}` resolves to blocked IP `{}` \
-                                 (use with_url_prefetch_allow_private_ips to opt out, \
-                                 or with_url_prefetch_allow_host to permit this host)",
-                                addr.ip()
-                            ),
-                        ))
-                            as Box<dyn std::error::Error + Send + Sync>);
-                    }
+            // Phase 30/31/32 — bypass the blocklist when EITHER
+            // the host is allowlisted (exact / wildcard) OR the
+            // resolved IP is in an allowlisted CIDR (Phase 32).
+            // Per-IP check: a host that's not allowlisted but
+            // resolves only to allowlisted-CIDR IPs is allowed.
+            let host_allowed = allow_hosts.contains(&host);
+            for addr in &addrs {
+                if !host_allowed
+                    && !allow_hosts.contains_ip(&addr.ip())
+                    && is_blocked_ip(&addr.ip())
+                {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!(
+                            "prefetch URL `{host}` resolves to blocked IP `{}` \
+                             (use with_url_prefetch_allow_private_ips to opt out, \
+                             with_url_prefetch_allow_host to permit this host, \
+                             or with_url_prefetch_allow_cidr to permit this subnet)",
+                            addr.ip()
+                        ),
+                    ))
+                        as Box<dyn std::error::Error + Send + Sync>);
                 }
             }
             let iter: Addrs = Box::new(addrs.into_iter());
@@ -327,31 +342,46 @@ impl Resolve for BlocklistResolver {
     }
 }
 
-/// Phase 31.A — split exact-match hostnames from wildcard
-/// suffix patterns at config time so the runtime check is a
-/// single `HashSet::contains` + a short linear scan over
-/// dotted suffixes (no per-call `format!`).
+/// Phase 31.A / 32.A — operator-controlled allowlist for the URL
+/// pre-fetcher. Three semantic forms, all bypass the private-IP
+/// blocklist (but NOT the scheme / timeout / size / MIME checks):
 ///
-/// Wildcard semantic: an entry `*.X` matches any host `Y` such
-/// that `Y.ends_with(".X")` literally — multi-level subdomains
-/// included (`*.internal.corp` matches `staging.images.internal.corp`).
-/// Bare-domain matches (`X` matching `X` itself) require the
-/// operator to add `X` as a separate exact-string entry.
+/// - **Exact** (Phase 30) — entries with no `*.` prefix go in
+///   `exact`. Match the URL's host string byte-for-byte.
+/// - **Wildcard suffix** (Phase 31) — entries starting with
+///   `*.X` get the leading `*` stripped and stored in
+///   `suffixes` as `.X` (ready for `ends_with`). Match any host
+///   ending in `.X`, including multi-level subdomains. Does NOT
+///   match the bare apex `X`.
+/// - **CIDR subnet** (Phase 32) — IPv4 / IPv6 CIDR networks
+///   parsed via `ipnet::IpNet` at config time. Match any
+///   resolved IP that falls inside the network. Useful for
+///   subnets without a shared DNS suffix or for raw IP-literal
+///   URLs.
 ///
-/// Phase 30 entries (no `*.` prefix) go in `exact`. Phase 31
-/// entries (`*.X`) get the leading `*` stripped and stored in
-/// `suffixes` as `.X` (ready for `ends_with`).
+/// Runtime checks are split: [`AllowList::contains`] takes a
+/// hostname (string) and only checks `exact` + `suffixes`;
+/// [`AllowList::contains_ip`] takes an `IpAddr` and only checks
+/// `cidrs`. The blocklist enforcer at the call site combines
+/// both via `OR`.
 #[derive(Debug, Default)]
 pub(crate) struct AllowList {
     exact: HashSet<String>,
     suffixes: Vec<String>,
+    /// Phase 32 — IPv4 + IPv6 CIDR networks. Parse-time
+    /// failures surface as `TakoError::Invalid` from
+    /// [`AllowList::from_strings_and_cidrs`].
+    cidrs: Vec<ipnet::IpNet>,
 }
 
 impl AllowList {
-    pub(crate) fn from_strings(entries: Vec<String>) -> Self {
+    pub(crate) fn from_strings_and_cidrs(
+        host_entries: Vec<String>,
+        cidr_entries: Vec<String>,
+    ) -> Result<Self, TakoError> {
         let mut exact = HashSet::new();
         let mut suffixes = Vec::new();
-        for entry in entries {
+        for entry in host_entries {
             if let Some(suffix) = entry.strip_prefix("*.") {
                 // Store as `.X` so `host.ends_with(s)` does the
                 // right thing without per-call format!().
@@ -360,21 +390,41 @@ impl AllowList {
                 exact.insert(entry);
             }
         }
-        Self { exact, suffixes }
+        let mut cidrs = Vec::with_capacity(cidr_entries.len());
+        for entry in cidr_entries {
+            let cidr = entry.parse::<ipnet::IpNet>().map_err(|e| {
+                TakoError::Invalid(format!(
+                    "bedrock: prefetch CIDR `{entry}` parse failed: {e}"
+                ))
+            })?;
+            cidrs.push(cidr);
+        }
+        Ok(Self {
+            exact,
+            suffixes,
+            cidrs,
+        })
     }
 
     pub(crate) fn contains(&self, host: &str) -> bool {
         self.exact.contains(host) || self.suffixes.iter().any(|s| host.ends_with(s.as_str()))
     }
 
+    /// Phase 32 — true if `ip` falls inside any allowlisted
+    /// CIDR. Used by `BlocklistResolver` (per resolved
+    /// `SocketAddr`) and the `fetch_one` IP-literal check.
+    pub(crate) fn contains_ip(&self, ip: &IpAddr) -> bool {
+        self.cidrs.iter().any(|net| net.contains(ip))
+    }
+
     #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
-        self.exact.is_empty() && self.suffixes.is_empty()
+        self.exact.is_empty() && self.suffixes.is_empty() && self.cidrs.is_empty()
     }
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.exact.len() + self.suffixes.len()
+        self.exact.len() + self.suffixes.len() + self.cidrs.len()
     }
 }
 
@@ -395,6 +445,11 @@ pub(crate) struct UrlPrefetchOpts {
     /// blocklist. Default empty. Populated via
     /// [`BedrockBuilder::with_url_prefetch_allow_host`].
     pub(crate) allow_hosts: Vec<String>,
+    /// Phase 32 — CIDR strings (IPv4 or IPv6) that bypass the
+    /// private-IP blocklist when a resolved IP falls inside the
+    /// network. Default empty. Populated via
+    /// [`BedrockBuilder::with_url_prefetch_allow_cidr`].
+    pub(crate) allow_cidrs: Vec<String>,
 }
 
 impl Default for UrlPrefetchOpts {
@@ -408,6 +463,8 @@ impl Default for UrlPrefetchOpts {
             block_private_ips: true,
             // Phase 30 — empty allowlist by default.
             allow_hosts: Vec::new(),
+            // Phase 32 — empty CIDR allowlist by default.
+            allow_cidrs: Vec::new(),
         }
     }
 }
@@ -417,7 +474,10 @@ impl UrlPrefetchOpts {
         if !self.enabled {
             return Ok(None);
         }
-        let allow_hosts = Arc::new(AllowList::from_strings(self.allow_hosts));
+        let allow_hosts = Arc::new(AllowList::from_strings_and_cidrs(
+            self.allow_hosts,
+            self.allow_cidrs,
+        )?);
         let cfg = UrlPrefetchConfig::new(
             self.allow_http,
             self.timeout.unwrap_or(DEFAULT_TIMEOUT),
@@ -793,6 +853,117 @@ mod tests {
         );
     }
 
+    // ----- Phase 32 — CIDR allowlist. -----
+
+    #[test]
+    fn allow_list_cidr_v4_match() {
+        let allow = AllowList::from_strings_and_cidrs(vec![], vec!["10.0.5.0/24".into()]).unwrap();
+        assert!(allow.contains_ip(&"10.0.5.42".parse::<IpAddr>().unwrap()));
+        assert!(allow.contains_ip(&"10.0.5.0".parse::<IpAddr>().unwrap()));
+        assert!(allow.contains_ip(&"10.0.5.255".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn allow_list_cidr_v4_no_match() {
+        let allow = AllowList::from_strings_and_cidrs(vec![], vec!["10.0.5.0/24".into()]).unwrap();
+        assert!(!allow.contains_ip(&"10.0.6.42".parse::<IpAddr>().unwrap()));
+        assert!(!allow.contains_ip(&"192.168.1.1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn allow_list_cidr_v6_match() {
+        let allow =
+            AllowList::from_strings_and_cidrs(vec![], vec!["2001:db8::/32".into()]).unwrap();
+        assert!(allow.contains_ip(&"2001:db8::1".parse::<IpAddr>().unwrap()));
+        assert!(allow.contains_ip(&"2001:db8:abcd::1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn allow_list_cidr_v6_no_match() {
+        let allow =
+            AllowList::from_strings_and_cidrs(vec![], vec!["2001:db8::/32".into()]).unwrap();
+        assert!(!allow.contains_ip(&"2001:db9::1".parse::<IpAddr>().unwrap()));
+        assert!(!allow.contains_ip(&"::1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn allow_list_cidr_single_host_32() {
+        // /32 IPv4 = exactly one host.
+        let allow =
+            AllowList::from_strings_and_cidrs(vec![], vec!["192.168.1.5/32".into()]).unwrap();
+        assert!(allow.contains_ip(&"192.168.1.5".parse::<IpAddr>().unwrap()));
+        assert!(!allow.contains_ip(&"192.168.1.6".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn allow_list_cidr_invalid_parse_returns_err() {
+        let err = AllowList::from_strings_and_cidrs(vec![], vec!["not-a-cidr".into()]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("not-a-cidr"), "got: {msg}");
+        assert!(msg.contains("CIDR"), "got: {msg}");
+    }
+
+    #[test]
+    fn allow_list_cidr_and_host_coexist() {
+        let allow = AllowList::from_strings_and_cidrs(
+            vec!["registry.public.com".into(), "*.internal.corp".into()],
+            vec!["10.0.5.0/24".into()],
+        )
+        .unwrap();
+        // Hosts (Phase 30 / 31).
+        assert!(allow.contains("registry.public.com"));
+        assert!(allow.contains("staging.internal.corp"));
+        assert!(!allow.contains("evil.com"));
+        // CIDR (Phase 32).
+        assert!(allow.contains_ip(&"10.0.5.42".parse::<IpAddr>().unwrap()));
+        assert!(!allow.contains_ip(&"10.0.6.42".parse::<IpAddr>().unwrap()));
+    }
+
+    /// Phase 32 end-to-end: URL `http://127.0.0.1/cat.png` is
+    /// blocked by the default Phase 29 blocklist UNLESS the
+    /// operator allowlists `127.0.0.0/8` (loopback CIDR).
+    #[tokio::test]
+    async fn rewrite_allowlists_ip_literal_via_cidr() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/cat.png"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "image/png")
+                    .set_body_bytes(TINY_PNG),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let allow_hosts = Arc::new(
+            AllowList::from_strings_and_cidrs(vec![], vec!["127.0.0.0/8".into()]).unwrap(),
+        );
+
+        let cfg = UrlPrefetchConfig::new(
+            true, // allow_http for wiremock
+            DEFAULT_TIMEOUT,
+            DEFAULT_MAX_BYTES,
+            true, // block_private_ips ON
+            allow_hosts,
+        )
+        .unwrap();
+
+        let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
+        cfg.rewrite(&mut req).await.unwrap();
+
+        match &req.messages[0].content[0] {
+            ContentPart::Image { mime, data_b64 } => {
+                assert_eq!(mime, "image/png");
+                assert_eq!(
+                    aws_smithy_types::base64::decode(data_b64).unwrap(),
+                    TINY_PNG
+                );
+            }
+            other => panic!("expected ContentPart::Image, got {other:?}"),
+        }
+    }
+
     // ----- Phase 31 — `AllowList` wildcard semantics. -----
 
     #[test]
@@ -804,7 +975,11 @@ mod tests {
 
     #[test]
     fn allow_list_exact_match() {
-        let allow = AllowList::from_strings(vec!["registry.public.com".into(), "10.0.5.4".into()]);
+        let allow = AllowList::from_strings_and_cidrs(
+            vec!["registry.public.com".into(), "10.0.5.4".into()],
+            vec![],
+        )
+        .unwrap();
         // Phase 30 regression: exact match still works.
         assert!(allow.contains("registry.public.com"));
         assert!(allow.contains("10.0.5.4"));
@@ -814,7 +989,8 @@ mod tests {
 
     #[test]
     fn allow_list_wildcard_matches_subdomain() {
-        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        let allow =
+            AllowList::from_strings_and_cidrs(vec!["*.internal.corp".into()], vec![]).unwrap();
         assert!(allow.contains("registry.internal.corp"));
         assert!(allow.contains("images.internal.corp"));
     }
@@ -825,7 +1001,8 @@ mod tests {
         // (RFC 6125 strict semantics permit only one level;
         // operator-controlled allowlists prefer the broader
         // "any subdomain" intent).
-        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        let allow =
+            AllowList::from_strings_and_cidrs(vec!["*.internal.corp".into()], vec![]).unwrap();
         assert!(allow.contains("staging.images.internal.corp"));
         assert!(allow.contains("a.b.c.d.internal.corp"));
     }
@@ -835,13 +1012,15 @@ mod tests {
         // `*.internal.corp` requires a leading `.` — `internal.corp`
         // itself is NOT matched. Operators add a separate exact
         // entry if they want the apex too.
-        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        let allow =
+            AllowList::from_strings_and_cidrs(vec!["*.internal.corp".into()], vec![]).unwrap();
         assert!(!allow.contains("internal.corp"));
     }
 
     #[test]
     fn allow_list_wildcard_does_not_match_other_domain() {
-        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        let allow =
+            AllowList::from_strings_and_cidrs(vec!["*.internal.corp".into()], vec![]).unwrap();
         assert!(!allow.contains("evil.com"));
         assert!(!allow.contains("registry.public.com"));
     }
@@ -851,14 +1030,18 @@ mod tests {
         // Confusable: `attacker-internal.corp` ends in
         // `internal.corp` but not `.internal.corp` — the leading
         // dot must be present.
-        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        let allow =
+            AllowList::from_strings_and_cidrs(vec!["*.internal.corp".into()], vec![]).unwrap();
         assert!(!allow.contains("attacker-internal.corp"));
     }
 
     #[test]
     fn allow_list_exact_and_wildcard_coexist() {
-        let allow =
-            AllowList::from_strings(vec!["registry.public.com".into(), "*.internal.corp".into()]);
+        let allow = AllowList::from_strings_and_cidrs(
+            vec!["registry.public.com".into(), "*.internal.corp".into()],
+            vec![],
+        )
+        .unwrap();
         // Both match.
         assert!(allow.contains("registry.public.com"));
         assert!(allow.contains("registry.internal.corp"));
@@ -921,7 +1104,8 @@ mod tests {
             .await;
 
         // Block-private-IPs ON, but `127.0.0.1` is in the allowlist.
-        let allow_hosts = Arc::new(AllowList::from_strings(vec!["127.0.0.1".into()]));
+        let allow_hosts =
+            Arc::new(AllowList::from_strings_and_cidrs(vec!["127.0.0.1".into()], vec![]).unwrap());
 
         let cfg = UrlPrefetchConfig::new(
             true, // allow_http for wiremock
@@ -967,7 +1151,9 @@ mod tests {
             .await;
 
         // Block-private-IPs ON, allowlist contains a DIFFERENT host.
-        let allow_hosts = Arc::new(AllowList::from_strings(vec!["some-other-host".into()]));
+        let allow_hosts = Arc::new(
+            AllowList::from_strings_and_cidrs(vec!["some-other-host".into()], vec![]).unwrap(),
+        );
 
         let cfg =
             UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, true, allow_hosts)

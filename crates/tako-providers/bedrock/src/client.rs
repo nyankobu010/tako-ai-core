@@ -140,6 +140,27 @@ impl BedrockBuilder {
         self
     }
 
+    /// Phase 32 — add a CIDR network to the URL pre-fetch
+    /// allowlist. Both IPv4 (`"10.0.5.0/24"`) and IPv6
+    /// (`"2001:db8::/32"`) CIDRs are accepted; single hosts as
+    /// `/32` (IPv4) or `/128` (IPv6) work too.
+    ///
+    /// Bypass triggers when a resolved IP (or IP literal in the
+    /// URL) falls inside any allowlisted CIDR — useful for
+    /// permitting a whole private subnet without enumerating
+    /// every host. The scheme / timeout / size / MIME checks
+    /// still apply.
+    ///
+    /// CIDR parse failures surface from [`Self::build`] as
+    /// `TakoError::Invalid` so operators notice early.
+    /// Chainable; can be called multiple times. Does NOT
+    /// auto-enable [`Self::with_url_prefetch`] — the master
+    /// switch must already be on.
+    pub fn with_url_prefetch_allow_cidr(mut self, cidr: impl Into<String>) -> Self {
+        self.url_prefetch.allow_cidrs.push(cidr.into());
+        self
+    }
+
     /// Phase 29.A — opt out of the default-on private-IP blocklist
     /// for tako-side URL pre-fetch.
     ///

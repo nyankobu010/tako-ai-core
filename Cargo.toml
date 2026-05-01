@@ -107,6 +107,11 @@ aws-sdk-secretsmanager  = { version = "1.83", default-features = false, features
 # encoding (Phase 2.5 cloud resolvers + Bedrock binary blobs)
 base64                  = "0.22"
 
+# Phase 32 — IPv4 / IPv6 CIDR networks for the URL pre-fetch
+# allowlist on Bedrock + Ollama. Small (~7 KB), zero
+# transitive deps.
+ipnet                   = "2"
+
 # ML inference (Phase 3 Trinity router; OnnxRouter behind `onnx` feature)
 ort                     = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "ndarray"] }
 ndarray                 = "0.16"
