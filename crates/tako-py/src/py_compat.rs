@@ -659,4 +659,29 @@ impl PyChainedAuth {
     fn __len__(&self) -> usize {
         self.inner.len()
     }
+
+    /// Phase 26.B — opt in to fail-fast on transport errors.
+    /// Returns a NEW `ChainedAuth` (immutable builder; matches
+    /// the `then(...)` cadence). Idempotent.
+    ///
+    /// When enabled, a [`tako_compat::TakoError::Transport`] from
+    /// any child halts the chain immediately instead of falling
+    /// through to the next child. Useful for the common
+    /// "OIDC bearer OR static API key" pattern: when the OIDC
+    /// issuer is unreachable, surface the actionable
+    /// `"transport error: ..."` instead of a misleading
+    /// `"unknown bearer token"` from a fallback resolver.
+    fn with_short_circuit_on_transport_error(&self) -> Self {
+        let cloned: tako_compat::ChainedAuthResolver = (*self.inner).clone();
+        let next = cloned.with_short_circuit_on_transport_error();
+        Self {
+            inner: Arc::new(next),
+        }
+    }
+
+    /// Phase 26.B — accessor for the short-circuit flag, useful
+    /// for assertions in test code.
+    fn short_circuits_on_transport_error(&self) -> bool {
+        self.inner.short_circuits_on_transport_error()
+    }
 }

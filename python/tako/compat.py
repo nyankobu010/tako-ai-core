@@ -96,10 +96,19 @@ def serve_openai(
        cargo feature gate) is a composite resolver that wraps N
        child resolvers and tries them in append order. The first
        child to return a Principal short-circuits; any error falls
-       through to the next. Common pattern: ``auth=ChainedAuth().with(oidc).with(jwt)``
+       through to the next. Common pattern: ``auth=ChainedAuth().then(oidc).then(jwt)``
        to accept either an OIDC bearer or a static-key-signed JWT.
        Children may themselves be ``ChainedAuth`` instances
        (recursive composition).
+
+       Phase 26.B — ``ChainedAuth.with_short_circuit_on_transport_error()``
+       opts in to fail-fast semantics for transport errors. When
+       enabled, a transport error from any child (e.g. OIDC
+       issuer unreachable) halts the chain immediately instead of
+       falling through to the next child. Other error variants
+       (auth-decision errors like `"bad token"`) continue to fall
+       through. Default behaviour preserves Phase 21
+       fall-through-on-any-Err semantics.
 
     Passing both ``tokens`` and ``auth`` is an error.
     """
