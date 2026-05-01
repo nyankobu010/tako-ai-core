@@ -495,3 +495,51 @@ async fn conductor_tool_call_starts_precede_any_verifier_score() {
         "expected 2 ToolCallStart before any VerifierScore: {order:?}"
     );
 }
+
+/// Phase 16.A.2 — bounded mpsc backpressure regression test.
+///
+/// Drives `Conductor::stream` through far more deltas (256) per worker
+/// than the channel capacity (64) under a `CountingStreamingVerifier`
+/// so each delta also produces a `VerifierScore` partial. With the
+/// Phase 14.A unbounded channel this exercised pure memory growth;
+/// with the Phase 16.A.2 bounded channel the spawned worker tasks
+/// must repeatedly block on `send().await` until the recv-loop drains.
+/// The test passes iff every delta is delivered and the
+/// streaming-verifier hook fires exactly N times — i.e. backpressure
+/// neither drops events nor deadlocks the worker tasks.
+#[tokio::test]
+async fn conductor_stream_bounded_backpressure_high_delta_count() {
+    const N_DELTAS: usize = 256; // 4× the 64-slot bound
+    let coordinator = Arc::new(FakeProvider::new(
+        "fake:coord",
+        vec![coord_dispatch(&[("code", "go")]), coord_halt("done")],
+    ));
+    let deltas: Vec<&str> = std::iter::repeat_n("x", N_DELTAS).collect();
+    let code = Arc::new(StreamingFake::new("fake:code", deltas));
+
+    let v = Arc::new(CountingStreamingVerifier::default());
+    let cond = Conductor::builder()
+        .coordinator(coordinator)
+        .worker("code", code)
+        .max_steps(5)
+        .verifier(v.clone())
+        .build()
+        .unwrap();
+
+    let mut stream = cond
+        .stream(&Principal::anonymous(), OrchInput::from_user("go"))
+        .await;
+    let mut partial_scores = 0_usize;
+    while let Some(ev) = stream.next().await {
+        if let OrchEvent::VerifierScore { score, .. } = ev.unwrap() {
+            if (score - 0.5).abs() < 1e-6 {
+                partial_scores += 1;
+            }
+        }
+    }
+
+    // Every produced delta crossed the bounded worker channel without
+    // loss, and every delta was passed through the verifier.
+    assert_eq!(partial_scores, N_DELTAS, "verifier partials dropped");
+    assert_eq!(v.streaming_calls.load(Ordering::SeqCst), N_DELTAS);
+}

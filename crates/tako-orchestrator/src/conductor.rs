@@ -33,6 +33,17 @@ use crate::{Orchestrator, OrchestratorKind};
 const DEFAULT_MAX_STEPS: u32 = 6;
 const DEFAULT_MAX_FANOUT: usize = 4;
 const DEFAULT_WORKER_TIMEOUT: Duration = Duration::from_secs(120);
+/// Phase 16.A.2 — bounded mpsc capacity for the per-step worker
+/// fanout channel. Producer side is `dispatch_workers_streaming`'s
+/// spawned worker tasks (one per dispatched worker, each posting one
+/// `Delta` per non-empty `ChatChunk::Delta` and one terminal `Done`);
+/// consumer is `Conductor::stream`'s recv-loop which calls
+/// `Verifier::evaluate_streaming` inline. A slow verifier (or slow
+/// downstream consumer of `Conductor::stream`) holds the loop, so a
+/// bounded channel pushes backpressure to the worker tasks rather
+/// than letting `WorkerStreamEvent`s pile up unbounded. Matches the
+/// `tako-mcp/src/transport/grpc.rs` precedent.
+const WORKER_STREAM_BUFFER: usize = 64;
 
 /// One worker dispatch the coordinator wants to issue.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -540,7 +551,7 @@ impl Orchestrator for Conductor {
                 // final score fires below on the same `(step, branch)` —
                 // identical to Phase 13.B's Trinity wiring.
                 let dispatch_count = plan.dispatch.len();
-                let (tx, mut rx) = mpsc::unbounded_channel::<WorkerStreamEvent>();
+                let (tx, mut rx) = mpsc::channel::<WorkerStreamEvent>(WORKER_STREAM_BUFFER);
                 let dispatch_handle = tokio::spawn(dispatch_workers_streaming(
                     workers.clone(),
                     principal.clone(),
@@ -827,6 +838,11 @@ enum WorkerStreamEvent {
 /// The dispatcher takes ownership of `tx`; when all spawned tasks
 /// complete it goes out of scope and the receiver's `recv().await`
 /// returns `None`.
+///
+/// Phase 16.A.2 — `tx` is now a bounded `mpsc::Sender` (capacity
+/// [`WORKER_STREAM_BUFFER`]). `send().await` calls block the
+/// worker task once the consumer is behind, capping in-flight
+/// memory.
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_workers_streaming(
     workers: HashMap<String, Arc<dyn LlmProvider>>,
@@ -836,7 +852,7 @@ async fn dispatch_workers_streaming(
     step: u32,
     timeout_dur: Duration,
     budget: Option<Arc<BudgetTracker>>,
-    tx: mpsc::UnboundedSender<WorkerStreamEvent>,
+    tx: mpsc::Sender<WorkerStreamEvent>,
 ) {
     let mut handles = Vec::with_capacity(plan.len());
     for (idx, d) in plan.into_iter().enumerate() {
@@ -866,14 +882,16 @@ async fn dispatch_workers_streaming(
                     &tx,
                 )
                 .await;
-                let _ = tx.send(WorkerStreamEvent::Done {
-                    branch,
-                    result: WorkerResult {
-                        name: d.worker,
-                        task: d.task,
-                        outcome,
-                    },
-                });
+                let _ = tx
+                    .send(WorkerStreamEvent::Done {
+                        branch,
+                        result: WorkerResult {
+                            name: d.worker,
+                            task: d.task,
+                            outcome,
+                        },
+                    })
+                    .await;
             }
             .instrument(span),
         ));
@@ -897,7 +915,7 @@ async fn run_one_worker_streaming(
     budget: Option<Arc<BudgetTracker>>,
     task_text: &str,
     worker_name: &str,
-    tx: &mpsc::UnboundedSender<WorkerStreamEvent>,
+    tx: &mpsc::Sender<WorkerStreamEvent>,
 ) -> Result<String, String> {
     let Some(provider) = provider else {
         return Err(format!("unknown worker `{worker_name}`"));
@@ -933,10 +951,12 @@ async fn run_one_worker_streaming(
                                 if let Some(t) = t {
                                     if !t.is_empty() {
                                         text.push_str(&t);
-                                        let _ = tx.send(WorkerStreamEvent::Delta {
-                                            branch,
-                                            cumulative: text.clone(),
-                                        });
+                                        let _ = tx
+                                            .send(WorkerStreamEvent::Delta {
+                                                branch,
+                                                cumulative: text.clone(),
+                                            })
+                                            .await;
                                     }
                                 }
                             }
