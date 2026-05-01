@@ -348,6 +348,56 @@ async fn ab_mcts_stream_default_evaluate_streaming_no_partials() {
     }
 }
 
+/// Phase 16.A.1 — bounded mpsc backpressure regression test.
+///
+/// Drives `AbMcts::stream` through far more deltas (256) than the
+/// channel capacity (64) under a `CountingStreamingVerifier` so each
+/// delta also produces a `VerifierScore` partial. With the Phase 15.A
+/// unbounded channel this exercised pure memory growth; with the Phase
+/// 16.A.1 bounded channel the producer (`rollout_static_streaming`)
+/// must repeatedly block on `send().await` and resume as the
+/// `tokio::select!` consumer drains. The test passes iff every delta
+/// is delivered and the streaming-verifier hook fires exactly N times
+/// — i.e. backpressure neither drops events nor deadlocks the
+/// producer.
+#[tokio::test]
+async fn ab_mcts_stream_bounded_backpressure_high_delta_count() {
+    const N_DELTAS: usize = 256; // 4× the 64-slot bound
+    let deltas: Vec<&str> = std::iter::repeat_n("x", N_DELTAS).collect();
+    let provider = Arc::new(StreamingFake::new("fake:s", deltas));
+    let v = Arc::new(CountingStreamingVerifier::default());
+    let mcts = AbMcts::builder()
+        .provider(provider.clone())
+        .verifier(v.clone())
+        .max_iterations(1)
+        .max_steps_per_rollout(1)
+        .min_confidence(0.99)
+        .build()
+        .unwrap();
+
+    let mut stream = mcts
+        .stream(&Principal::anonymous(), OrchInput::from_user("go"))
+        .await;
+
+    let mut deltas_seen = 0_usize;
+    let mut partial_scores = 0_usize;
+    while let Some(ev) = stream.next().await {
+        match ev.unwrap() {
+            OrchEvent::AssistantText { .. } => deltas_seen += 1,
+            OrchEvent::VerifierScore { score, .. } if (score - 0.5).abs() < 1e-6 => {
+                partial_scores += 1;
+            }
+            _ => {}
+        }
+    }
+
+    // Every produced delta crossed the bounded channel without loss.
+    assert_eq!(deltas_seen, N_DELTAS, "deltas dropped under backpressure");
+    assert_eq!(partial_scores, N_DELTAS, "verifier partials dropped");
+    // Streaming hook fired once per delta on the producer side.
+    assert_eq!(v.streaming_calls.load(Ordering::SeqCst), N_DELTAS);
+}
+
 #[tokio::test]
 async fn ab_mcts_stream_non_streaming_fallback_byte_parity() {
     // Non-streaming provider — exactly one full-text AssistantText per

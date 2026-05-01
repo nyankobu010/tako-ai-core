@@ -51,6 +51,13 @@ const DEFAULT_BRANCHING_FACTOR: u32 = 3;
 const DEFAULT_MAX_STEPS_PER_ROLLOUT: u32 = 4;
 const DEFAULT_TEMPERATURE: f32 = 0.7;
 const DEFAULT_MIN_CONFIDENCE: f32 = 0.95;
+/// Phase 16.A.1 — bounded mpsc capacity for the streaming-rollout
+/// event channel. Producer (`rollout_static_streaming`) blocks on
+/// `send().await` once full so a slow `Verifier::evaluate_streaming`
+/// can't let `OrchEvent`s pile up unbounded. Matches the
+/// `tako-mcp/src/transport/grpc.rs` precedent (`NOTIFICATION_BUFFER`,
+/// `OUTBOUND_BUFFER`).
+const ROLLOUT_EVENT_BUFFER: usize = 64;
 
 /// AB-MCTS orchestrator.
 pub struct AbMcts {
@@ -482,7 +489,7 @@ impl Orchestrator for AbMcts {
                     TakoError,
                 > = if picked.capabilities().supports_streaming {
                     let (tx, mut rx) =
-                        tokio::sync::mpsc::unbounded_channel::<OrchEvent>();
+                        tokio::sync::mpsc::channel::<OrchEvent>(ROLLOUT_EVENT_BUFFER);
                     let mut rollout_fut = Box::pin(rollout_static_streaming(
                         Arc::clone(&picked),
                         Arc::clone(&tools),
@@ -957,7 +964,7 @@ async fn rollout_static_streaming(
     verifier: Arc<dyn Verifier>,
     step: u32,
     branch: u32,
-    event_tx: tokio::sync::mpsc::UnboundedSender<OrchEvent>,
+    event_tx: tokio::sync::mpsc::Sender<OrchEvent>,
 ) -> Result<(Message, String, Usage, u32), TakoError> {
     let mut total_usage = Usage::default();
     let mut steps = 0u32;
@@ -1002,10 +1009,12 @@ async fn rollout_static_streaming(
                             if let Some(t) = t
                                 && !t.is_empty()
                             {
-                                let _ = event_tx.send(OrchEvent::AssistantText {
-                                    step,
-                                    delta: t.clone(),
-                                });
+                                let _ = event_tx
+                                    .send(OrchEvent::AssistantText {
+                                        step,
+                                        delta: t.clone(),
+                                    })
+                                    .await;
                                 text.push_str(&t);
                                 cumulative_text.push_str(&t);
                                 // Phase 15.A — per-delta verifier hook on
@@ -1016,11 +1025,13 @@ async fn rollout_static_streaming(
                                     .evaluate_streaming(&principal, &cumulative_text)
                                     .await?
                                 {
-                                    let _ = event_tx.send(OrchEvent::VerifierScore {
-                                        step,
-                                        branch,
-                                        score: score.clamp(0.0, 1.0),
-                                    });
+                                    let _ = event_tx
+                                        .send(OrchEvent::VerifierScore {
+                                            step,
+                                            branch,
+                                            score: score.clamp(0.0, 1.0),
+                                        })
+                                        .await;
                                 }
                             }
                             deltas.extend(tool_calls);
@@ -1081,10 +1092,12 @@ async fn rollout_static_streaming(
                     .collect::<Vec<_>>()
                     .join("");
                 if !text_payload.is_empty() {
-                    let _ = event_tx.send(OrchEvent::AssistantText {
-                        step,
-                        delta: text_payload.clone(),
-                    });
+                    let _ = event_tx
+                        .send(OrchEvent::AssistantText {
+                            step,
+                            delta: text_payload.clone(),
+                        })
+                        .await;
                     cumulative_text.push_str(&text_payload);
                 }
                 (resp.message, resp.finish_reason, resp.usage)
