@@ -316,6 +316,28 @@ impl PyOidcAuth {
         let r = cloned.with_introspection_uri(uri, client_id, client_secret);
         PyOidcAuth { inner: Arc::new(r) }
     }
+
+    /// Phase 16.B.2 — set the RFC 7662 §2.1 introspection-endpoint
+    /// auth method. Accepts case-insensitive `"basic"` (default,
+    /// HTTP Basic header) or `"post"` (credentials in form body).
+    /// Any other value raises `ValueError`. Silent no-op when no
+    /// introspection config has been attached yet.
+    fn with_introspection_auth_method(&self, auth_method: &str) -> PyResult<Self> {
+        let am = match auth_method.to_ascii_lowercase().as_str() {
+            "basic" | "client_secret_basic" => {
+                tako_compat::IntrospectionAuthMethod::ClientSecretBasic
+            }
+            "post" | "client_secret_post" => tako_compat::IntrospectionAuthMethod::ClientSecretPost,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "auth_method must be one of: 'basic' / 'client_secret_basic' / 'post' / 'client_secret_post' (got {other:?})",
+                )));
+            }
+        };
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned.with_introspection_auth_method(am);
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -381,5 +403,18 @@ impl PyVaultAuth {
         let r =
             tako_compat::VaultAuthResolver::with_kubernetes_in_pod(addr, role).map_err(map_err)?;
         Ok(Self { inner: Arc::new(r) })
+    }
+
+    /// Phase 16.B.3 — set the Vault Enterprise namespace for every
+    /// outgoing Vault request. The value is sent as the
+    /// `X-Vault-Namespace` header. Returns a NEW `VaultAuth`
+    /// instance (immutable builder); chainable on top of any
+    /// constructor (`new` / `with_approle` / `with_kubernetes` /
+    /// `with_kubernetes_in_pod`) since namespace is orthogonal to
+    /// auth method.
+    fn with_namespace(&self, namespace: &str) -> Self {
+        let cloned: tako_compat::VaultAuthResolver = (*self.inner).clone();
+        let r = cloned.with_namespace(namespace);
+        Self { inner: Arc::new(r) }
     }
 }

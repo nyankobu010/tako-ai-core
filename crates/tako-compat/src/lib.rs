@@ -32,5 +32,5 @@ pub use auth::{
 };
 pub use auth::{AuthResolver, StaticTokens};
 #[cfg(feature = "oidc")]
-pub use auth::{IntrospectionConfig, OidcAuthResolver};
+pub use auth::{IntrospectionAuthMethod, IntrospectionConfig, OidcAuthResolver};
 pub use server::{ServeConfig, serve_openai};

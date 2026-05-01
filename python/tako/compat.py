@@ -45,6 +45,12 @@ def serve_openai(
        ``with_introspection_uri`` builder methods for RFC 7662 token
        introspection (revocation-aware checks).
 
+       Phase 16.B.3 — ``VaultAuth.with_namespace(ns)`` sets the
+       Vault Enterprise namespace used on every KV lookup
+       (``X-Vault-Namespace`` header). ``OidcAuth.with_introspection_auth_method(m)``
+       selects between ``"basic"`` (default; HTTP Basic header) and
+       ``"post"`` (credentials in form body) per RFC 7662 §2.1.
+
     Passing both ``tokens`` and ``auth`` is an error.
     """
     if not hasattr(orch, "_inner"):

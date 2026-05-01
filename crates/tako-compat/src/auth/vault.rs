@@ -66,6 +66,13 @@ struct VaultEntry {
     roles: Vec<String>,
 }
 
+/// Phase 16.B.3 — `Clone` is needed so the Python facade
+/// (`PyVaultAuth`) can implement immutable-builder methods that
+/// return a fresh resolver. `Arc`-based fields share the principal
+/// and client caches across clones — intended, since the builders
+/// are only chained at construction time before any `resolve()`
+/// has run.
+#[derive(Clone)]
 pub struct VaultAuthResolver {
     addr: String,
     provider: Arc<dyn VaultTokenProvider>,
