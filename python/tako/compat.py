@@ -71,6 +71,16 @@ def serve_openai(
        expose the OIDC Session Management 1.0 logout-URL helper
        (Phase 18.B).
 
+       Phase 24.B — ``OidcAuth`` gains
+       ``with_introspection_mtls(cert_pem, key_pem)`` /
+       ``with_introspection_mtls_combined(combined_pem)`` builders
+       for the RFC 8705 mTLS introspection auth method
+       (``tls_client_auth``). The auto-selector prefers
+       ``tls_client_auth`` over JWT methods when an mTLS identity is
+       loaded. ``with_introspection_auth_method`` accepts new
+       case-insensitive aliases ``"tls_client_auth"`` /
+       ``"tls-client-auth"`` / ``"mtls"``.
+
        Phase 21.B — ``tako.compat.ChainedAuth`` (always-on; no
        cargo feature gate) is a composite resolver that wraps N
        child resolvers and tries them in append order. The first

@@ -347,11 +347,19 @@ impl PyOidcAuth {
             "private_key_jwt" | "private-key-jwt" => {
                 tako_compat::IntrospectionAuthMethod::PrivateKeyJwt
             }
+            // Phase 24.B — RFC 8705 mTLS. Three case-insensitive
+            // aliases covering the OIDC spec name (`tls_client_auth`),
+            // the kebab variant (`tls-client-auth`), and the
+            // operator-friendly shorthand (`mtls`).
+            "tls_client_auth" | "tls-client-auth" | "mtls" => {
+                tako_compat::IntrospectionAuthMethod::TlsClientAuth
+            }
             other => {
                 return Err(PyValueError::new_err(format!(
                     "auth_method must be one of: 'basic' / 'client_secret_basic' / \
                      'post' / 'client_secret_post' / 'jwt' / 'client_secret_jwt' / \
-                     'private_key_jwt' (got {other:?})",
+                     'private_key_jwt' / 'tls_client_auth' / 'mtls' \
+                     (got {other:?})",
                 )));
             }
         };
@@ -413,6 +421,35 @@ impl PyOidcAuth {
         let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
         let r = cloned
             .with_introspection_jwt_ed25519_pem(pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 24.B — load a client cert + private key from separate
+    /// PEM blobs, build an mTLS-enabled HTTP client, and switch the
+    /// introspection auth method to `tls_client_auth` (RFC 8705).
+    /// Returns a NEW `OidcAuth`. Raises `ValueError` on PEM parse
+    /// failure or `reqwest::Client` build failure.
+    ///
+    /// The `cert_pem` should be a PEM-encoded X.509 certificate
+    /// (or chain); `key_pem` should be a PKCS#8 or SEC1-encoded
+    /// private key matching the cert.
+    fn with_introspection_mtls(&self, cert_pem: &[u8], key_pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_mtls(cert_pem, key_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 24.B — convenience for combined PEM blobs (the common
+    /// `cat cert.pem key.pem` form). Same behaviour as
+    /// [`Self::with_introspection_mtls`] with the same blob passed
+    /// twice.
+    fn with_introspection_mtls_combined(&self, combined_pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_mtls_combined(combined_pem)
             .map_err(map_err)?;
         Ok(PyOidcAuth { inner: Arc::new(r) })
     }
