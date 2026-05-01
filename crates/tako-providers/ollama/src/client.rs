@@ -86,19 +86,24 @@ impl OllamaBuilder {
         self
     }
 
-    /// Phase 30 — add a hostname to the URL pre-fetch allowlist.
-    /// Mirror of
+    /// Phase 30 / 31 — add a hostname or wildcard pattern to
+    /// the URL pre-fetch allowlist. Mirror of
     /// [`tako_providers_bedrock::BedrockBuilder::with_url_prefetch_allow_host`].
     ///
-    /// Hosts in the allowlist bypass the private-IP blocklist
-    /// (Phase 29.B) for that hostname only — but the scheme
-    /// check, timeout, size cap, and MIME validation still apply.
-    /// Useful for permitting a local Ollama image host
-    /// (`internal-images.corp.local`) on a private RFC 1918
-    /// address while keeping the rest of the blocklist active.
+    /// Hosts matched by the allowlist bypass the private-IP
+    /// blocklist (Phase 29.B) for that host only — but the
+    /// scheme check, timeout, size cap, and MIME validation
+    /// still apply. Two match modes:
     ///
-    /// Chainable; can be called multiple times. Matching is
-    /// exact-string against the URL's host component.
+    /// - **Exact string** (Phase 30) — matches the URL's host
+    ///   component byte-for-byte. For IP-literal URLs, match
+    ///   against the raw IP string.
+    /// - **Wildcard suffix** (Phase 31) — `"*.internal.corp"`
+    ///   matches any hostname ending with `.internal.corp`,
+    ///   including multi-level subdomains. Does NOT match the
+    ///   bare apex (`internal.corp`).
+    ///
+    /// Chainable; can be called multiple times.
     pub fn with_url_prefetch_allow_host(mut self, host: impl Into<String>) -> Self {
         self.url_prefetch.allow_hosts.push(host.into());
         self
