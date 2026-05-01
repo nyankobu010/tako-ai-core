@@ -113,9 +113,10 @@ fn extract_orchestrator(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn Orc
     ))
 }
 
-/// Phase 14.B — downcast `auth` to one of the supported resolver
-/// pyclasses. Each variant is gated on its `auth-*` cargo feature so
-/// default wheels still build without the optional dep trees.
+/// Phase 14.B / 21.B — downcast `auth` to one of the supported
+/// resolver pyclasses. JWT / OIDC / Vault are gated on their
+/// `auth-*` cargo features so default wheels still build without
+/// the optional dep trees; `ChainedAuth` (Phase 21.B) is always-on.
 fn extract_auth_resolver(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn AuthResolver>> {
     let bound = obj.bind(py);
     #[cfg(feature = "auth-jwt")]
@@ -132,9 +133,16 @@ fn extract_auth_resolver(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn Au
         let vault = a.borrow();
         return Ok(Arc::clone(&vault.inner) as Arc<dyn AuthResolver>);
     }
+    // Phase 21.B — composite resolver. Recursive: a `ChainedAuth`
+    // can contain another `ChainedAuth` (the chained.rs
+    // `chained_can_nest` test pins this on the Rust side).
+    if let Ok(a) = bound.cast::<PyChainedAuth>() {
+        let chained = a.borrow();
+        return Ok(Arc::clone(&chained.inner) as Arc<dyn AuthResolver>);
+    }
     let _ = bound;
     Err(PyValueError::new_err(
-        "auth must be one of: tako._native.JwtAuth, OidcAuth, VaultAuth (build the wheel with the matching auth-* feature)",
+        "auth must be one of: tako._native.JwtAuth, OidcAuth, VaultAuth, ChainedAuth (build the wheel with the matching auth-* feature for JWT / OIDC / Vault)",
     ))
 }
 
@@ -509,5 +517,70 @@ impl PyVaultAuth {
         let cloned: tako_compat::VaultAuthResolver = (*self.inner).clone();
         let r = cloned.with_namespace(namespace);
         Self { inner: Arc::new(r) }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 21.B — ChainedAuth pyclass.
+// Always-on (no feature gate) — `ChainedAuthResolver` is itself
+// always-on; only its children carry feature gates.
+// ---------------------------------------------------------------------------
+
+#[pyclass(name = "ChainedAuth", module = "tako._native")]
+pub struct PyChainedAuth {
+    inner: Arc<tako_compat::ChainedAuthResolver>,
+}
+
+impl std::fmt::Debug for PyChainedAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChainedAuth")
+            .field("len", &self.inner.len())
+            .finish()
+    }
+}
+
+#[pymethods]
+impl PyChainedAuth {
+    /// Phase 21.B — empty composite chain. `serve_openai(auth=...)`
+    /// rejects an empty chain at request time
+    /// (`TakoError::Invalid("chained auth: no resolvers
+    /// configured")`); add at least one child via [`Self::with`]
+    /// before passing to `serve_openai`.
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(tako_compat::ChainedAuthResolver::new()),
+        }
+    }
+
+    /// Phase 21.B — append a child resolver. Returns a NEW
+    /// `ChainedAuth` (immutable builder; matches the `OidcAuth` /
+    /// `VaultAuth` cadence). Accepts any `JwtAuth`, `OidcAuth`,
+    /// `VaultAuth`, or `ChainedAuth` (recursive composition); the
+    /// underlying [`extract_auth_resolver`] helper does the
+    /// downcast.
+    ///
+    /// Children are tried in append order at request time; the
+    /// first to return a Principal short-circuits. Any error from
+    /// a child falls through to the next.
+    ///
+    /// Named `then(child)` not `with(child)` because `with` is a
+    /// Python keyword — `chain.with(...)` would be a SyntaxError.
+    /// `then` reads naturally ("try `self`, then `child` if that
+    /// fails") and matches the JS `Promise.then` / Rust `Future`
+    /// `.then(...)` idiom.
+    fn then(&self, py: Python<'_>, child: Py<PyAny>) -> PyResult<Self> {
+        let child = extract_auth_resolver(py, &child)?;
+        let cloned: tako_compat::ChainedAuthResolver = (*self.inner).clone();
+        let next = cloned.then(child);
+        Ok(Self {
+            inner: Arc::new(next),
+        })
+    }
+
+    /// Phase 21.B — number of children appended via
+    /// [`Self::with`]. `len(chain)` from Python.
+    fn __len__(&self) -> usize {
+        self.inner.len()
     }
 }

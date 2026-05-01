@@ -71,6 +71,15 @@ def serve_openai(
        expose the OIDC Session Management 1.0 logout-URL helper
        (Phase 18.B).
 
+       Phase 21.B — ``tako.compat.ChainedAuth`` (always-on; no
+       cargo feature gate) is a composite resolver that wraps N
+       child resolvers and tries them in append order. The first
+       child to return a Principal short-circuits; any error falls
+       through to the next. Common pattern: ``auth=ChainedAuth().with(oidc).with(jwt)``
+       to accept either an OIDC bearer or a static-key-signed JWT.
+       Children may themselves be ``ChainedAuth`` instances
+       (recursive composition).
+
     Passing both ``tokens`` and ``auth`` is an error.
     """
     if not hasattr(orch, "_inner"):
@@ -97,6 +106,16 @@ def shutdown_openai() -> None:
 JwtAuth = getattr(_native, "JwtAuth", None)
 OidcAuth = getattr(_native, "OidcAuth", None)
 VaultAuth = getattr(_native, "VaultAuth", None)
+# Phase 21.B — composite resolver. Always-on; children themselves
+# carry whatever `auth-*` gates they were built under.
+ChainedAuth = getattr(_native, "ChainedAuth", None)
 
 
-__all__ = ["serve_openai", "shutdown_openai", "JwtAuth", "OidcAuth", "VaultAuth"]
+__all__ = [
+    "serve_openai",
+    "shutdown_openai",
+    "JwtAuth",
+    "OidcAuth",
+    "VaultAuth",
+    "ChainedAuth",
+]

@@ -94,6 +94,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_compat::PyOidcAuth>()?;
     #[cfg(feature = "auth-vault")]
     m.add_class::<py_compat::PyVaultAuth>()?;
+    // Phase 21.B — composite resolver. Always-on (no feature gate);
+    // children themselves carry whatever `auth-*` gates they were
+    // built under.
+    m.add_class::<py_compat::PyChainedAuth>()?;
     m.add_function(wrap_pyfunction!(featurise_text_py, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
