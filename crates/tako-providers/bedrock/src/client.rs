@@ -104,6 +104,31 @@ impl BedrockBuilder {
         self
     }
 
+    /// Phase 30 — add a hostname to the URL pre-fetch allowlist.
+    ///
+    /// Hosts in the allowlist bypass the private-IP blocklist
+    /// (Phase 29.A) for that hostname only — but the scheme
+    /// check, timeout, size cap, and MIME validation still apply.
+    /// Useful for permitting an internal artifact registry on a
+    /// private RFC 1918 address while keeping the rest of the
+    /// blocklist active.
+    ///
+    /// Chainable; can be called multiple times to add more
+    /// hosts. Matching is exact-string against the URL's host
+    /// component (so `with_url_prefetch_allow_host("registry.corp")`
+    /// matches `https://registry.corp/cat.png` but NOT
+    /// `https://other.corp/cat.png`). For IP-literal URLs, match
+    /// against the raw IP string (e.g.
+    /// `with_url_prefetch_allow_host("10.0.5.4")`).
+    ///
+    /// Does NOT auto-enable [`Self::with_url_prefetch`] — the
+    /// master switch must already be on for this flag to have
+    /// any effect.
+    pub fn with_url_prefetch_allow_host(mut self, host: impl Into<String>) -> Self {
+        self.url_prefetch.allow_hosts.push(host.into());
+        self
+    }
+
     /// Phase 29.A — opt out of the default-on private-IP blocklist
     /// for tako-side URL pre-fetch.
     ///

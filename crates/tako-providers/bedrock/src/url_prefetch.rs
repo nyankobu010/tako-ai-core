@@ -37,6 +37,7 @@
 //!   deployments where the operator has already filtered network
 //!   egress.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,6 +62,10 @@ pub(crate) struct UrlPrefetchConfig {
     /// IP-literal check inline in `fetch_one` (for URLs whose
     /// host is already an IP, where reqwest skips the resolver).
     pub(crate) block_private_ips: bool,
+    /// Phase 30 — per-host allowlist. Hostnames in this set
+    /// bypass the private-IP blocklist (but NOT the scheme /
+    /// timeout / size / MIME checks). Empty by default.
+    pub(crate) allow_hosts: Arc<HashSet<String>>,
     pub(crate) http: reqwest::Client,
 }
 
@@ -70,10 +75,13 @@ impl UrlPrefetchConfig {
         timeout: Duration,
         max_bytes: usize,
         block_private_ips: bool,
+        allow_hosts: Arc<HashSet<String>>,
     ) -> Result<Self, TakoError> {
         let mut builder = reqwest::Client::builder().timeout(timeout);
         if block_private_ips {
-            builder = builder.dns_resolver(Arc::new(BlocklistResolver));
+            builder = builder.dns_resolver(Arc::new(BlocklistResolver {
+                allow_hosts: allow_hosts.clone(),
+            }));
         }
         let http = builder.build().map_err(|e| {
             TakoError::Invalid(format!("bedrock: failed to build prefetch client: {e}"))
@@ -82,6 +90,7 @@ impl UrlPrefetchConfig {
             allow_http,
             max_bytes,
             block_private_ips,
+            allow_hosts,
             http,
         })
     }
@@ -132,14 +141,20 @@ impl UrlPrefetchConfig {
         // The blocklist must be enforced here too. Parse host_str
         // as IpAddr (stripping IPv6 brackets); on parse failure
         // it's a domain name and the resolver path takes over.
+        //
+        // Phase 30 — allowlisted host strings bypass the
+        // blocklist. Match against the raw host_str (not the
+        // parsed IpAddr) so `with_url_prefetch_allow_host("10.0.5.4")`
+        // matches a URL whose host is exactly `10.0.5.4`.
         if self.block_private_ips {
             if let Some(host_str) = parsed.host_str() {
                 let trimmed = host_str.trim_start_matches('[').trim_end_matches(']');
                 if let Ok(ip) = trimmed.parse::<IpAddr>() {
-                    if is_blocked_ip(&ip) {
+                    if !self.allow_hosts.contains(host_str) && is_blocked_ip(&ip) {
                         return Err(TakoError::Invalid(format!(
                             "bedrock: prefetch URL `{url}` resolves to blocked IP `{ip}` \
-                             (use `with_url_prefetch_allow_private_ips` to opt out)",
+                             (use `with_url_prefetch_allow_private_ips` to opt out, \
+                             or `with_url_prefetch_allow_host` to permit this host)",
                         )));
                     }
                 }
@@ -266,28 +281,39 @@ pub(crate) fn is_blocked_ip(ip: &IpAddr) -> bool {
 /// A records (one public, one private) can't slip the private IP
 /// through alongside a public one, and there's no second
 /// resolution between validation and connection.
+///
+/// Phase 30 — `allow_hosts` is the per-host bypass. When the
+/// requested hostname is in this set, the blocklist is skipped
+/// for that hostname only.
 #[derive(Debug)]
-struct BlocklistResolver;
+struct BlocklistResolver {
+    allow_hosts: Arc<HashSet<String>>,
+}
 
 impl Resolve for BlocklistResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let host = name.as_str().to_string();
+        let allow_hosts = self.allow_hosts.clone();
         Box::pin(async move {
             let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
                 .await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
                 .collect();
-            for addr in &addrs {
-                if is_blocked_ip(&addr.ip()) {
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        format!(
-                            "prefetch URL `{host}` resolves to blocked IP `{}` \
-                             (use with_url_prefetch_allow_private_ips to opt out)",
-                            addr.ip()
-                        ),
-                    ))
-                        as Box<dyn std::error::Error + Send + Sync>);
+            // Phase 30 — bypass the blocklist for allowlisted hosts.
+            if !allow_hosts.contains(&host) {
+                for addr in &addrs {
+                    if is_blocked_ip(&addr.ip()) {
+                        return Err(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            format!(
+                                "prefetch URL `{host}` resolves to blocked IP `{}` \
+                                 (use with_url_prefetch_allow_private_ips to opt out, \
+                                 or with_url_prefetch_allow_host to permit this host)",
+                                addr.ip()
+                            ),
+                        ))
+                            as Box<dyn std::error::Error + Send + Sync>);
+                    }
                 }
             }
             let iter: Addrs = Box::new(addrs.into_iter());
@@ -309,6 +335,10 @@ pub(crate) struct UrlPrefetchOpts {
     /// [`BedrockBuilder::with_url_prefetch_allow_private_ips`] when
     /// deployment-level egress filtering is already enforced.
     pub(crate) block_private_ips: bool,
+    /// Phase 30 — host strings that bypass the private-IP
+    /// blocklist. Default empty. Populated via
+    /// [`BedrockBuilder::with_url_prefetch_allow_host`].
+    pub(crate) allow_hosts: Vec<String>,
 }
 
 impl Default for UrlPrefetchOpts {
@@ -320,6 +350,8 @@ impl Default for UrlPrefetchOpts {
             max_bytes: None,
             // Phase 29.A — default-deny stance for SSRF.
             block_private_ips: true,
+            // Phase 30 — empty allowlist by default.
+            allow_hosts: Vec::new(),
         }
     }
 }
@@ -329,11 +361,13 @@ impl UrlPrefetchOpts {
         if !self.enabled {
             return Ok(None);
         }
+        let allow_hosts: Arc<HashSet<String>> = Arc::new(self.allow_hosts.into_iter().collect());
         let cfg = UrlPrefetchConfig::new(
             self.allow_http,
             self.timeout.unwrap_or(DEFAULT_TIMEOUT),
             self.max_bytes.unwrap_or(DEFAULT_MAX_BYTES),
             self.block_private_ips,
+            allow_hosts,
         )?;
         Ok(Some(cfg))
     }
@@ -402,6 +436,8 @@ mod tests {
             // default blocklist would reject. Disable for this test;
             // dedicated DNS-blocklist tests live below.
             false,
+            // Phase 30 — empty allowlist for this test.
+            Arc::new(HashSet::new()),
         )
         .unwrap();
         let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
@@ -426,6 +462,7 @@ mod tests {
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             false, // block_private_ips off — scheme check fires first
+            Arc::new(HashSet::new()),
         )
         .unwrap();
         let mut req = req_with_image_url("http://example.com/cat.png");
@@ -445,7 +482,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, false).unwrap();
+        let cfg = UrlPrefetchConfig::new(
+            true,
+            DEFAULT_TIMEOUT,
+            DEFAULT_MAX_BYTES,
+            false,
+            Arc::new(HashSet::new()),
+        )
+        .unwrap();
         let mut req = req_with_image_url(&format!("{}/icon.svg", server.uri()));
         let err = cfg.rewrite(&mut req).await.unwrap_err();
         let msg = format!("{err:?}");
@@ -468,7 +512,9 @@ mod tests {
             .await;
 
         // Cap at 100 bytes — server returns 1024.
-        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, 100, false).unwrap();
+        let cfg =
+            UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, 100, false, Arc::new(HashSet::new()))
+                .unwrap();
         let mut req = req_with_image_url(&format!("{}/big.png", server.uri()));
         let err = cfg.rewrite(&mut req).await.unwrap_err();
         let msg = format!("{err:?}");
@@ -484,7 +530,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let cfg = UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, false).unwrap();
+        let cfg = UrlPrefetchConfig::new(
+            true,
+            DEFAULT_TIMEOUT,
+            DEFAULT_MAX_BYTES,
+            false,
+            Arc::new(HashSet::new()),
+        )
+        .unwrap();
         let mut req = req_with_image_url(&format!("{}/oops", server.uri()));
         let err = cfg.rewrite(&mut req).await.unwrap_err();
         let msg = format!("{err:?}");
@@ -663,6 +716,7 @@ mod tests {
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             true, // block_private_ips ON — Phase 29.A default
+            Arc::new(HashSet::new()),
         )
         .unwrap();
 
@@ -675,6 +729,129 @@ mod tests {
         assert!(
             msg.contains("blocked IP") || msg.contains("PermissionDenied"),
             "expected resolver rejection in error, got: {msg}",
+        );
+    }
+
+    // ----- Phase 30 — per-host allowlist tests. -----
+
+    #[test]
+    fn opts_default_allow_hosts_is_empty() {
+        let opts = UrlPrefetchOpts::default();
+        assert!(
+            opts.allow_hosts.is_empty(),
+            "default allowlist should be empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn opts_into_config_round_trips_allow_hosts() {
+        let opts = UrlPrefetchOpts {
+            enabled: true,
+            allow_hosts: vec!["a.example".into(), "b.example".into()],
+            ..UrlPrefetchOpts::default()
+        };
+        let cfg = opts.into_config().unwrap().expect("enabled => Some");
+        assert_eq!(cfg.allow_hosts.len(), 2);
+        assert!(cfg.allow_hosts.contains("a.example"));
+        assert!(cfg.allow_hosts.contains("b.example"));
+    }
+
+    #[tokio::test]
+    async fn opts_into_config_dedupes_allow_hosts() {
+        let opts = UrlPrefetchOpts {
+            enabled: true,
+            allow_hosts: vec!["dup.example".into(), "dup.example".into()],
+            ..UrlPrefetchOpts::default()
+        };
+        let cfg = opts.into_config().unwrap().expect("enabled => Some");
+        // Vec<String> -> HashSet<String> dedupes by definition.
+        assert_eq!(cfg.allow_hosts.len(), 1);
+        assert!(cfg.allow_hosts.contains("dup.example"));
+    }
+
+    /// Phase 30 — IP-literal URL `127.0.0.1` is blocked by the
+    /// default Phase 29 blocklist UNLESS the operator allowlists
+    /// the literal host string.
+    #[tokio::test]
+    async fn rewrite_allowlists_ip_literal_host() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/cat.png"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "image/png")
+                    .set_body_bytes(TINY_PNG),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Block-private-IPs ON, but `127.0.0.1` is in the allowlist.
+        let mut allow_hosts = HashSet::new();
+        allow_hosts.insert("127.0.0.1".to_string());
+
+        let cfg = UrlPrefetchConfig::new(
+            true, // allow_http for wiremock
+            DEFAULT_TIMEOUT,
+            DEFAULT_MAX_BYTES,
+            true, // block_private_ips ON
+            Arc::new(allow_hosts),
+        )
+        .unwrap();
+
+        let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
+        cfg.rewrite(&mut req).await.unwrap();
+
+        // Verify the rewrite landed.
+        match &req.messages[0].content[0] {
+            ContentPart::Image { mime, data_b64 } => {
+                assert_eq!(mime, "image/png");
+                assert_eq!(
+                    aws_smithy_types::base64::decode(data_b64).unwrap(),
+                    TINY_PNG
+                );
+            }
+            other => panic!("expected ContentPart::Image, got {other:?}"),
+        }
+    }
+
+    /// Phase 30 — the allowlist matches the URL's host EXACTLY.
+    /// A URL targeting `127.0.0.1` is NOT bypassed when only a
+    /// different host (`some-other-host`) is in the allowlist.
+    #[tokio::test]
+    async fn rewrite_does_not_allowlist_other_hosts() {
+        let server = MockServer::start().await;
+        // Mount a mock that would respond if reached. The
+        // `expect(0)` invariant asserts the request never arrived.
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "image/png")
+                    .set_body_bytes(TINY_PNG),
+            )
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        // Block-private-IPs ON, allowlist contains a DIFFERENT host.
+        let mut allow_hosts = HashSet::new();
+        allow_hosts.insert("some-other-host".to_string());
+
+        let cfg = UrlPrefetchConfig::new(
+            true,
+            DEFAULT_TIMEOUT,
+            DEFAULT_MAX_BYTES,
+            true,
+            Arc::new(allow_hosts),
+        )
+        .unwrap();
+
+        let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
+        let err = cfg.rewrite(&mut req).await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("blocked IP") || msg.contains("PermissionDenied"),
+            "expected blocklist rejection, got: {msg}",
         );
     }
 
@@ -700,6 +877,7 @@ mod tests {
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             false, // block_private_ips OFF — operator opt-out
+            Arc::new(HashSet::new()),
         )
         .unwrap();
 
