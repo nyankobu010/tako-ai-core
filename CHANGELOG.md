@@ -9,6 +9,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.21.0] - 2026-05-01
+
+Phase 20 — finishes the vision-content sweep started in Phase 19.
+After Phase 20 every shipped provider adapter (Anthropic, OpenAI,
+Vertex, Bedrock, Mistral, Ollama — six of six) handles outbound
+`ContentPart::Image`. Plan: [PLAN_PHASE20.md](PLAN_PHASE20.md).
+
+### Added
+
+- **Phase 20.A — Outbound image content for Vertex (Gemini)
+  ([crates/tako-providers/vertex/src/convert.rs](crates/tako-providers/vertex/src/convert.rs)).**
+  New `VxPart::InlineData { inline_data: VxInlineData }` variant
+  on the untagged content-part enum. `VxInlineData` carries
+  `mime_type` (renamed `mimeType` on the wire — matches the
+  existing `functionCall` / `functionResponse` camelCase
+  convention) and `data` (raw base64 with any data-URL prefix
+  stripped). Per Gemini REST docs:
+  `{"inlineData": {"mimeType": "image/jpeg", "data": "<base64>"}}`.
+
+  `is_supported_vertex_mime` filters to the same four MIME types
+  as Phase 19 (`image/jpeg`, `image/png`, `image/gif`,
+  `image/webp`); other types are silently dropped.
+  `strip_data_url_prefix` is a per-crate copy of the Phase-19
+  helper, kept per-crate per ARCHITECTURE.md hard rules.
+
+  Five new unit tests covering the pinned JSON shape, data-URL
+  prefix stripping, unsupported-MIME silent-drop, the
+  supported-MIME matrix, and `strip_data_url_prefix` idempotence.
+  URL-source images via `file_data` remain deferred — server-side
+  fetch from request-supplied URLs has security implications.
+
+- **Phase 20.B — Outbound image content for Mistral
+  ([crates/tako-providers/mistral/src/convert.rs](crates/tako-providers/mistral/src/convert.rs)).**
+  Mistral's vision-capable models (Pixtral) accept OpenAI-
+  compatible content blocks. The wire format mirrors Phase 19.B
+  byte-for-byte: array-shaped `content` with `text` and
+  `image_url` blocks (nested `{"url": "..."}` form holding a
+  data-URL).
+
+  New surfaces: `MiContent` untagged enum
+  (`Text(String)` | `Blocks(Vec<MiContentBlock>)`),
+  `MiContentBlock` tagged enum, `MiImageUrl` payload struct.
+  `MiMessage.content` field type widens from `Option<String>` to
+  `Option<MiContent>`.
+
+  `message_to_mi` refactor follows the 19.B pattern: array form
+  emitted only when an image is present; non-vision messages
+  preserve byte-for-byte wire shape (pinned by
+  `text_only_message_keeps_flat_string_content`); tool-result
+  messages keep the flat-string shape (pinned by
+  `tool_result_message_keeps_flat_string_content`).
+
+  Six new unit tests mirroring 19.B's coverage: regression pins
+  + array-form emission + data-URL normalisation +
+  unsupported-MIME drop + tool-result shape + supported-MIME
+  matrix.
+
+- **Phase 20.C — Outbound image content for Ollama
+  ([crates/tako-providers/ollama/src/convert.rs](crates/tako-providers/ollama/src/convert.rs)).**
+  Ollama's `/api/chat` endpoint is fundamentally different from
+  the content-block protocols of Anthropic / OpenAI / Mistral /
+  Vertex: images live alongside `content` as a sibling
+  `images: Vec<String>` field on `OlMessage` carrying bare
+  base64 (no MIME prefix, no data-URL). `content` stays a flat
+  string.
+
+  New `OlMessage.images: Vec<String>` field gated by
+  `#[serde(skip_serializing_if = "Vec::is_empty")]` so non-vision
+  messages keep byte-for-byte wire-shape compatibility with
+  pre-Phase-20 traffic (pinned by
+  `text_only_message_omits_images_field`).
+
+  Source order is preserved across multiple images even though
+  they live in a sibling field rather than interleaved with
+  text (pinned by `multiple_images_preserve_source_order`).
+  Ollama doesn't filter MIME — pass the bytes through and let
+  the model decide what formats it can decode.
+
+  Five new unit tests: regression pin on `images`-field
+  absence, populated-shape assertion, multi-image source-order
+  preservation, data-URL prefix stripping, idempotence smoke.
+
+### Changed
+
+- `MiMessage.content` field type widens from `Option<String>` to
+  `Option<MiContent>`. `MiContent` is the new top-level public
+  type for Mistral message content. Existing callers reading
+  this field directly (none in the workspace per `grep`) need
+  to match on the enum.
+- `OlMessage` gains a new public `images: Vec<String>` field;
+  the `skip_serializing_if = "Vec::is_empty"` gate keeps the
+  wire shape byte-for-byte identical for non-vision traffic.
+- `VxPart` gains a new `InlineData` variant; existing serialised
+  wire shape on text / functionCall / functionResponse paths is
+  byte-for-byte preserved.
+- Workspace + Python crate version bumped to v0.21.0.
+
+### Carried forward to Phase 21+
+
+- URL-source images — Anthropic's `source.type = "url"`,
+  OpenAI's `image_url.url` with `https://...`, Vertex's
+  `file_data` with `file_uri`. Server-side fetch from
+  request-supplied URLs needs a security story.
+- OIDC introspection mTLS auth methods, OIDC refresh-token /
+  revocation-endpoint flows, composite `AuthResolver`s.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
 ## [0.20.0] - 2026-05-01
 
 Phase 19 — closes the long-stale "vision is out of scope for
