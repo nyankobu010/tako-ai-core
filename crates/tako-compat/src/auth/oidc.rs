@@ -97,6 +97,13 @@ struct DiscoveryDoc {
     /// `client_secret_basic`.
     #[serde(default)]
     introspection_endpoint_auth_methods_supported: Option<Vec<String>>,
+    /// Phase 18.B — OIDC Session Management 1.0 §2.2.1 / 5: optional
+    /// URL the relying party redirects the user-agent to in order
+    /// to terminate the OP session. Captured during discovery for
+    /// [`OidcAuthResolver::end_session_endpoint`] /
+    /// [`OidcAuthResolver::build_logout_uri`].
+    #[serde(default)]
+    end_session_endpoint: Option<String>,
 }
 
 /// Phase 16.B.2 / 17.B / 18.A — RFC 7662 §2.1 introspection
@@ -288,6 +295,10 @@ pub struct OidcAuthResolver {
     /// (RFC 8414: default is `client_secret_basic`); `Some(vec![])`
     /// means the issuer explicitly advertised an empty list.
     discovered_introspection_auth_methods: Option<Vec<String>>,
+    /// Phase 18.B — OIDC Session Management 1.0 `end_session_endpoint`
+    /// captured at discovery time. `None` means the issuer doesn't
+    /// implement OIDC Session Management.
+    discovered_end_session_uri: Option<String>,
     /// Phase 15.B.2 — when `Some`, every signature-validated token is
     /// additionally POSTed for an `active=true` check.
     introspection: Option<IntrospectionConfig>,
@@ -347,6 +358,7 @@ impl OidcAuthResolver {
             discovered_introspection_uri: doc.introspection_endpoint,
             discovered_introspection_auth_methods: doc
                 .introspection_endpoint_auth_methods_supported,
+            discovered_end_session_uri: doc.end_session_endpoint,
             introspection: None,
         })
     }
@@ -537,6 +549,71 @@ impl OidcAuthResolver {
             cfg.auth_method = IntrospectionAuthMethod::PrivateKeyJwt;
         }
         Ok(self)
+    }
+
+    /// Phase 18.B — return the OIDC Session Management 1.0
+    /// `end_session_endpoint` URL the issuer advertised at discovery
+    /// time. `None` when the issuer doesn't implement OIDC Session
+    /// Management.
+    pub fn end_session_endpoint(&self) -> Option<&str> {
+        self.discovered_end_session_uri.as_deref()
+    }
+
+    /// Phase 18.B — build a logout URL per OIDC Session Management
+    /// 1.0 §5. Returns `None` when the issuer didn't advertise
+    /// `end_session_endpoint` (the most common case for OIDC
+    /// providers that don't ship Session Management).
+    ///
+    /// All query parameters are optional; passing `None` for
+    /// everything yields the bare endpoint URL. Spec parameters
+    /// honoured:
+    ///
+    /// - `id_token_hint` — the ID token whose subject the relying
+    ///   party wants logged out. RECOMMENDED by the spec.
+    /// - `post_logout_redirect_uri` — where the OP redirects the
+    ///   user-agent after logout completes. Must be pre-registered
+    ///   with the OP.
+    /// - `state` — round-tripped opaque value for CSRF mitigation.
+    ///
+    /// When the configured `end_session_endpoint` already carries
+    /// a query string, the new params are appended via
+    /// [`url::form_urlencoded`] using the same separator semantics
+    /// reqwest uses internally.
+    pub fn build_logout_uri(
+        &self,
+        id_token_hint: Option<&str>,
+        post_logout_redirect_uri: Option<&str>,
+        state: Option<&str>,
+    ) -> Option<String> {
+        let base = self.discovered_end_session_uri.as_deref()?;
+        // Build the query-string fragment in a tight scope —
+        // `form_urlencoded::Serializer` is not `Send`, but this fn
+        // is sync so that's not an issue here.
+        let qs = {
+            let mut form = url::form_urlencoded::Serializer::new(String::new());
+            let mut any = false;
+            if let Some(hint) = id_token_hint {
+                form.append_pair("id_token_hint", hint);
+                any = true;
+            }
+            if let Some(uri) = post_logout_redirect_uri {
+                form.append_pair("post_logout_redirect_uri", uri);
+                any = true;
+            }
+            if let Some(s) = state {
+                form.append_pair("state", s);
+                any = true;
+            }
+            if any { Some(form.finish()) } else { None }
+        };
+        let Some(qs) = qs else {
+            return Some(base.to_string());
+        };
+        // Append with `?` or `&` depending on whether the configured
+        // endpoint already has a query string. RFC 3986 reserves
+        // `?` for the start of the query component.
+        let sep = if base.contains('?') { '&' } else { '?' };
+        Some(format!("{base}{sep}{qs}"))
     }
 
     /// Phase 15.B.2 / 17.B — POST the token to the introspection
@@ -911,6 +988,7 @@ mod tests {
             roles_claim: DEFAULT_ROLES_CLAIM.into(),
             discovered_introspection_uri: None,
             discovered_introspection_auth_methods: None,
+            discovered_end_session_uri: None,
             introspection: None,
         }
     }
@@ -1715,5 +1793,103 @@ Hg1uvux+qhVvB6JSr1th1Vbqvs7mLJioou3cLxSuM/AqPKOyBmWl2hf5\n\
             .unwrap_err();
         let msg = format!("{err:?}");
         assert!(msg.contains("no supported introspection auth method"));
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 18.B — OIDC Session Management 1.0 end-session helper.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn discovery_doc_parses_optional_end_session_endpoint() {
+        let with_endpoint: DiscoveryDoc = serde_json::from_value(json!({
+            "issuer": "https://issuer.example",
+            "jwks_uri": "https://issuer.example/jwks",
+            "end_session_endpoint": "https://issuer.example/logout",
+        }))
+        .unwrap();
+        assert_eq!(
+            with_endpoint.end_session_endpoint.as_deref(),
+            Some("https://issuer.example/logout"),
+        );
+
+        let without: DiscoveryDoc = serde_json::from_value(json!({
+            "issuer": "https://issuer.example",
+            "jwks_uri": "https://issuer.example/jwks",
+        }))
+        .unwrap();
+        assert!(without.end_session_endpoint.is_none());
+    }
+
+    #[test]
+    fn end_session_endpoint_accessor_returns_captured_uri() {
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        assert!(r.end_session_endpoint().is_none());
+        r.discovered_end_session_uri = Some("https://issuer.example/logout".into());
+        assert_eq!(
+            r.end_session_endpoint(),
+            Some("https://issuer.example/logout"),
+        );
+    }
+
+    #[test]
+    fn build_logout_uri_returns_none_when_not_advertised() {
+        let r = test_resolver(Client::new(), "https://issuer.example");
+        assert!(r.build_logout_uri(None, None, None).is_none());
+        assert!(r.build_logout_uri(Some("hint"), None, None).is_none());
+    }
+
+    #[test]
+    fn build_logout_uri_with_no_params_yields_bare_endpoint() {
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_end_session_uri = Some("https://issuer.example/logout".into());
+        assert_eq!(
+            r.build_logout_uri(None, None, None).as_deref(),
+            Some("https://issuer.example/logout"),
+        );
+    }
+
+    #[test]
+    fn build_logout_uri_with_all_params() {
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_end_session_uri = Some("https://issuer.example/logout".into());
+        let uri = r
+            .build_logout_uri(
+                Some("the-id-token"),
+                Some("https://app.example/post-logout"),
+                Some("xyz"),
+            )
+            .unwrap();
+        // OIDC Session Management 1.0 §5 — all three params should
+        // appear, URL-encoded as needed.
+        assert!(uri.starts_with("https://issuer.example/logout?"));
+        assert!(uri.contains("id_token_hint=the-id-token"), "got: {uri}");
+        assert!(
+            uri.contains("post_logout_redirect_uri=https%3A%2F%2Fapp.example%2Fpost-logout",),
+            "got: {uri}",
+        );
+        assert!(uri.contains("state=xyz"), "got: {uri}");
+    }
+
+    #[test]
+    fn build_logout_uri_appends_with_ampersand_when_query_present() {
+        // RFC 3986: `?` only at the start of the query; subsequent
+        // params join with `&`.
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_end_session_uri = Some("https://issuer.example/logout?tenant=acme".into());
+        let uri = r.build_logout_uri(Some("hint"), None, None).unwrap();
+        assert_eq!(
+            uri,
+            "https://issuer.example/logout?tenant=acme&id_token_hint=hint",
+        );
+    }
+
+    #[test]
+    fn build_logout_uri_omits_none_params() {
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_end_session_uri = Some("https://issuer.example/logout".into());
+        let uri = r.build_logout_uri(Some("hint"), None, Some("xyz")).unwrap();
+        assert!(uri.contains("id_token_hint=hint"), "got: {uri}");
+        assert!(uri.contains("state=xyz"), "got: {uri}");
+        assert!(!uri.contains("post_logout_redirect_uri"), "got: {uri}");
     }
 }
