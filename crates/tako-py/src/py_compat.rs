@@ -493,6 +493,38 @@ impl PyOidcAuth {
         Ok(PyOidcAuth { inner: Arc::new(r) })
     }
 
+    /// Phase 33 — atomically replace the mTLS identity used for
+    /// OIDC introspection POSTs without rebuilding the resolver.
+    /// Useful for cert rotation in long-running deployments
+    /// (cert-manager webhook, Vault PKI rotation, filesystem
+    /// watcher, periodic poll).
+    ///
+    /// Mutates state in place via internal mutability (does NOT
+    /// return a new `OidcAuth`). The swap is atomic from the
+    /// request handler's perspective: concurrent introspection
+    /// POSTs either see the old Client or the new one — never a
+    /// torn state.
+    ///
+    /// Raises `ValueError` when no prior `with_introspection_mtls`
+    /// or `with_introspection_self_signed_mtls` call has been
+    /// made (operator error rather than silent no-op). Raises
+    /// `ValueError` on PEM parse / `Client` build failure AND
+    /// leaves the previously installed Client unchanged.
+    fn reload_mtls_identity(&self, cert_pem: &[u8], key_pem: &[u8]) -> PyResult<()> {
+        self.inner
+            .reload_mtls_identity(cert_pem, key_pem)
+            .map_err(map_err)
+    }
+
+    /// Phase 33 — convenience for combined PEM blobs (the common
+    /// `cat cert.pem key.pem` form). Mirrors
+    /// [`Self::with_introspection_mtls_combined`]'s cadence.
+    fn reload_mtls_identity_combined(&self, combined_pem: &[u8]) -> PyResult<()> {
+        self.inner
+            .reload_mtls_identity_combined(combined_pem)
+            .map_err(map_err)
+    }
+
     /// Phase 18.B — return the OIDC Session Management 1.0
     /// `end_session_endpoint` URL the issuer advertised at discovery
     /// time. `None` when the issuer doesn't implement OIDC Session

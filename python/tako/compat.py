@@ -92,6 +92,21 @@ def serve_openai(
        After Phase 25 the OIDC introspection auth-method surface
        covers all six RFC 7662 §2.1 / RFC 8414 / RFC 8705 methods.
 
+       Phase 33.B — ``OidcAuth.reload_mtls_identity(cert_pem, key_pem)``
+       and ``OidcAuth.reload_mtls_identity_combined(combined_pem)``
+       atomically replace the mTLS identity used for OIDC
+       introspection POSTs without rebuilding the resolver.
+       Useful for cert rotation in long-running deployments
+       (cert-manager webhook, Vault PKI rotation, filesystem
+       watcher, periodic poll). Mutates state in place via
+       internal mutability — the swap is atomic from the request
+       handler's perspective; concurrent introspection POSTs
+       either see the old Client or the new one, never a torn
+       state. Raises ``ValueError`` when no prior
+       ``with_introspection_mtls`` call has been made, and
+       preserves the previously installed Client on PEM parse
+       failure.
+
        Phase 21.B — ``tako.compat.ChainedAuth`` (always-on; no
        cargo feature gate) is a composite resolver that wraps N
        child resolvers and tries them in append order. The first
