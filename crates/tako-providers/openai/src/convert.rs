@@ -226,11 +226,19 @@ fn message_to_oa(m: &Message) -> OaMessage {
                     },
                 });
             }
-            // Phase 22.A — placeholder silent-drop. Phase 22.C
-            // wires URL-source images by passing `url` straight
-            // through to `OaImageUrl.url` (no `data:` prefix
-            // wrapping).
-            ContentPart::ImageUrl { .. } => {}
+            // Phase 22.C — URL-source. OpenAI's vision endpoint
+            // accepts `https://` URLs in `image_url.url` directly
+            // (the same field that holds data-URLs in 19.B). Pass
+            // `url` through unchanged — no `data:` prefix wrapping.
+            // The optional `mime` from the core type is dropped:
+            // OpenAI's vision endpoint doesn't accept a separate
+            // mime hint on URL-source content blocks.
+            ContentPart::ImageUrl { url, mime: _ } => {
+                has_image = true;
+                blocks.push(OaContentBlock::ImageUrl {
+                    image_url: OaImageUrl { url: url.clone() },
+                });
+            }
         }
     }
     let content = if let Some(c) = tool_result_content {
@@ -470,6 +478,75 @@ mod tests {
         assert_eq!(
             build_data_url("image/png", "data:image/jpeg;base64,YWI="),
             "data:image/png;base64,YWI=",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 22.C — URL-source images via `OaImageUrl.url`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn image_url_block_emits_array_content_with_url() {
+        let m = user_msg(vec![
+            ContentPart::text("describe this"),
+            ContentPart::ImageUrl {
+                url: "https://example.com/cat.jpg".into(),
+                mime: None,
+            },
+        ]);
+        let oa = message_to_oa(&m);
+        let serialised = serde_json::to_value(&oa).unwrap();
+        assert_eq!(
+            serialised["content"],
+            json!([
+                { "type": "text", "text": "describe this" },
+                {
+                    "type": "image_url",
+                    "image_url": { "url": "https://example.com/cat.jpg" },
+                },
+            ]),
+        );
+    }
+
+    #[test]
+    fn image_url_does_not_get_data_url_wrapped() {
+        // Regression pin: the URL must pass through verbatim.
+        // Wrapping `https://...` in `data:image/...;base64,` would
+        // break the URL — Phase 22.C explicitly avoids the
+        // `build_data_url` helper for URL-source content.
+        let m = user_msg(vec![ContentPart::ImageUrl {
+            url: "https://example.com/dog.png".into(),
+            mime: Some("image/png".into()),
+        }]);
+        let oa = message_to_oa(&m);
+        let serialised = serde_json::to_value(&oa).unwrap();
+        let url = serialised["content"][0]["image_url"]["url"]
+            .as_str()
+            .unwrap();
+        assert_eq!(url, "https://example.com/dog.png");
+        // No `data:` prefix.
+        assert!(!url.starts_with("data:"), "got: {url}");
+    }
+
+    #[test]
+    fn image_url_drops_mime_hint() {
+        // OpenAI's vision endpoint doesn't accept a separate
+        // `mime` field on URL-source `image_url` blocks; the
+        // optional `mime` from the core type is intentionally
+        // dropped.
+        let m = user_msg(vec![ContentPart::ImageUrl {
+            url: "https://example.com/cat.jpg".into(),
+            mime: Some("image/jpeg".into()),
+        }]);
+        let oa = message_to_oa(&m);
+        let serialised = serde_json::to_value(&oa).unwrap();
+        let block = &serialised["content"][0];
+        assert_eq!(block["type"], "image_url");
+        assert!(block.get("mime").is_none(), "got: {block}");
+        assert!(block["image_url"].get("mime").is_none(), "got: {block}");
+        assert!(
+            block["image_url"].get("media_type").is_none(),
+            "got: {block}",
         );
     }
 }

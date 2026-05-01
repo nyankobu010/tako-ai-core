@@ -231,11 +231,16 @@ fn message_to_mi(m: &Message) -> MiMessage {
                     },
                 });
             }
-            // Phase 22.A — placeholder silent-drop. Phase 22.C
-            // wires URL-source images by passing `url` straight
-            // through to `MiImageUrl.url` (matches OpenAI's
-            // adapter).
-            ContentPart::ImageUrl { .. } => {}
+            // Phase 22.C — URL-source. Mistral's vision API is
+            // OpenAI-compatible: pass `url` through to
+            // `MiImageUrl.url` unchanged. Same MIME-hint handling
+            // as OpenAI (intentionally dropped).
+            ContentPart::ImageUrl { url, mime: _ } => {
+                has_image = true;
+                blocks.push(MiContentBlock::ImageUrl {
+                    image_url: MiImageUrl { url: url.clone() },
+                });
+            }
         }
     }
     let content = if let Some(c) = tool_result_content {
@@ -466,5 +471,49 @@ mod tests {
         for bad in ["image/svg+xml", "image/bmp", "text/plain"] {
             assert!(!is_supported_mistral_mime(bad));
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 22.C — URL-source images via `MiImageUrl.url`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn image_url_block_emits_array_content_with_url() {
+        let m = user_msg(vec![
+            ContentPart::text("describe this"),
+            ContentPart::ImageUrl {
+                url: "https://example.com/cat.jpg".into(),
+                mime: None,
+            },
+        ]);
+        let mi = message_to_mi(&m);
+        let serialised = serde_json::to_value(&mi).unwrap();
+        assert_eq!(
+            serialised["content"],
+            json!([
+                { "type": "text", "text": "describe this" },
+                {
+                    "type": "image_url",
+                    "image_url": { "url": "https://example.com/cat.jpg" },
+                },
+            ]),
+        );
+    }
+
+    #[test]
+    fn image_url_does_not_get_data_url_wrapped() {
+        // Regression pin: URL passes through verbatim. Wrapping
+        // `https://...` in `data:image/...;base64,` would break it.
+        let m = user_msg(vec![ContentPart::ImageUrl {
+            url: "https://example.com/dog.png".into(),
+            mime: Some("image/png".into()),
+        }]);
+        let mi = message_to_mi(&m);
+        let serialised = serde_json::to_value(&mi).unwrap();
+        let url = serialised["content"][0]["image_url"]["url"]
+            .as_str()
+            .unwrap();
+        assert_eq!(url, "https://example.com/dog.png");
+        assert!(!url.starts_with("data:"), "got: {url}");
     }
 }
