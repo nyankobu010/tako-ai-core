@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+title: "tako: Rust-core, Python-facade framework for enterprise agentic systems"
+message: "If you use this software, please cite it using the metadata below."
+type: software
+authors:
+  - name: "The tako contributors"
+    affiliation: "https://github.com/nyankobu010/tako-ai-core/graphs/contributors"
+url: "https://github.com/nyankobu010/tako-ai-core"
+repository-code: "https://github.com/nyankobu010/tako-ai-core"
+license: Apache-2.0
+keywords:
+  - rust
+  - python
+  - pyo3
+  - agents
+  - llm
+  - mcp
+  - mcts
+  - opentelemetry
+references:
+  - type: article
+    authors:
+      - family-names: Xu
+    title: "TRINITY: An Evolved LLM Coordinator"
+    year: 2025
+    url: "https://arxiv.org/abs/2512.04695"
+  - type: article
+    authors:
+      - family-names: Nielsen
+    title: "Learning to Orchestrate Agents in Natural Language with the Conductor"
+    year: 2025
+    url: "https://arxiv.org/abs/2512.04388"
+  - type: article
+    authors:
+      - family-names: Inoue
+    title: "AB-MCTS: Adaptive Branching Monte Carlo Tree Search"
+    year: 2025
+    url: "https://arxiv.org/abs/2503.04412"
