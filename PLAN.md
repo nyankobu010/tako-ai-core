@@ -48,30 +48,32 @@ synopsis and quickstart.
 | 27 — ChainedAuthResolver broader infrastructure-error short-circuit | v0.28.0 | done (2026-05-01) | [PLAN_PHASE27.md](PLAN_PHASE27.md) | [`## [0.28.0]`](CHANGELOG.md) |
 | 28 — URL-source images: Bedrock + Ollama (opt-in tako-side pre-fetch) | v0.29.0 | done (2026-05-01) | [PLAN_PHASE28.md](PLAN_PHASE28.md) | [`## [0.29.0]`](CHANGELOG.md) |
 | 29 — URL pre-fetch SSRF hardening (private-IP blocklist + DNS-rebind) + Ollama Python facade | v0.30.0 | done (2026-05-01) | [PLAN_PHASE29.md](PLAN_PHASE29.md) | [`## [0.30.0]`](CHANGELOG.md) |
+| 30 — URL pre-fetch per-host allowlist | v0.31.0 | done (2026-05-01) | [PLAN_PHASE30.md](PLAN_PHASE30.md) | [`## [0.31.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 30 candidates (indicative, not yet committed)
+### Phase 31 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 29's holding pen — URL pre-fetch SSRF
-hardening (private-IP blocklist + DNS-rebinding mitigation) and
-the `tako.providers.Ollama` Python facade landed in Phase 29.
-The tako-side URL pre-fetch surface now ships with a complete
-SSRF mitigation stack (https-only / timeout / size cap / MIME
-validation **+ private-IP blocklist + DNS-rebinding mitigation**),
-and both URL-prefetching providers (Bedrock + Ollama) have full
-Python parity. The remainder:
+Carry-forward from Phase 30's holding pen — per-host allowlist
+for URL pre-fetch landed in Phase 30. The tako-side URL pre-fetch
+surface now ships with a complete SSRF-mitigation stack
+(https-only / timeout / size cap / MIME validation + private-IP
+blocklist + DNS-rebinding mitigation + per-host allowlist
+override), and both URL-prefetching providers (Bedrock + Ollama)
+have full Python parity. The remainder:
 
-- **Per-domain allowlist for URL pre-fetch** — operators may
-  want to permit specific internal hostnames (e.g., a private
-  artifact registry on `10.0.x.x`) while still blocking
-  everything else. Phase 29 ships only the binary on/off
-  allow-private-IPs flag; an allowlist would need a chainable
-  `with_url_prefetch_allow_host(host)` builder + matching Python
-  kwarg.
+- **Wildcard / suffix host patterns** — Phase 30 ships
+  exact-string match only. Operators may want
+  `*.internal.corp.local` to permit all subdomains. Needs a
+  pattern matcher (probably `glob`-style or a dedicated
+  hostname-glob impl).
+- **CIDR allowlist** — operators may want
+  `with_url_prefetch_allow_cidr("10.0.5.0/24")` to permit a
+  whole subnet without enumerating each host. Needs a CIDR
+  parser dep (`ipnet` or hand-rolled).
 - **OIDC mTLS end-to-end integration test** — Phases 24 + 25
   ship builder-level tests; a real TLS server requiring client
   auth (axum-server + rustls + per-test CA) would close the

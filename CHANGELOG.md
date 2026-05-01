@@ -9,6 +9,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.31.0] - 2026-05-01
+
+Phase 30 — URL pre-fetch per-host allowlist. Closes the
+Phase-29-deferred operator-UX gap where the binary
+`with_url_prefetch_allow_private_ips()` flag is a sledgehammer:
+operators with an internal artifact registry on a private RFC
+1918 address would have to disable the WHOLE blocklist (incl.
+the canary 169.254.169.254 cloud-metadata endpoint) just to
+permit one trusted host.
+
+Phase 30 adds a per-host BYPASS that lets operators allowlist
+specific hostnames while keeping the rest of the blocklist
+active. Allowlisted hosts skip ONLY the private-IP blocklist;
+scheme / timeout / size cap / MIME validation all still apply
+(defence-in-depth). Plan: [PLAN_PHASE30.md](PLAN_PHASE30.md).
+
+### Added
+
+- **Phase 30.A — Bedrock URL pre-fetch per-host allowlist
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/bedrock/src/client.rs](crates/tako-providers/bedrock/src/client.rs)).**
+
+  New `UrlPrefetchConfig.allow_hosts: Arc<HashSet<String>>`
+  field shared between the `BlocklistResolver` and the inline
+  IP-literal check via `Arc` (cheap clone). The
+  `BlocklistResolver` carries a clone and skips the per-IP
+  blocklist when the requested hostname is in the set. The
+  inline IP-literal check (Phase 29.A) gains the same bypass:
+  matched against the raw `host_str` so
+  `with_url_prefetch_allow_host("10.0.5.4")` matches a URL
+  whose host is exactly `10.0.5.4`.
+
+  `UrlPrefetchOpts.allow_hosts: Vec<String>` builder field;
+  `into_config` collects to `Arc<HashSet<String>>` so duplicate
+  builder calls dedupe naturally.
+
+  New `BedrockBuilder::with_url_prefetch_allow_host(host: impl
+  Into<String>)` builder method — chainable; can be called
+  multiple times. Does NOT auto-enable `with_url_prefetch()`
+  (master switch must already be on).
+
+  Five new unit tests pinning: default empty allowlist,
+  into_config round-trip + dedupe, IP-literal allowlist bypass
+  (wiremock on 127.0.0.1 with allowlist={"127.0.0.1"}), and the
+  exact-match semantics (allowlist={"some-other-host"} does NOT
+  bypass `127.0.0.1`).
+
+- **Phase 30.B — Ollama URL pre-fetch per-host allowlist
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/ollama/src/client.rs](crates/tako-providers/ollama/src/client.rs)).**
+  Per-crate copy of all 30.A surfaces (per ARCHITECTURE.md
+  hard rule — provider crates depend only on `tako-core` +
+  their vendor SDK + reqwest; never on each other). Same
+  `OllamaBuilder::with_url_prefetch_allow_host(host)` builder.
+  Same test surface (5 new unit tests).
+
+- **Phase 30.C — Python facade
+  ([crates/tako-py/src/py_bedrock.rs](crates/tako-py/src/py_bedrock.rs)
+  +
+  [crates/tako-py/src/py_ollama.rs](crates/tako-py/src/py_ollama.rs)
+  +
+  [python/tako/providers.py](python/tako/providers.py)).**
+  Both `tako.providers.Bedrock` and `tako.providers.Ollama`
+  gain a new `url_prefetch_allow_hosts: list[str] | None`
+  kwarg, positioned between `url_prefetch_allow_private_ips`
+  and `url_prefetch_timeout_secs`. When `Some(hosts)`, the
+  PyO3 ctor calls
+  `with_url_prefetch_allow_host(host)` for each entry on the
+  underlying builder. `None` (default) means empty allowlist
+  — existing callers unaffected.
+
+  [`python/tako/_native.pyi`](python/tako/_native.pyi) updated
+  with the new kwarg on both stubs. Both class docstrings
+  document the new kwarg + bypass semantics.
+
+  Six new tests in
+  [`tests/python/test_phase30_allow_hosts.py`](tests/python/test_phase30_allow_hosts.py)
+  pin: kwarg presence on both providers; default `None`;
+  docstring documents the kwarg + bypass semantic. Behaviour
+  pinned in the Rust unit tests.
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.31.0.
+- `UrlPrefetchConfig::new` widens to take a fifth
+  `allow_hosts: Arc<HashSet<String>>` parameter. Internal
+  pub(crate) signature only — no public-API impact.
+
+### Carried forward to Phase 31+
+
+- **Wildcard / suffix host patterns** — Phase 30 ships
+  exact-string match only. Operators may want
+  `*.internal.corp.local` to permit all subdomains. Needs a
+  pattern matcher.
+- **CIDR allowlist** — `with_url_prefetch_allow_cidr("10.0.5.0/24")`
+  to permit a whole subnet without enumerating each host.
+  Needs a CIDR parser dep.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+- **Per-child `ChainedAuthResolver` policy override**
+  (Phase 27 carry-forward).
+
 ## [0.30.0] - 2026-05-01
 
 Phase 29 — URL pre-fetch SSRF hardening + Ollama Python facade.
