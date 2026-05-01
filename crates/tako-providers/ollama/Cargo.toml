@@ -27,6 +27,8 @@ async-stream       = "0.3"
 # Phase 28.B — opt-in tako-side URL-source image pre-fetch
 # encodes fetched bytes as bare base64 for Ollama's `images` field.
 base64             = { workspace = true }
+# Phase 32.B — CIDR allowlist for URL pre-fetch.
+ipnet              = { workspace = true }
 
 [dev-dependencies]
 wiremock           = { workspace = true }
