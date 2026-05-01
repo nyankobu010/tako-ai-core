@@ -39,19 +39,17 @@ synopsis and quickstart.
 | 18 — OIDC introspection asymmetric JWT + end-session helper | v0.19.0 | done (2026-05-01) | [PLAN_PHASE18.md](PLAN_PHASE18.md) | [`## [0.19.0]`](CHANGELOG.md) |
 | 19 — Vision content support: Anthropic + OpenAI | v0.20.0 | done (2026-05-01) | [PLAN_PHASE19.md](PLAN_PHASE19.md) | [`## [0.20.0]`](CHANGELOG.md) |
 | 20 — Vision content support: Vertex + Mistral + Ollama | v0.21.0 | done (2026-05-01) | [PLAN_PHASE20.md](PLAN_PHASE20.md) | [`## [0.21.0]`](CHANGELOG.md) |
+| 21 — Composite AuthResolver | v0.22.0 | done (2026-05-01) | [PLAN_PHASE21.md](PLAN_PHASE21.md) | [`## [0.22.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 21 candidates (indicative, not yet committed)
+### Phase 22 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 20's holding pen — vision content for
-Vertex + Mistral + Ollama landed in Phase 20. After Phase 20
-every shipped provider adapter (Anthropic, OpenAI, Vertex,
-Bedrock, Mistral, Ollama — six of six) handles outbound image
-content. The remainder:
+Carry-forward from Phase 21's holding pen — composite
+`AuthResolver` landed in Phase 21. The remainder:
 
 - **URL-source images** — Anthropic's `source.type = "url"`,
   OpenAI's `image_url.url` with `https://...`, Vertex's
@@ -66,8 +64,11 @@ content. The remainder:
 - **OIDC refresh-token / revocation-endpoint flows** — tako as
   token *consumer* rather than validator (different model from
   the existing `AuthResolver` surface).
-- **Composite `AuthResolver`s** (mTLS + bearer chaining) —
-  orthogonal.
+- **`ChainedAuthResolver` short-circuit semantics** — Phase 21
+  treats every `Err` as fall-through. If patterns emerge for
+  "fail fast on transport errors" (e.g. don't fall back to a
+  static-API-key resolver when the OIDC issuer is unreachable),
+  Phase 22+ may add `with_short_circuit_on_transport_error`.
 
 ### Beyond (speculative)
 

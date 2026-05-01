@@ -9,6 +9,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.22.0] - 2026-05-01
+
+Phase 21 — closes the long-standing operator gap on the
+OpenAI-compat HTTP server. `ChainedAuthResolver` lets operators
+compose existing `AuthResolver` impls for the common "accept
+either OIDC bearer OR API key" pattern. Plan:
+[PLAN_PHASE21.md](PLAN_PHASE21.md).
+
+### Added
+
+- **Phase 21.A — `ChainedAuthResolver` composite auth
+  ([crates/tako-compat/src/auth/chained.rs](crates/tako-compat/src/auth/chained.rs)).**
+  New always-on (no cargo feature gate) `AuthResolver` impl that
+  wraps N children and tries them in append order. The first
+  child to return `Ok` short-circuits; on all-`Err` the last
+  child's error propagates.
+
+  Public API: `tako_compat::ChainedAuthResolver` with builder
+  methods `new()`, `then(child: Arc<dyn AuthResolver>)`, plus
+  `len()` / `is_empty()` for assertions. `Clone + Debug + Default
+  + Send + Sync + 'static`. Re-exported from both
+  `auth/mod.rs` and `lib.rs`.
+
+  Semantics: empty chain returns
+  `TakoError::Invalid("chained auth: no resolvers configured")`;
+  any `Err` from a child falls through to the next (transient
+  OIDC transport failures don't strand a static-API-key
+  client); on all-`Err` the last child's error propagates.
+
+  Method named `then(child)` not `with(child)` because `with` is
+  a Python keyword — `chain.with(...)` would be a SyntaxError on
+  the Python facade. `then` matches the JS `Promise.then` and
+  Rust `Future` `.then(...)` idiom for sequential composition.
+
+  Eight new unit tests including a `CountingAuth` mock used by
+  `chained_first_match_short_circuits` to assert the second
+  child is **not** called when the first short-circuits, and
+  `chained_can_nest` exercising recursive composition (a chain
+  whose child is itself a chain). The `with`→`then` rename
+  landed as a fix commit (9a15877) on top of the initial
+  Phase-21.A landing (5856683).
+
+- **Phase 21.B — `ChainedAuth` Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `tako.compat.ChainedAuth` is always-on (no `auth-*` cargo
+  feature gate) — children themselves carry whatever gates they
+  were built under, so a wheel without `auth-oidc` simply can't
+  construct an `OidcAuth` to pass to `then(...)`.
+
+  PyO3 surface: `__init__()` (empty chain), `then(child)`
+  (immutable-builder append), `__len__()` (number of children).
+
+  The `extract_auth_resolver` helper that downcasts the
+  `serve_openai(auth=...)` kwarg gains a fourth always-on
+  `cast::<PyChainedAuth>` arm. Recursive composition works
+  (a chain containing another chain).
+
+  `tako.compat.ChainedAuth` re-export at
+  `python/tako/compat.py` (always-on `getattr` mirroring the
+  existing Jwt/Oidc/Vault cadence). Module docstring updated.
+  Class registration at `crates/tako-py/src/lib.rs` (no
+  `#[cfg(feature = ...)]` gate).
+
+  Six new Python tests in
+  [`tests/python/test_phase21_chained_auth.py`](tests/python/test_phase21_chained_auth.py)
+  covering attribute presence, empty construction, immutable-
+  builder semantics, `__len__` after stacking, garbage-input
+  `ValueError`, and recursive self-nesting.
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.22.0.
+
+### Carried forward to Phase 22+
+
+- URL-source images — Anthropic's `source.type = "url"`,
+  OpenAI's `image_url.url` with `https://...`, Vertex's
+  `file_data` with `file_uri`. Server-side fetch from
+  request-supplied URLs needs a security story.
+- OIDC introspection mTLS auth methods (`tls_client_auth` /
+  `self_signed_tls_client_auth`) — needs reqwest TLS feature
+  changes at workspace scope.
+- OIDC refresh-token / revocation-endpoint flows.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+- `ChainedAuthResolver` short-circuit-on-transport-error
+  semantics — Phase 21 treats every `Err` as fall-through; if
+  patterns emerge for fail-fast on transport errors, Phase 22+
+  may add `with_short_circuit_on_transport_error`.
+
 ## [0.21.0] - 2026-05-01
 
 Phase 20 — finishes the vision-content sweep started in Phase 19.
