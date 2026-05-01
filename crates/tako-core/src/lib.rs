@@ -5,8 +5,8 @@
 //!
 //! See the project [README] and [ARCHITECTURE] for context.
 //!
-//! [README]: https://github.com/TODO(<org>)/tako-ai-core#readme
-//! [ARCHITECTURE]: https://github.com/TODO(<org>)/tako-ai-core/blob/main/ARCHITECTURE.md
+//! [README]: https://github.com/nyankobu010/tako-ai-core#readme
+//! [ARCHITECTURE]: https://github.com/nyankobu010/tako-ai-core/blob/main/ARCHITECTURE.md
 
 pub mod error;
 pub mod traits;

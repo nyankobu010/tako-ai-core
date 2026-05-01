@@ -4,7 +4,7 @@
 >
 > Many arms, one mind.
 
-[![CI](https://github.com/TODO(<org>)/tako-ai-core/actions/workflows/ci.yml/badge.svg)](https://github.com/TODO(<org>)/tako-ai-core/actions/workflows/ci.yml)
+[![CI](https://github.com/nyankobu010/tako-ai-core/actions/workflows/ci.yml/badge.svg)](https://github.com/nyankobu010/tako-ai-core/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/tako.svg)](https://pypi.org/project/tako/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -908,10 +908,10 @@ See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 
 ## Community
 
-- Issues: <https://github.com/TODO(<org>)/tako-ai-core/issues>
-- Discussions: TODO(community): set up GitHub Discussions categories Q&A / Ideas / Show and tell.
-- Chat: TODO(community): create a Discord/Matrix room and link here.
-- Good first issues: <https://github.com/TODO(<org>)/tako-ai-core/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22>
+- Issues: <https://github.com/nyankobu010/tako-ai-core/issues>
+- Discussions: <https://github.com/nyankobu010/tako-ai-core/discussions>
+- Security: see [`SECURITY.md`](SECURITY.md) — please use GitHub *Private Vulnerability Reporting* rather than opening a public issue.
+- Good first issues: <https://github.com/nyankobu010/tako-ai-core/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22>
 
 ## License
 
