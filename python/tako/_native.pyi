@@ -62,6 +62,7 @@ class Bedrock:
         url_prefetch_allow_http: bool = ...,
         url_prefetch_allow_private_ips: bool = ...,
         url_prefetch_allow_hosts: list[str] | None = ...,
+        url_prefetch_allow_cidrs: list[str] | None = ...,
         url_prefetch_timeout_secs: int | None = ...,
         url_prefetch_max_bytes: int | None = ...,
     ) -> None: ...
@@ -77,6 +78,7 @@ class Ollama:
         url_prefetch_allow_http: bool = ...,
         url_prefetch_allow_private_ips: bool = ...,
         url_prefetch_allow_hosts: list[str] | None = ...,
+        url_prefetch_allow_cidrs: list[str] | None = ...,
         url_prefetch_timeout_secs: int | None = ...,
         url_prefetch_max_bytes: int | None = ...,
     ) -> None: ...

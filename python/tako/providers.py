@@ -178,28 +178,27 @@ class Bedrock(_ProviderBase):
     deployments that already filter network egress (VPC egress
     rules, Pod-level egress NetworkPolicies).
 
-    Phase 30.C / 31.C — ``url_prefetch_allow_hosts`` is a
-    per-host allowlist that bypasses the private-IP blocklist for
-    specific hostnames only. Useful for permitting an internal
-    artifact registry on a private RFC 1918 address while keeping
-    the rest of the blocklist active. Pass ``None`` (default) for
-    no allowlist, or a list of host strings. Allowlisted hosts
-    STILL pass through the scheme / timeout / size / MIME checks.
+    Phase 30.C / 31.C / 32.C — three forms of allowlist that
+    bypass the private-IP blocklist (but NOT the scheme / timeout
+    / size / MIME checks):
 
-    Two match modes:
+    - **Exact host** (Phase 30) — ``url_prefetch_allow_hosts``
+      list, entries like ``"registry.corp"``. Match the URL host
+      byte-for-byte. For IP-literal URLs, match the raw IP
+      string (``"10.0.5.4"``).
+    - **Wildcard host** (Phase 31) — same kwarg, entries like
+      ``"*.internal.corp"``. Match any hostname ending in
+      ``.internal.corp`` including multi-level subdomains. Does
+      NOT match the bare apex (``internal.corp``).
+    - **CIDR subnet** (Phase 32) — ``url_prefetch_allow_cidrs``
+      list, entries like ``"10.0.5.0/24"`` (IPv4) or
+      ``"2001:db8::/32"`` (IPv6). Single hosts as ``/32`` or
+      ``/128`` work too. Match any resolved IP that falls inside
+      the network — useful for subnets without a shared DNS
+      suffix or for raw IP-literal URLs. CIDR parse failures
+      surface from the constructor as an exception.
 
-    - **Exact string** (Phase 30) — ``"registry.corp"`` matches
-      ``https://registry.corp/cat.png`` byte-for-byte. For IP-
-      literal URLs, match against the raw IP string
-      (``"10.0.5.4"``).
-    - **Wildcard suffix** (Phase 31) — ``"*.internal.corp"``
-      matches any hostname ending with ``.internal.corp``,
-      including multi-level subdomains
-      (``staging.images.internal.corp``). Does NOT match the bare
-      apex (``internal.corp``); add the apex as a separate exact
-      entry if needed.
-
-    CIDR allowlists remain Phase 32+ candidates.
+    Pass ``None`` (default) for either kwarg to use no allowlist.
     """
 
     def __init__(
@@ -213,6 +212,7 @@ class Bedrock(_ProviderBase):
         url_prefetch_allow_http: bool = False,
         url_prefetch_allow_private_ips: bool = False,
         url_prefetch_allow_hosts: list[str] | None = None,
+        url_prefetch_allow_cidrs: list[str] | None = None,
         url_prefetch_timeout_secs: int | None = None,
         url_prefetch_max_bytes: int | None = None,
     ) -> None:
@@ -225,6 +225,7 @@ class Bedrock(_ProviderBase):
             url_prefetch_allow_http=url_prefetch_allow_http,
             url_prefetch_allow_private_ips=url_prefetch_allow_private_ips,
             url_prefetch_allow_hosts=url_prefetch_allow_hosts,
+            url_prefetch_allow_cidrs=url_prefetch_allow_cidrs,
             url_prefetch_timeout_secs=url_prefetch_timeout_secs,
             url_prefetch_max_bytes=url_prefetch_max_bytes,
         )
@@ -252,23 +253,19 @@ class Ollama(_ProviderBase):
     cap (override via ``url_prefetch_max_bytes``); MIME validated
     against ``image/{jpeg,png,gif,webp}``.
 
-    Phase 30.C / 31.C — ``url_prefetch_allow_hosts`` is a
-    per-host allowlist that bypasses the private-IP blocklist for
-    specific hostnames only. Useful for permitting an internal
-    image registry on a private RFC 1918 address.
+    Phase 30.C / 31.C / 32.C — three forms of allowlist that
+    bypass the private-IP blocklist:
 
-    Two match modes:
-
-    - **Exact string** (Phase 30) — ``"registry.corp"`` matches
-      that host byte-for-byte.
-    - **Wildcard suffix** (Phase 31) — ``"*.internal.corp"``
-      matches any hostname ending with ``.internal.corp``,
-      including multi-level subdomains. Does NOT match the bare
-      apex.
+    - **Exact host** (Phase 30) — ``url_prefetch_allow_hosts``
+      list, exact-string match.
+    - **Wildcard host** (Phase 31) — same kwarg, entries like
+      ``"*.internal.corp"`` (multi-level subdomain match).
+    - **CIDR subnet** (Phase 32) — ``url_prefetch_allow_cidrs``
+      list, entries like ``"10.0.5.0/24"`` (IPv4) or
+      ``"2001:db8::/32"`` (IPv6).
 
     Operators must enforce network egress at deployment level
     (Pod-level egress NetworkPolicies, etc.) for defence-in-depth.
-    CIDR allowlists remain Phase 32+ candidates.
 
     Example::
 
@@ -279,6 +276,9 @@ class Ollama(_ProviderBase):
             url_prefetch_allow_hosts=[
                 "registry.internal.corp",       # exact match
                 "*.images.internal.corp",       # any subdomain
+            ],
+            url_prefetch_allow_cidrs=[
+                "10.0.5.0/24",                  # whole subnet
             ],
         )
     """
@@ -293,6 +293,7 @@ class Ollama(_ProviderBase):
         url_prefetch_allow_http: bool = False,
         url_prefetch_allow_private_ips: bool = False,
         url_prefetch_allow_hosts: list[str] | None = None,
+        url_prefetch_allow_cidrs: list[str] | None = None,
         url_prefetch_timeout_secs: int | None = None,
         url_prefetch_max_bytes: int | None = None,
     ) -> None:
@@ -304,6 +305,7 @@ class Ollama(_ProviderBase):
             url_prefetch_allow_http=url_prefetch_allow_http,
             url_prefetch_allow_private_ips=url_prefetch_allow_private_ips,
             url_prefetch_allow_hosts=url_prefetch_allow_hosts,
+            url_prefetch_allow_cidrs=url_prefetch_allow_cidrs,
             url_prefetch_timeout_secs=url_prefetch_timeout_secs,
             url_prefetch_max_bytes=url_prefetch_max_bytes,
         )

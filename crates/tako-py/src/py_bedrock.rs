@@ -43,13 +43,22 @@ impl PyBedrock {
     /// servers behind private addresses. Does NOT auto-enable
     /// `url_prefetch=True`.
     ///
-    /// Phase 30.C — `url_prefetch_allow_hosts` is a per-host
+    /// Phase 30.C / 31 — `url_prefetch_allow_hosts` is a per-host
     /// allowlist that bypasses the private-IP blocklist for
     /// specific hostnames only (scheme / timeout / size / MIME
     /// checks all still apply). Useful for permitting an internal
     /// artifact registry on a private RFC 1918 address while
     /// keeping the rest of the blocklist active. Pass `None` for
-    /// no allowlist (default), or a list of hostnames to allow.
+    /// no allowlist (default), or a list of hostnames. Phase 31
+    /// — entries starting with `*.` are recognised as wildcard
+    /// suffix patterns.
+    ///
+    /// Phase 32.C — `url_prefetch_allow_cidrs` is a CIDR-based
+    /// bypass for the private-IP blocklist. Pass `None` (default)
+    /// or a list of CIDR strings (`"10.0.5.0/24"`,
+    /// `"2001:db8::/32"`); a resolved IP that falls inside any
+    /// allowlisted CIDR is permitted. CIDR parse failures
+    /// surface from the constructor as a `ValueError`-equivalent.
     #[new]
     #[pyo3(signature = (
         model,
@@ -60,6 +69,7 @@ impl PyBedrock {
         url_prefetch_allow_http=false,
         url_prefetch_allow_private_ips=false,
         url_prefetch_allow_hosts=None,
+        url_prefetch_allow_cidrs=None,
         url_prefetch_timeout_secs=None,
         url_prefetch_max_bytes=None,
     ))]
@@ -74,6 +84,7 @@ impl PyBedrock {
         url_prefetch_allow_http: bool,
         url_prefetch_allow_private_ips: bool,
         url_prefetch_allow_hosts: Option<Vec<String>>,
+        url_prefetch_allow_cidrs: Option<Vec<String>>,
         url_prefetch_timeout_secs: Option<u64>,
         url_prefetch_max_bytes: Option<usize>,
     ) -> PyResult<Self> {
@@ -103,6 +114,12 @@ impl PyBedrock {
         if let Some(hosts) = url_prefetch_allow_hosts {
             for host in hosts {
                 b = b.with_url_prefetch_allow_host(host);
+            }
+        }
+        // Phase 32.C — CIDR allowlist.
+        if let Some(cidrs) = url_prefetch_allow_cidrs {
+            for cidr in cidrs {
+                b = b.with_url_prefetch_allow_cidr(cidr);
             }
         }
         if let Some(secs) = url_prefetch_timeout_secs {

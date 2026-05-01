@@ -40,10 +40,16 @@ impl PyOllama {
     /// `url_prefetch_max_bytes`); MIME validated against
     /// `image/{jpeg,png,gif,webp}`.
     ///
-    /// Phase 30.C — `url_prefetch_allow_hosts` is a per-host
+    /// Phase 30.C / 31 — `url_prefetch_allow_hosts` is a per-host
     /// allowlist that bypasses the private-IP blocklist for
-    /// specific hostnames only. Useful for permitting an internal
-    /// image-registry on a private RFC 1918 address.
+    /// specific hostnames only. Phase 31 — entries starting with
+    /// `*.` are recognised as wildcard suffix patterns.
+    ///
+    /// Phase 32.C — `url_prefetch_allow_cidrs` is a CIDR-based
+    /// bypass. Pass a list of CIDR strings (`"10.0.5.0/24"`,
+    /// `"2001:db8::/32"`); a resolved IP that falls inside any
+    /// allowlisted CIDR is permitted. CIDR parse failures
+    /// surface from the constructor.
     #[new]
     #[pyo3(signature = (
         model,
@@ -53,6 +59,7 @@ impl PyOllama {
         url_prefetch_allow_http=false,
         url_prefetch_allow_private_ips=false,
         url_prefetch_allow_hosts=None,
+        url_prefetch_allow_cidrs=None,
         url_prefetch_timeout_secs=None,
         url_prefetch_max_bytes=None,
     ))]
@@ -65,6 +72,7 @@ impl PyOllama {
         url_prefetch_allow_http: bool,
         url_prefetch_allow_private_ips: bool,
         url_prefetch_allow_hosts: Option<Vec<String>>,
+        url_prefetch_allow_cidrs: Option<Vec<String>>,
         url_prefetch_timeout_secs: Option<u64>,
         url_prefetch_max_bytes: Option<usize>,
     ) -> PyResult<Self> {
@@ -88,6 +96,12 @@ impl PyOllama {
         if let Some(hosts) = url_prefetch_allow_hosts {
             for host in hosts {
                 b = b.with_url_prefetch_allow_host(host);
+            }
+        }
+        // Phase 32.C — CIDR allowlist.
+        if let Some(cidrs) = url_prefetch_allow_cidrs {
+            for cidr in cidrs {
+                b = b.with_url_prefetch_allow_cidr(cidr);
             }
         }
         if let Some(secs) = url_prefetch_timeout_secs {
