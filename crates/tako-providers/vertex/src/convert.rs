@@ -234,6 +234,12 @@ fn message_to_vx(
                     },
                 });
             }
+            // Phase 22.A — silent-drop. Vertex's `fileData` part
+            // accepts only vendor-specific URI schemes (GCS
+            // `gs://...` or the Vertex File API), not arbitrary
+            // `https://`. URL-source via `fileData` is deferred
+            // to Phase 23+ pending a per-URL-scheme branch.
+            ContentPart::ImageUrl { .. } => {}
         }
     }
     VxContent {

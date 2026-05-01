@@ -206,6 +206,10 @@ fn content_to_blocks(parts: &[ContentPart]) -> Vec<AnBlock> {
                     },
                 })
             }
+            // Phase 22.A — placeholder silent-drop. Phase 22.B
+            // wires URL-source images through `AnImageSource::Url`
+            // (struct → enum refactor in the same commit).
+            ContentPart::ImageUrl { .. } => None,
         })
         .collect()
 }

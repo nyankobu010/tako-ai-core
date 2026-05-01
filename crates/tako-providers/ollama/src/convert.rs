@@ -177,6 +177,12 @@ fn message_to_ol(m: &Message) -> OlMessage {
                 // data-URL prefix the caller may have supplied.
                 images.push(strip_data_url_prefix(data_b64).to_string());
             }
+            // Phase 22.A — silent-drop. Ollama's `images` field
+            // carries only bare base64 — no URL form. URL-source
+            // images would require a tako-side pre-fetch (back to
+            // the SSRF concern Phase 22 dodged); deferred to
+            // Phase 23+.
+            ContentPart::ImageUrl { .. } => {}
         }
     }
     OlMessage {

@@ -226,6 +226,11 @@ fn message_to_oa(m: &Message) -> OaMessage {
                     },
                 });
             }
+            // Phase 22.A — placeholder silent-drop. Phase 22.C
+            // wires URL-source images by passing `url` straight
+            // through to `OaImageUrl.url` (no `data:` prefix
+            // wrapping).
+            ContentPart::ImageUrl { .. } => {}
         }
     }
     let content = if let Some(c) = tool_result_content {

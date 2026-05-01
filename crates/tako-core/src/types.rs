@@ -107,6 +107,24 @@ pub enum ContentPart {
         mime: String,
         data_b64: String,
     },
+    /// Phase 22 — URL-source image. The provider's API server
+    /// fetches `url`; tako passes it through unchanged. `mime` is
+    /// an optional hint (some vendors use it; others ignore it).
+    /// Use for `https://` URLs only — the security story for
+    /// `http://` URLs and vendor-specific URI schemes (Vertex's
+    /// `gs://...`, Bedrock's pre-fetched bytes, Ollama's
+    /// pre-fetched bytes) remains deferred to Phase 23+.
+    ///
+    /// Wired through Anthropic, OpenAI, and Mistral (the three
+    /// vendors whose API servers fetch `https://` URLs directly).
+    /// Vertex / Bedrock / Ollama silently drop this variant —
+    /// their wire formats either require vendor-specific URIs or
+    /// don't support URL sources at all.
+    ImageUrl {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mime: Option<String>,
+    },
     ToolCall {
         id: String,
         name: String,

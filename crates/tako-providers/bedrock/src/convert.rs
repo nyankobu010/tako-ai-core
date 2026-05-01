@@ -211,6 +211,13 @@ fn content_to_blocks(parts: &[ContentPart]) -> Result<Vec<br::ContentBlock>, Tak
                     .map_err(|e| TakoError::Invalid(format!("Bedrock ImageBlock build: {e}")))?;
                 out.push(br::ContentBlock::Image(block));
             }
+            // Phase 22.A — silent-drop. The AWS Bedrock SDK's
+            // `ImageSource` exposes only `Bytes`; there's no URL
+            // variant, so URL-source images would require a
+            // tako-side pre-fetch (back to the SSRF concern that
+            // Phase 22 explicitly dodged by doing vendor-fetched
+            // URLs only). Deferred to Phase 23+.
+            ContentPart::ImageUrl { .. } => {}
         }
     }
     Ok(out)
