@@ -9,6 +9,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.32.0] - 2026-05-01
+
+Phase 31 — URL pre-fetch wildcard host patterns. Closes the
+Phase-30-deferred operator-UX gap where exact-string allowlist
+entries had to enumerate every subdomain. A single
+`*.internal.corp` entry now covers all current AND future
+subdomains under that suffix.
+
+Wildcard semantic: `*.X` matches any hostname ending in `.X`
+(literal `ends_with` check), INCLUDING multi-level subdomains
+(`staging.images.internal.corp` matches `*.internal.corp`).
+Does NOT match the bare apex (`internal.corp`) — operators add
+the apex as a separate exact entry if needed. Multi-level
+matching is the operator-intent default; RFC 6125's strict
+one-level semantics is for TLS cert SANs, not operator-
+controlled allowlists.
+
+Three sub-items, all strictly additive — public APIs unchanged
+shape. Plan: [PLAN_PHASE31.md](PLAN_PHASE31.md).
+
+### Added
+
+- **Phase 31.A — Bedrock URL pre-fetch wildcard host patterns
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/bedrock/src/client.rs](crates/tako-providers/bedrock/src/client.rs)).**
+
+  New `AllowList` struct splits exact-match hostnames from
+  wildcard suffix patterns at config time:
+
+  ```rust
+  pub(crate) struct AllowList {
+      exact: HashSet<String>,
+      suffixes: Vec<String>,  // each entry stored as `.X` for ends_with
+  }
+
+  impl AllowList {
+      pub(crate) fn from_strings(entries: Vec<String>) -> Self;
+      pub(crate) fn contains(&self, host: &str) -> bool;
+  }
+  ```
+
+  Entries starting with `*.` are recognised at `from_strings`
+  time and stored in `suffixes` (with the leading `*` stripped
+  and the result prefixed with `.` for `ends_with`). Phase 30
+  entries (no `*.` prefix) continue to flow into the `exact`
+  HashSet — semantics preserved byte-for-byte.
+
+  Runtime check (`AllowList::contains`) is a single
+  `HashSet::contains` plus a short linear scan over dotted
+  suffixes — no per-call `format!` allocation.
+
+  `Arc<HashSet<String>>` becomes `Arc<AllowList>` on
+  `UrlPrefetchConfig` and `BlocklistResolver`. The Phase 30
+  builder method `with_url_prefetch_allow_host(host)` is
+  unchanged — entries are parsed at `into_config` time. Doc
+  comment updated to document both match modes.
+
+  Eight new unit tests covering: exact match (Phase 30
+  regression), single-level subdomain match, multi-level
+  subdomain match, bare-domain non-match, other-domain
+  non-match, attacker-domain non-match (`attacker-internal.corp`
+  vs `*.internal.corp`), and exact + wildcard coexistence.
+
+- **Phase 31.B — Ollama URL pre-fetch wildcard host patterns
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/ollama/src/client.rs](crates/tako-providers/ollama/src/client.rs)).**
+  Per-crate copy of all 31.A surfaces. Per ARCHITECTURE.md
+  hard rule (provider crates depend only on `tako-core` +
+  their vendor SDK + reqwest; never on each other), the
+  `AllowList` struct is duplicated rather than shared. Same
+  test surface (8 new unit tests).
+
+- **Phase 31.C — Python facade docstrings + tests
+  ([python/tako/providers.py](python/tako/providers.py)
+  +
+  [tests/python/test_phase31_wildcard_hosts.py](tests/python/test_phase31_wildcard_hosts.py)).**
+
+  No PyO3 code change — the
+  `url_prefetch_allow_hosts: list[str] | None` kwarg shape is
+  unchanged; the new wildcard semantic lands entirely on the
+  Rust side. The Python facade ships:
+
+  - Both `Bedrock` and `Ollama` class docstrings updated to
+    document the two match modes (exact-string + wildcard
+    suffix), the multi-level matching semantic, and the
+    bare-apex caveat.
+  - The `Ollama` docstring example was extended to show both
+    modes side-by-side.
+  - Six new tests in
+    [`tests/python/test_phase31_wildcard_hosts.py`](tests/python/test_phase31_wildcard_hosts.py)
+    pin: kwarg type unchanged (Phase 30 regression); both
+    docstrings document `*.X` patterns with multi-level
+    matching; both docstrings include the bare-apex caveat.
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.32.0.
+- `UrlPrefetchConfig::new`'s fifth parameter widens from
+  `Arc<HashSet<String>>` to `Arc<AllowList>`. Internal
+  pub(crate) signature only — no public-API impact.
+
+### Carried forward to Phase 32+
+
+- **CIDR allowlist** — `with_url_prefetch_allow_cidr("10.0.5.0/24")`.
+  Operators may want to permit a whole subnet without
+  enumerating each host. Needs a CIDR parser dep
+  (`ipnet` or hand-rolled).
+- **Wildcard at non-leftmost positions** — patterns like
+  `registry.*.corp`. Phase 31 ships only the leftmost-`*.`
+  convention. Probably never worth shipping unless a real
+  operator asks.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+- **Per-child `ChainedAuthResolver` policy override**
+  (Phase 27 carry-forward).
+
 ## [0.31.0] - 2026-05-01
 
 Phase 30 — URL pre-fetch per-host allowlist. Closes the
