@@ -41,23 +41,29 @@ synopsis and quickstart.
 | 20 — Vision content support: Vertex + Mistral + Ollama | v0.21.0 | done (2026-05-01) | [PLAN_PHASE20.md](PLAN_PHASE20.md) | [`## [0.21.0]`](CHANGELOG.md) |
 | 21 — Composite AuthResolver | v0.22.0 | done (2026-05-01) | [PLAN_PHASE21.md](PLAN_PHASE21.md) | [`## [0.22.0]`](CHANGELOG.md) |
 | 22 — URL-source images: Anthropic + OpenAI + Mistral | v0.23.0 | done (2026-05-01) | [PLAN_PHASE22.md](PLAN_PHASE22.md) | [`## [0.23.0]`](CHANGELOG.md) |
+| 23 — URL-source images: Vertex (Gemini fileData) | v0.24.0 | done (2026-05-01) | [PLAN_PHASE23.md](PLAN_PHASE23.md) | [`## [0.24.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 23 candidates (indicative, not yet committed)
+### Phase 24 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 22's holding pen — URL-source images
-landed for Anthropic + OpenAI + Mistral in Phase 22 (the three
-vendors whose API servers fetch URLs themselves). The remainder:
+Carry-forward from Phase 23's holding pen — URL-source images
+now flow through four of the six provider adapters (Anthropic +
+OpenAI + Mistral in Phase 22, Vertex in Phase 23). The remainder:
 
-- **URL-source images for Vertex / Bedrock / Ollama** — different
-  model: Vertex needs vendor-specific URI schemes (`gs://...`,
-  Vertex File API URIs); Bedrock and Ollama would require a
-  tako-side pre-fetch (back to the SSRF concern Phase 22 dodged
-  by doing vendor-fetched URLs only).
+- **URL-source images for Bedrock / Ollama** — different model
+  from the four vendors that fetch URLs themselves. Bedrock's
+  AWS SDK `ImageSource` has no URL variant; Ollama's `images`
+  field carries bare base64 only. Both would require a tako-side
+  pre-fetch with an SSRF guard. Needs a security design first.
+- **Vertex File API upload flow** — separate API surface for
+  uploading bytes and getting back a Vertex File URI; not just
+  a content-block mapping. The Phase 23 `VxFileData` part
+  already accepts those URIs, but tako doesn't expose an upload
+  helper.
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
   Sandboxed runner needed.

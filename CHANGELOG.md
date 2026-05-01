@@ -9,6 +9,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.24.0] - 2026-05-01
+
+Phase 23 — extends Phase 22's URL-source-image work to Vertex.
+After Phase 23 four of the six provider adapters (Anthropic,
+OpenAI, Mistral, Vertex) handle outbound URL-source images;
+Bedrock + Ollama remain deferred (both need tako-side pre-fetch
+with an SSRF guard — different design problem from the
+vendor-fetched-URL case). Plan: [PLAN_PHASE23.md](PLAN_PHASE23.md).
+
+### Added
+
+- **Phase 23.A — URL-source images for Vertex via
+  `VxPart::FileData`
+  ([crates/tako-providers/vertex/src/convert.rs](crates/tako-providers/vertex/src/convert.rs)).**
+  Phase 22 framed Vertex's deferral as "Gemini's `fileData`
+  accepts only vendor-specific URI schemes (`gs://...`)". Per
+  Gemini's published API docs, `fileData` actually accepts URIs
+  from three sources:
+  - `gs://bucket/path` GCS URIs (Google fetches server-side;
+    private buckets need IAM auth on Google's side, not tako's).
+  - `https://...` public web URLs — same vendor-fetch security
+    posture as Phase 22's Anthropic / OpenAI / Mistral
+    URL-source paths.
+  - Vertex File API URIs — files uploaded via Google's File
+    API (out of scope; needs a separate upload surface that
+    tako doesn't expose yet).
+
+  This commit covers the first two. New `VxPart::FileData {
+  file_data: VxFileData }` variant on the untagged
+  content-part enum; `VxFileData` carries `mime_type` (renamed
+  `mimeType` on the wire) and `file_uri` (renamed `fileUri`).
+  Camel-case naming matches the existing `inlineData` /
+  `functionCall` / `functionResponse` convention.
+
+  Mapping in `message_to_vx`:
+
+  ```rust
+  ContentPart::ImageUrl { url, mime } => {
+      let Some(mime) = mime else { continue; };
+      if !is_supported_vertex_mime(mime) { continue; }
+      parts.push(VxPart::FileData {
+          file_data: VxFileData {
+              mime_type: mime.clone(),
+              file_uri: url.clone(),
+          },
+      });
+  }
+  ```
+
+  Per Gemini docs `mimeType` is REQUIRED on `fileData` — the
+  optional `ContentPart::ImageUrl.mime` is required for the
+  Vertex path; mime-less URL-source content silently drops.
+  Unsupported MIME types also drop, reusing the
+  `is_supported_vertex_mime` filter from Phase 20.A.
+
+  URL-scheme branching: tako does not pre-validate — Gemini
+  rejects unsupported schemes at request time. Same pass-through
+  pattern as Phase 22.B's choice on Anthropic's `https`-only
+  constraint.
+
+  Five new unit tests: `image_url_block_emits_file_data_with_gs_uri`
+  (pinned JSON shape with GCS URI),
+  `image_url_block_emits_file_data_with_https_uri` (HTTPS URL
+  pass-through), `image_url_block_drops_when_mime_missing`,
+  `image_url_block_drops_unsupported_mime`,
+  `image_url_and_inline_data_can_coexist` (mixed inline base64
+  + URL-source parts emit two adjacent `parts` entries —
+  `inlineData` + `fileData` — in source order).
+
+### Changed
+
+- `VxPart` enum gains a new `FileData` variant. `#[serde(untagged)]`
+  so the addition is wire-invisible to existing
+  `inlineData`/`text`/`functionCall`/`functionResponse` paths.
+  Phase 20.A inline-data tests pass byte-for-byte unchanged.
+- Workspace + Python crate version bumped to v0.24.0.
+
+### Carried forward to Phase 24+
+
+- URL-source images for Bedrock / Ollama. Bedrock's AWS SDK
+  `ImageSource` has no URL variant; Ollama's `images` field
+  carries bare base64 only. Both need tako-side pre-fetch with
+  an SSRF guard — a different design problem from the
+  vendor-fetched-URL case Phases 22 + 23 covered.
+- Vertex File API upload flow — separate API surface for
+  uploading bytes and getting back a Vertex File URI. The
+  Phase 23 `VxFileData` part already accepts those URIs, but
+  tako doesn't expose an upload helper.
+- OIDC introspection mTLS auth methods, OIDC refresh-token /
+  revocation-endpoint flows, eval-harness real graders,
+  `ChainedAuthResolver` short-circuit-on-transport-error.
+
 ## [0.23.0] - 2026-05-01
 
 Phase 22 — closes the long-deferred URL-source-image gap.
