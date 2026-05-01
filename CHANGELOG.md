@@ -9,6 +9,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.18.0] - 2026-05-01
+
+Phase 17 — closes the two OIDC introspection auth-method items
+that Phase 16.B.2 explicitly deferred. Strictly additive:
+discovery-driven auth-method selection per RFC 8414 reads the
+`introspection_endpoint_auth_methods_supported` field of the
+issuer's discovery doc and auto-selects the strongest method;
+`client_secret_jwt` introspection auth method per RFC 7521 / 7523
+builds an HS256-signed client-assertion JWT and sends it as
+`client_assertion` form fields. Python facade mirrors both.
+Plan: [PLAN_PHASE17.md](PLAN_PHASE17.md).
+
+### Added
+
+- **Phase 17.A — Discovery-driven OIDC introspection auth-method
+  selection
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  The OIDC discovery doc (RFC 8414) advertises supported
+  introspection-endpoint auth methods via the
+  `introspection_endpoint_auth_methods_supported` field.
+  `OidcAuthResolver` now captures that list at construction time
+  in a new `discovered_introspection_auth_methods: Option<Vec<String>>`
+  field. The new chainable
+  `with_introspection_auth_method_from_discovery()` builder picks
+  the strongest mutually-supported method per the preference
+  order shipped in 17.B (`client_secret_jwt` >
+  `client_secret_basic` > `client_secret_post`).
+  - Silent no-op when no introspection config has been attached
+    yet (matches the Phase-16.B.2 chainable-builder cadence).
+  - When discovery did not advertise the field (`None`): selects
+    `ClientSecretBasic` per RFC 8414's documented default.
+  - When discovery advertised a list with **no** supported
+    variant (e.g. issuer requires only `tls_client_auth` or
+    `private_key_jwt`, both deferred to Phase 18+): returns
+    `TakoError::Invalid("oidc: no supported introspection auth
+    method advertised by issuer; supported: [...]")`. Surfacing
+    this at builder time rather than as an HTTP-401 from the
+    introspection endpoint helps the operator notice the
+    misconfiguration before the first request.
+  Six new unit tests covering discovery-doc parsing, the no-op /
+  field-absent / Basic-listed / Post-only-listed / fail-closed /
+  Basic-preferred-over-Post cases. Existing 15.B.2 / 16.B.2 wire
+  tests still byte-for-byte green.
+
+- **Phase 17.B — OIDC introspection `client_secret_jwt` auth
+  method
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  New `IntrospectionAuthMethod::ClientSecretJwt` variant per
+  RFC 7521 / 7523 client-assertion JWT authentication. When
+  selected, `introspect()` builds a short-lived HS256 JWT signed
+  over the configured `client_secret` and sends it as the
+  `client_assertion` form field alongside the fixed
+  `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.
+  No `Authorization` header is sent.
+
+  JWT claims (RFC 7521 §5 / 7523 §3 / 7519): `iss` = `sub` =
+  `client_id`; `aud` = `introspect_uri` (binds the assertion to
+  its target endpoint to prevent replay against a different
+  endpoint at the same authorization server); `iat` = unix-now;
+  `exp` = `iat + 30s` (RFC 7521 §4.2 recommends a "short
+  lifetime"); `jti` = `{nanos}-{counter}` from a process-monotonic
+  `AtomicU64` paired with the wall-clock nanosecond — RFC 7519
+  §4.1.7 only requires uniqueness within the issuer's tokens, the
+  combo gives effectively-zero collision risk inside the
+  30-second validity window even across process restarts.
+
+  Errors at request time (not builder time) when `ClientSecretJwt`
+  is selected but `client_secret.is_none()` — HS256 needs the
+  symmetric key. The 17.A auto-selector is extended to prefer
+  `client_secret_jwt` when (a) the issuer advertises it AND (b)
+  a `client_secret` is configured; new `auto_select_skips_jwt_when_no_secret`
+  test pins this guardrail.
+
+  Asymmetric `private_key_jwt` (RS256 / ES256 with separate
+  signing-key storage) remains deferred to Phase 18+ —
+  `EncodingKey` doesn't impl `Clone` cleanly and a separate
+  config surface is warranted.
+
+  Seven new tests: `auto_select_prefers_jwt_when_listed_and_secret_present`,
+  `auto_select_skips_jwt_when_no_secret`,
+  `auto_select_errors_when_jwt_only_listed_and_no_secret`,
+  `introspect_jwt_errors_when_secret_missing`,
+  `introspect_jwt_carries_client_assertion_form_fields`
+  (asserts the form-encoded `client_assertion_type=urn%3A...` and
+  `client_assertion=...` fields, AND the absence of a
+  `client_secret=` field), `introspect_jwt_signed_with_client_secret_hs256`
+  (captures the wiremock request body, parses out the
+  `client_assertion` JWT, verifies the HS256 signature against
+  the configured client_secret using `jsonwebtoken::decode`, and
+  asserts the claim layout), and `make_jti_yields_unique_values`
+  (256-iter uniqueness smoke).
+
+- **Phase 17.C — Python facade mirror
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `tako.compat.OidcAuth.with_introspection_auth_method` alias
+  parser extended to accept case-insensitive `"jwt"` /
+  `"client_secret_jwt"`. New chainable
+  `tako.compat.OidcAuth.with_introspection_auth_method_from_discovery()`
+  instance method. Module docstring at
+  [`python/tako/compat.py`](python/tako/compat.py) updated to
+  mention the new entry points. New
+  [`tests/python/test_phase17_oidc.py`](tests/python/test_phase17_oidc.py)
+  covers facade attribute presence; the eight new Rust unit
+  tests across 17.A + 17.B remain the source of truth for
+  behaviour.
+
+### Changed
+
+- `IntrospectionAuthMethod` gains a third unit variant
+  `ClientSecretJwt`. The enum keeps
+  `#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]` — the
+  new variant is unit-shaped so all 16.B.2 Copy/Eq machinery
+  still works. Default remains `ClientSecretBasic`; existing
+  Basic / Post wire shape byte-for-byte preserved.
+- `OidcAuthResolver` gains a private
+  `discovered_introspection_auth_methods: Option<Vec<String>>`
+  field; existing struct-literal initialisers (test code) need
+  to pass the new field. The runtime constructor (`discover()`)
+  remains the only public path so this isn't a breaking change
+  for external callers.
+- Workspace + Python crate version bumped to v0.18.0.
+
+### Carried forward to Phase 18+
+
+- OIDC introspection mTLS (`tls_client_auth` /
+  `self_signed_tls_client_auth`) auth methods — needs client TLS
+  material plumbed through `reqwest::ClientBuilder`.
+- OIDC introspection `private_key_jwt` (asymmetric JWT client
+  auth — RS256 / ES256 with separate signing-key storage).
+- OIDC refresh-token / end-session endpoint flows.
+- Composite `AuthResolver`s (mTLS + bearer chaining).
+- Vision / image content support across Anthropic / Vertex /
+  Bedrock.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
 ## [0.17.0] - 2026-05-01
 
 Phase 16 — production hardening of the streaming-verifier and auth

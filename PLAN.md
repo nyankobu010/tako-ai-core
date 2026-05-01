@@ -35,19 +35,19 @@ synopsis and quickstart.
 | 14 — Streaming verifier in Conductor + tako-compat real auth providers | v0.15.0 | done (2026-04-30) | [PLAN_PHASE14.md](PLAN_PHASE14.md) | [`## [0.15.0]`](CHANGELOG.md) |
 | 15 — Streaming verifier in AbMcts + tako-compat auth hardening | v0.16.0 | done (2026-05-01) | [PLAN_PHASE15.md](PLAN_PHASE15.md) | [`## [0.16.0]`](CHANGELOG.md) |
 | 16 — Streaming-rollout backpressure + tako-compat auth hardening, continued | v0.17.0 | done (2026-05-01) | [PLAN_PHASE16.md](PLAN_PHASE16.md) | [`## [0.17.0]`](CHANGELOG.md) |
+| 17 — OIDC introspection completeness | v0.18.0 | done (2026-05-01) | [PLAN_PHASE17.md](PLAN_PHASE17.md) | [`## [0.18.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 17 candidates (indicative, not yet committed)
+### Phase 18 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 16's holding pen — the three items that
-landed in Phase 16 (bounded mpsc backpressure in AbMcts + Conductor
-streaming rollouts; Vault Enterprise namespace support; OIDC
-introspection `client_secret_post` auth method) are now off the
-list. The remainder:
+Carry-forward from Phase 17's holding pen — the two items that
+landed in Phase 17 (discovery-driven introspection auth-method
+selection per RFC 8414; `client_secret_jwt` introspection auth
+method per RFC 7521 / 7523) are now off the list. The remainder:
 
 - **Vision / image content support across providers.** Anthropic,
   Vertex, and Bedrock all have stub markers; multi-crate
@@ -55,12 +55,12 @@ list. The remainder:
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
   Sandboxed runner needed.
-- **OIDC introspection `client_secret_jwt` and mTLS auth methods.**
-  Phase 16.B.2 closed `client_secret_post`; the JWT-signed and
-  mTLS variants are still deferred.
-- **Discovery-driven introspection auth-method selection** (reading
-  RFC 8414 `introspection_endpoint_auth_methods_supported` from the
-  discovery doc rather than the operator opting in by builder).
+- **OIDC introspection mTLS auth methods** (`tls_client_auth` /
+  `self_signed_tls_client_auth`). Needs client TLS material plumbed
+  through `reqwest::ClientBuilder`.
+- **OIDC introspection `private_key_jwt`** — asymmetric (RS256 /
+  ES256) JWT client assertion; needs separate signing-key
+  storage on `IntrospectionConfig`.
 - **OIDC refresh-token flows / end-session endpoint.** Orthogonal
   hardening for the `OidcAuthResolver`.
 - **Composite `AuthResolver`s** (mTLS + bearer chaining) —
@@ -173,8 +173,22 @@ where the fix would land.
   `IntrospectionAuthMethod` enum (`ClientSecretBasic` default,
   `ClientSecretPost` sibling per RFC 7662 §2.1) plus chainable
   `OidcAuthResolver::with_introspection_auth_method(method)`.
-  `client_secret_jwt` / mTLS / discovery-driven selection remain
-  deferred to Phase 17+.
+- [x] **OIDC introspection `client_secret_jwt` auth method.**
+  Closed in Phase 17.B (v0.18.0): new
+  `IntrospectionAuthMethod::ClientSecretJwt` variant signs a
+  short-lived HS256 JWT over `client_secret` and sends it as
+  `client_assertion` + `client_assertion_type` form fields per
+  RFC 7521 / 7523. Asymmetric `private_key_jwt` (RS256 / ES256)
+  and mTLS auth methods remain deferred to Phase 18+.
+- [x] **Discovery-driven introspection auth-method selection.**
+  Closed in Phase 17.A (v0.18.0):
+  `OidcAuthResolver::with_introspection_auth_method_from_discovery()`
+  reads RFC 8414
+  `introspection_endpoint_auth_methods_supported` from the
+  discovery doc and picks the strongest mutually-supported method
+  (preference: `client_secret_jwt` > `client_secret_basic` >
+  `client_secret_post`). Fail-closed when the issuer advertises
+  only methods deferred to Phase 18+.
 - [ ] **Vision / image content support across providers.**
   Anthropic ([convert.rs:171](crates/tako-providers/anthropic/src/convert.rs#L171)),
   Vertex ([convert.rs:203](crates/tako-providers/vertex/src/convert.rs#L203)),
