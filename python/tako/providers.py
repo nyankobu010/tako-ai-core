@@ -178,16 +178,28 @@ class Bedrock(_ProviderBase):
     deployments that already filter network egress (VPC egress
     rules, Pod-level egress NetworkPolicies).
 
-    Phase 30.C — ``url_prefetch_allow_hosts`` is a per-host
-    allowlist that bypasses the private-IP blocklist for specific
-    hostnames only. Useful for permitting an internal artifact
-    registry on a private RFC 1918 address while keeping the rest
-    of the blocklist active. Pass ``None`` (default) for no
-    allowlist, or a list of hostnames. Allowlisted hosts STILL
-    pass through the scheme / timeout / size / MIME checks.
+    Phase 30.C / 31.C — ``url_prefetch_allow_hosts`` is a
+    per-host allowlist that bypasses the private-IP blocklist for
+    specific hostnames only. Useful for permitting an internal
+    artifact registry on a private RFC 1918 address while keeping
+    the rest of the blocklist active. Pass ``None`` (default) for
+    no allowlist, or a list of host strings. Allowlisted hosts
+    STILL pass through the scheme / timeout / size / MIME checks.
 
-    CIDR allowlists and wildcard host patterns remain operator-
-    level concerns; Phase 30 ships exact-string match only.
+    Two match modes:
+
+    - **Exact string** (Phase 30) — ``"registry.corp"`` matches
+      ``https://registry.corp/cat.png`` byte-for-byte. For IP-
+      literal URLs, match against the raw IP string
+      (``"10.0.5.4"``).
+    - **Wildcard suffix** (Phase 31) — ``"*.internal.corp"``
+      matches any hostname ending with ``.internal.corp``,
+      including multi-level subdomains
+      (``staging.images.internal.corp``). Does NOT match the bare
+      apex (``internal.corp``); add the apex as a separate exact
+      entry if needed.
+
+    CIDR allowlists remain Phase 32+ candidates.
     """
 
     def __init__(
@@ -240,15 +252,23 @@ class Ollama(_ProviderBase):
     cap (override via ``url_prefetch_max_bytes``); MIME validated
     against ``image/{jpeg,png,gif,webp}``.
 
-    Phase 30.C — ``url_prefetch_allow_hosts`` is a per-host
-    allowlist that bypasses the private-IP blocklist for specific
-    hostnames only. Useful for permitting an internal image
-    registry on a private RFC 1918 address.
+    Phase 30.C / 31.C — ``url_prefetch_allow_hosts`` is a
+    per-host allowlist that bypasses the private-IP blocklist for
+    specific hostnames only. Useful for permitting an internal
+    image registry on a private RFC 1918 address.
+
+    Two match modes:
+
+    - **Exact string** (Phase 30) — ``"registry.corp"`` matches
+      that host byte-for-byte.
+    - **Wildcard suffix** (Phase 31) — ``"*.internal.corp"``
+      matches any hostname ending with ``.internal.corp``,
+      including multi-level subdomains. Does NOT match the bare
+      apex.
 
     Operators must enforce network egress at deployment level
-    (Pod-level egress NetworkPolicies, etc.) for defence-in-depth —
-    tako ships exact-string host allowlist only; CIDR allowlists
-    and wildcard patterns are operator-level concerns.
+    (Pod-level egress NetworkPolicies, etc.) for defence-in-depth.
+    CIDR allowlists remain Phase 32+ candidates.
 
     Example::
 
@@ -256,7 +276,10 @@ class Ollama(_ProviderBase):
             model="llama3.2-vision:11b",
             base_url="http://ollama.internal:11434",
             url_prefetch=True,
-            url_prefetch_allow_hosts=["registry.internal.corp"],
+            url_prefetch_allow_hosts=[
+                "registry.internal.corp",       # exact match
+                "*.images.internal.corp",       # any subdomain
+            ],
         )
     """
 
