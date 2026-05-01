@@ -59,6 +59,18 @@ def serve_openai(
        issuer's RFC 8414 discovery doc (preference order: JWT > Basic
        > Post).
 
+       Phase 18.C — ``OidcAuth`` gains
+       ``with_introspection_jwt_rs256_pem(pem)`` /
+       ``with_introspection_jwt_es256_pem(pem)`` /
+       ``with_introspection_jwt_ed25519_pem(pem)`` builders for the
+       asymmetric ``private_key_jwt`` auth method (Phase 18.A; RFC
+       7521 / 7523 with an RSA / EC / Ed25519 key). The auto-selector
+       prefers ``private_key_jwt`` when an asymmetric key is loaded.
+       ``OidcAuth.end_session_endpoint()`` and
+       ``OidcAuth.build_logout_uri(id_token_hint, post_logout_redirect_uri, state)``
+       expose the OIDC Session Management 1.0 logout-URL helper
+       (Phase 18.B).
+
     Passing both ``tokens`` and ``auth`` is an error.
     """
     if not hasattr(orch, "_inner"):

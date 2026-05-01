@@ -317,12 +317,16 @@ impl PyOidcAuth {
         PyOidcAuth { inner: Arc::new(r) }
     }
 
-    /// Phase 16.B.2 / 17.B — set the RFC 7662 §2.1 introspection-
-    /// endpoint auth method. Accepts case-insensitive aliases:
-    /// `"basic"` / `"client_secret_basic"` (default; HTTP Basic
-    /// header), `"post"` / `"client_secret_post"` (credentials in
-    /// form body), or `"jwt"` / `"client_secret_jwt"` (Phase 17.B;
-    /// HS256-signed JWT client assertion per RFC 7521 / 7523).
+    /// Phase 16.B.2 / 17.B / 18.A — set the RFC 7662 §2.1
+    /// introspection-endpoint auth method. Accepts case-insensitive
+    /// aliases: `"basic"` / `"client_secret_basic"` (default; HTTP
+    /// Basic header), `"post"` / `"client_secret_post"` (credentials
+    /// in form body), `"jwt"` / `"client_secret_jwt"` (Phase 17.B;
+    /// HS256-signed JWT client assertion per RFC 7521 / 7523), or
+    /// `"private_key_jwt"` / `"private-key-jwt"` (Phase 18.A;
+    /// asymmetric RS256 / ES256 / EdDSA JWT — requires a key
+    /// loaded via one of the
+    /// `with_introspection_jwt_*_pem` builders below).
     /// Any other value raises `ValueError`. Silent no-op when no
     /// introspection config has been attached yet.
     fn with_introspection_auth_method(&self, auth_method: &str) -> PyResult<Self> {
@@ -332,11 +336,14 @@ impl PyOidcAuth {
             }
             "post" | "client_secret_post" => tako_compat::IntrospectionAuthMethod::ClientSecretPost,
             "jwt" | "client_secret_jwt" => tako_compat::IntrospectionAuthMethod::ClientSecretJwt,
+            "private_key_jwt" | "private-key-jwt" => {
+                tako_compat::IntrospectionAuthMethod::PrivateKeyJwt
+            }
             other => {
                 return Err(PyValueError::new_err(format!(
                     "auth_method must be one of: 'basic' / 'client_secret_basic' / \
-                     'post' / 'client_secret_post' / 'jwt' / 'client_secret_jwt' \
-                     (got {other:?})",
+                     'post' / 'client_secret_post' / 'jwt' / 'client_secret_jwt' / \
+                     'private_key_jwt' (got {other:?})",
                 )));
             }
         };
@@ -345,8 +352,8 @@ impl PyOidcAuth {
         Ok(PyOidcAuth { inner: Arc::new(r) })
     }
 
-    /// Phase 17.A — auto-select the introspection-endpoint auth
-    /// method against the issuer's RFC 8414
+    /// Phase 17.A / 18.A — auto-select the introspection-endpoint
+    /// auth method against the issuer's RFC 8414
     /// `introspection_endpoint_auth_methods_supported` list captured
     /// during discovery. Returns a NEW `OidcAuth`. Silent no-op
     /// (returns a clone) when no introspection config has been
@@ -355,7 +362,9 @@ impl PyOidcAuth {
     /// builder time rather than at HTTP-401 from the introspection
     /// endpoint).
     ///
-    /// Preference order (Phase 17.B):
+    /// Preference order (Phase 18.A):
+    /// `private_key_jwt` (only when an asymmetric key is loaded via
+    /// `with_introspection_jwt_*_pem`) →
     /// `client_secret_jwt` (only when a `client_secret` is
     /// configured — HS256 needs the symmetric key) →
     /// `client_secret_basic` → `client_secret_post`.
@@ -365,6 +374,62 @@ impl PyOidcAuth {
             .with_introspection_auth_method_from_discovery()
             .map_err(map_err)?;
         Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 18.A — load an RSA private-key PEM (PKCS#8 or
+    /// SEC1-style) and switch the introspection auth method to
+    /// `private_key_jwt` (RFC 7521 / 7523, RS256). Returns a NEW
+    /// `OidcAuth`. Silent no-op when no introspection config has
+    /// been attached yet. Raises `ValueError` on PEM parse failure.
+    fn with_introspection_jwt_rs256_pem(&self, pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_jwt_rs256_pem(pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 18.A — ES256 sibling of
+    /// [`Self::with_introspection_jwt_rs256_pem`].
+    fn with_introspection_jwt_es256_pem(&self, pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_jwt_es256_pem(pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 18.A — EdDSA sibling of
+    /// [`Self::with_introspection_jwt_rs256_pem`].
+    fn with_introspection_jwt_ed25519_pem(&self, pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_jwt_ed25519_pem(pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 18.B — return the OIDC Session Management 1.0
+    /// `end_session_endpoint` URL the issuer advertised at discovery
+    /// time. `None` when the issuer doesn't implement OIDC Session
+    /// Management.
+    fn end_session_endpoint(&self) -> Option<String> {
+        self.inner.end_session_endpoint().map(str::to_string)
+    }
+
+    /// Phase 18.B — build a logout URL per OIDC Session Management
+    /// 1.0 §5. Returns `None` when the issuer didn't advertise
+    /// `end_session_endpoint`. All params are optional; passing
+    /// `None` for everything yields the bare endpoint URL.
+    #[pyo3(signature = (id_token_hint=None, post_logout_redirect_uri=None, state=None))]
+    fn build_logout_uri(
+        &self,
+        id_token_hint: Option<&str>,
+        post_logout_redirect_uri: Option<&str>,
+        state: Option<&str>,
+    ) -> Option<String> {
+        self.inner
+            .build_logout_uri(id_token_hint, post_logout_redirect_uri, state)
     }
 }
 
