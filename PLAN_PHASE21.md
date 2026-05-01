@@ -65,7 +65,7 @@ impl ChainedAuthResolver {
 
     /// Append a child resolver. Children are tried in append
     /// order; the first to return `Ok` short-circuits.
-    pub fn with(mut self, child: Arc<dyn AuthResolver>) -> Self {
+    pub fn then(mut self, child: Arc<dyn AuthResolver>) -> Self {
         self.children.push(child);
         self
     }

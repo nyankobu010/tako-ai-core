@@ -41,14 +41,20 @@ pub struct ChainedAuthResolver {
 impl ChainedAuthResolver {
     /// Empty chain. `resolve` returns
     /// `TakoError::Invalid("chained auth: no resolvers configured")`
-    /// until at least one child is added via [`Self::with`].
+    /// until at least one child is added via [`Self::then`].
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Append a child resolver. Children are tried in append order;
     /// the first to return `Ok` short-circuits.
-    pub fn with(mut self, child: Arc<dyn AuthResolver>) -> Self {
+    ///
+    /// Reads as "try `self`, **then** `child` if that fails" —
+    /// matches the JS `Promise.then` and Rust `Future` `.then(...)`
+    /// idiom for sequential composition. Avoids the Python `with`
+    /// keyword clash that would prevent the Python facade from
+    /// using the same method name.
+    pub fn then(mut self, child: Arc<dyn AuthResolver>) -> Self {
         self.children.push(child);
         self
     }
@@ -164,7 +170,7 @@ mod tests {
     #[tokio::test]
     async fn chained_single_pass_through() {
         let inner = StaticTokens::new().with("the-token", alice());
-        let chain = ChainedAuthResolver::new().with(Arc::new(inner));
+        let chain = ChainedAuthResolver::new().then(Arc::new(inner));
         let p = chain.resolve("the-token").await.unwrap();
         assert_eq!(p.user_id, "alice");
     }
@@ -175,8 +181,8 @@ mod tests {
         let first = CountingAuth::new(Ok(alice()));
         let second = CountingAuth::new(Ok(bob()));
         let chain = ChainedAuthResolver::new()
-            .with(first.clone() as Arc<dyn AuthResolver>)
-            .with(second.clone() as Arc<dyn AuthResolver>);
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>);
 
         let p = chain.resolve("any").await.unwrap();
         assert_eq!(p.user_id, "alice");
@@ -193,8 +199,8 @@ mod tests {
         let first = CountingAuth::new(Err(TakoError::Invalid("first failed".into())));
         let second = CountingAuth::new(Ok(bob()));
         let chain = ChainedAuthResolver::new()
-            .with(first.clone() as Arc<dyn AuthResolver>)
-            .with(second.clone() as Arc<dyn AuthResolver>);
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>);
 
         let p = chain.resolve("any").await.unwrap();
         assert_eq!(p.user_id, "bob");
@@ -207,8 +213,8 @@ mod tests {
         let first = CountingAuth::new(Err(TakoError::Invalid("first failed".into())));
         let second = CountingAuth::new(Err(TakoError::Invalid("second failed".into())));
         let chain = ChainedAuthResolver::new()
-            .with(first.clone() as Arc<dyn AuthResolver>)
-            .with(second.clone() as Arc<dyn AuthResolver>);
+            .then(first.clone() as Arc<dyn AuthResolver>)
+            .then(second.clone() as Arc<dyn AuthResolver>);
 
         let err = chain.resolve("any").await.unwrap_err();
         let msg = format!("{err:?}");
@@ -222,8 +228,8 @@ mod tests {
         // Recursive composition: a chain whose child is itself a
         // chain. Useful when building auth policies in layers.
         let leaf = StaticTokens::new().with("the-token", alice());
-        let inner = ChainedAuthResolver::new().with(Arc::new(leaf));
-        let outer = ChainedAuthResolver::new().with(Arc::new(inner));
+        let inner = ChainedAuthResolver::new().then(Arc::new(leaf));
+        let outer = ChainedAuthResolver::new().then(Arc::new(inner));
         let p = outer.resolve("the-token").await.unwrap();
         assert_eq!(p.user_id, "alice");
     }
@@ -233,10 +239,10 @@ mod tests {
         let mut chain = ChainedAuthResolver::new();
         assert_eq!(chain.len(), 0);
         assert!(chain.is_empty());
-        chain = chain.with(Arc::new(StaticTokens::new()));
+        chain = chain.then(Arc::new(StaticTokens::new()));
         assert_eq!(chain.len(), 1);
         assert!(!chain.is_empty());
-        chain = chain.with(Arc::new(StaticTokens::new()));
+        chain = chain.then(Arc::new(StaticTokens::new()));
         assert_eq!(chain.len(), 2);
     }
 }
