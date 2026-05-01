@@ -39,10 +39,16 @@
 //! form body). Choose via
 //! [`OidcAuthResolver::with_introspection_auth_method`].
 //!
-//! Out-of-scope (deferred to Phase 17+): refresh-token flows,
-//! end-session endpoint, discovery-driven selection (reading
-//! `introspection_endpoint_auth_methods_supported` per RFC 8414),
-//! `client_secret_jwt` and mTLS (`tls_client_auth`) auth methods.
+//! Phase 17.A — discovery-driven auth-method selection. The
+//! `introspection_endpoint_auth_methods_supported` field of the
+//! discovery doc (RFC 8414) is now captured at construction time;
+//! [`OidcAuthResolver::with_introspection_auth_method_from_discovery`]
+//! picks the strongest mutually-supported method.
+//!
+//! Out-of-scope (deferred to Phase 17.B+ / 18+): `client_secret_jwt`
+//! and `private_key_jwt` (RFC 7521 / 7523 JWT client assertions),
+//! refresh-token flows, end-session endpoint, mTLS
+//! (`tls_client_auth` / `self_signed_tls_client_auth`).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -73,11 +79,20 @@ struct DiscoveryDoc {
     /// resolver POSTs each token here for revocation-aware checks.
     #[serde(default)]
     introspection_endpoint: Option<String>,
+    /// Phase 17.A — RFC 8414 list of auth methods the issuer's
+    /// introspection endpoint supports. `None` (field absent) means
+    /// the issuer didn't advertise; per RFC 8414 the default is
+    /// `client_secret_basic`.
+    #[serde(default)]
+    introspection_endpoint_auth_methods_supported: Option<Vec<String>>,
 }
 
 /// Phase 16.B.2 — RFC 7662 §2.1 introspection endpoint auth method.
 ///
-/// Selected via [`OidcAuthResolver::with_introspection_auth_method`].
+/// Selected via [`OidcAuthResolver::with_introspection_auth_method`]
+/// or, in Phase 17.A, auto-negotiated against the discovery doc via
+/// [`OidcAuthResolver::with_introspection_auth_method_from_discovery`].
+///
 /// `ClientSecretBasic` (the default) carries credentials in the
 /// `Authorization: Basic ...` header; `ClientSecretPost` carries
 /// them as additional fields in the form-encoded request body.
@@ -144,6 +159,12 @@ pub struct OidcAuthResolver {
     /// issuer's discovery doc, captured for use by
     /// [`Self::with_introspection`].
     discovered_introspection_uri: Option<String>,
+    /// Phase 17.A — RFC 8414
+    /// `introspection_endpoint_auth_methods_supported` advertised by
+    /// the issuer's discovery doc. `None` means the field was absent
+    /// (RFC 8414: default is `client_secret_basic`); `Some(vec![])`
+    /// means the issuer explicitly advertised an empty list.
+    discovered_introspection_auth_methods: Option<Vec<String>>,
     /// Phase 15.B.2 — when `Some`, every signature-validated token is
     /// additionally POSTed for an `active=true` check.
     introspection: Option<IntrospectionConfig>,
@@ -201,6 +222,8 @@ impl OidcAuthResolver {
             user_claim: DEFAULT_USER_CLAIM.into(),
             roles_claim: DEFAULT_ROLES_CLAIM.into(),
             discovered_introspection_uri: doc.introspection_endpoint,
+            discovered_introspection_auth_methods: doc
+                .introspection_endpoint_auth_methods_supported,
             introspection: None,
         })
     }
@@ -280,6 +303,58 @@ impl OidcAuthResolver {
             cfg.auth_method = method;
         }
         self
+    }
+
+    /// Phase 17.A — auto-select the
+    /// [`IntrospectionAuthMethod`] from the issuer's RFC 8414
+    /// `introspection_endpoint_auth_methods_supported` list captured
+    /// during discovery. Preference order:
+    /// `client_secret_basic` → `client_secret_post`.
+    ///
+    /// Behaviour:
+    /// - Silent no-op (returns `Ok(self)` unchanged) when no
+    ///   introspection config has been attached yet — matches the
+    ///   chainable-builder cadence of
+    ///   [`Self::with_introspection_auth_method`].
+    /// - When discovery did not advertise the field (`None`):
+    ///   selects `ClientSecretBasic` per RFC 8414's documented
+    ///   default.
+    /// - When discovery advertised a list with at least one
+    ///   supported variant: selects the strongest (preference
+    ///   order above).
+    /// - When discovery advertised a list with **no** supported
+    ///   variant (e.g. issuer requires `tls_client_auth`,
+    ///   `private_key_jwt`, or `client_secret_jwt`, all deferred to
+    ///   Phase 17.B+): returns [`TakoError::Invalid`] so the
+    ///   operator notices at builder time rather than at HTTP-401
+    ///   from the introspection endpoint.
+    ///
+    /// Phase 17.B will extend the preference order with
+    /// `client_secret_jwt` at the head when a `client_secret` is
+    /// configured.
+    pub fn with_introspection_auth_method_from_discovery(mut self) -> Result<Self, TakoError> {
+        let Some(cfg) = self.introspection.as_mut() else {
+            return Ok(self);
+        };
+        let advertised = self.discovered_introspection_auth_methods.as_deref();
+        let picked = match advertised {
+            None => IntrospectionAuthMethod::ClientSecretBasic,
+            Some(list) => {
+                let supports = |needle: &str| list.iter().any(|m| m == needle);
+                if supports("client_secret_basic") {
+                    IntrospectionAuthMethod::ClientSecretBasic
+                } else if supports("client_secret_post") {
+                    IntrospectionAuthMethod::ClientSecretPost
+                } else {
+                    return Err(TakoError::Invalid(format!(
+                        "oidc: no supported introspection auth method advertised \
+                         by issuer; supported: {list:?}"
+                    )));
+                }
+            }
+        };
+        cfg.auth_method = picked;
+        Ok(self)
     }
 
     /// Phase 15.B.2 — POST the token to the introspection endpoint
@@ -534,6 +609,7 @@ mod tests {
             user_claim: DEFAULT_USER_CLAIM.into(),
             roles_claim: DEFAULT_ROLES_CLAIM.into(),
             discovered_introspection_uri: None,
+            discovered_introspection_auth_methods: None,
             introspection: None,
         }
     }
@@ -792,5 +868,134 @@ mod tests {
         }))
         .unwrap();
         assert!(without.introspection_endpoint.is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 17.A — discovery-driven auth-method selection.
+    // -----------------------------------------------------------------
+
+    /// Build a `test_resolver` with introspection already wired up so
+    /// the new auto-select builder isn't a silent no-op.
+    fn test_resolver_with_introspection(
+        client_secret: Option<&str>,
+        advertised: Option<Vec<&str>>,
+    ) -> OidcAuthResolver {
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://issuer.example/introspect".into());
+        r.discovered_introspection_auth_methods =
+            advertised.map(|v| v.into_iter().map(String::from).collect());
+        r.with_introspection("client-id", client_secret.map(String::from))
+            .unwrap()
+    }
+
+    #[test]
+    fn discovery_doc_parses_optional_auth_methods_supported() {
+        let with_methods: DiscoveryDoc = serde_json::from_value(json!({
+            "issuer": "https://issuer.example",
+            "jwks_uri": "https://issuer.example/jwks",
+            "introspection_endpoint_auth_methods_supported":
+                ["client_secret_basic", "client_secret_post"],
+        }))
+        .unwrap();
+        assert_eq!(
+            with_methods.introspection_endpoint_auth_methods_supported,
+            Some(vec![
+                "client_secret_basic".to_string(),
+                "client_secret_post".to_string(),
+            ]),
+        );
+
+        let without: DiscoveryDoc = serde_json::from_value(json!({
+            "issuer": "https://issuer.example",
+            "jwks_uri": "https://issuer.example/jwks",
+        }))
+        .unwrap();
+        assert!(
+            without
+                .introspection_endpoint_auth_methods_supported
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn auto_select_no_op_without_introspection_config() {
+        // No `with_introspection*` called — auto-select is a silent
+        // no-op and returns `Ok(self)`.
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        assert!(r.introspection.is_none());
+    }
+
+    #[test]
+    fn auto_select_picks_basic_when_field_absent() {
+        // RFC 8414: when the issuer doesn't advertise the field, the
+        // default is `client_secret_basic`.
+        let r = test_resolver_with_introspection(Some("secret"), None)
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::ClientSecretBasic,
+        );
+    }
+
+    #[test]
+    fn auto_select_picks_basic_when_listed() {
+        let r = test_resolver_with_introspection(Some("secret"), Some(vec!["client_secret_basic"]))
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::ClientSecretBasic,
+        );
+    }
+
+    #[test]
+    fn auto_select_picks_post_when_only_post_listed() {
+        let r = test_resolver_with_introspection(Some("secret"), Some(vec!["client_secret_post"]))
+            .with_introspection_auth_method_from_discovery()
+            .unwrap();
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::ClientSecretPost,
+        );
+    }
+
+    #[test]
+    fn auto_select_errors_when_nothing_supported_advertised() {
+        // Issuer requires only methods deferred to Phase 17.B+ / 18+
+        // (`tls_client_auth`, `private_key_jwt`, `client_secret_jwt`).
+        // Fail-closed at builder time so the operator notices.
+        let r = test_resolver_with_introspection(
+            Some("secret"),
+            Some(vec!["tls_client_auth", "private_key_jwt"]),
+        );
+        let err = r
+            .with_introspection_auth_method_from_discovery()
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("no supported introspection auth method"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("tls_client_auth"), "got: {msg}");
+    }
+
+    #[test]
+    fn auto_select_prefers_basic_over_post() {
+        let r = test_resolver_with_introspection(
+            Some("secret"),
+            Some(vec!["client_secret_post", "client_secret_basic"]),
+        )
+        .with_introspection_auth_method_from_discovery()
+        .unwrap();
+        // Even though `client_secret_post` appears first in the list,
+        // we prefer Basic per RFC 7662 §2.1's "MUST support Basic"
+        // precedent.
+        assert_eq!(
+            r.introspection.unwrap().auth_method,
+            IntrospectionAuthMethod::ClientSecretBasic,
+        );
     }
 }
