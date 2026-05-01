@@ -178,8 +178,16 @@ class Bedrock(_ProviderBase):
     deployments that already filter network egress (VPC egress
     rules, Pod-level egress NetworkPolicies).
 
-    CIDR allowlists and per-domain allowlists remain operator-level
-    concerns; tako enforces only the binary on/off blocklist.
+    Phase 30.C — ``url_prefetch_allow_hosts`` is a per-host
+    allowlist that bypasses the private-IP blocklist for specific
+    hostnames only. Useful for permitting an internal artifact
+    registry on a private RFC 1918 address while keeping the rest
+    of the blocklist active. Pass ``None`` (default) for no
+    allowlist, or a list of hostnames. Allowlisted hosts STILL
+    pass through the scheme / timeout / size / MIME checks.
+
+    CIDR allowlists and wildcard host patterns remain operator-
+    level concerns; Phase 30 ships exact-string match only.
     """
 
     def __init__(
@@ -192,6 +200,7 @@ class Bedrock(_ProviderBase):
         url_prefetch: bool = False,
         url_prefetch_allow_http: bool = False,
         url_prefetch_allow_private_ips: bool = False,
+        url_prefetch_allow_hosts: list[str] | None = None,
         url_prefetch_timeout_secs: int | None = None,
         url_prefetch_max_bytes: int | None = None,
     ) -> None:
@@ -203,6 +212,7 @@ class Bedrock(_ProviderBase):
             url_prefetch=url_prefetch,
             url_prefetch_allow_http=url_prefetch_allow_http,
             url_prefetch_allow_private_ips=url_prefetch_allow_private_ips,
+            url_prefetch_allow_hosts=url_prefetch_allow_hosts,
             url_prefetch_timeout_secs=url_prefetch_timeout_secs,
             url_prefetch_max_bytes=url_prefetch_max_bytes,
         )
@@ -230,10 +240,15 @@ class Ollama(_ProviderBase):
     cap (override via ``url_prefetch_max_bytes``); MIME validated
     against ``image/{jpeg,png,gif,webp}``.
 
+    Phase 30.C — ``url_prefetch_allow_hosts`` is a per-host
+    allowlist that bypasses the private-IP blocklist for specific
+    hostnames only. Useful for permitting an internal image
+    registry on a private RFC 1918 address.
+
     Operators must enforce network egress at deployment level
     (Pod-level egress NetworkPolicies, etc.) for defence-in-depth —
-    tako enforces only the binary on/off blocklist; CIDR allowlists
-    are not in scope.
+    tako ships exact-string host allowlist only; CIDR allowlists
+    and wildcard patterns are operator-level concerns.
 
     Example::
 
@@ -241,6 +256,7 @@ class Ollama(_ProviderBase):
             model="llama3.2-vision:11b",
             base_url="http://ollama.internal:11434",
             url_prefetch=True,
+            url_prefetch_allow_hosts=["registry.internal.corp"],
         )
     """
 
@@ -253,6 +269,7 @@ class Ollama(_ProviderBase):
         url_prefetch: bool = False,
         url_prefetch_allow_http: bool = False,
         url_prefetch_allow_private_ips: bool = False,
+        url_prefetch_allow_hosts: list[str] | None = None,
         url_prefetch_timeout_secs: int | None = None,
         url_prefetch_max_bytes: int | None = None,
     ) -> None:
@@ -263,6 +280,7 @@ class Ollama(_ProviderBase):
             url_prefetch=url_prefetch,
             url_prefetch_allow_http=url_prefetch_allow_http,
             url_prefetch_allow_private_ips=url_prefetch_allow_private_ips,
+            url_prefetch_allow_hosts=url_prefetch_allow_hosts,
             url_prefetch_timeout_secs=url_prefetch_timeout_secs,
             url_prefetch_max_bytes=url_prefetch_max_bytes,
         )

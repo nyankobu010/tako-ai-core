@@ -39,6 +39,11 @@ impl PyOllama {
     /// `url_prefetch_timeout_secs`); 10 MiB cap (override via
     /// `url_prefetch_max_bytes`); MIME validated against
     /// `image/{jpeg,png,gif,webp}`.
+    ///
+    /// Phase 30.C — `url_prefetch_allow_hosts` is a per-host
+    /// allowlist that bypasses the private-IP blocklist for
+    /// specific hostnames only. Useful for permitting an internal
+    /// image-registry on a private RFC 1918 address.
     #[new]
     #[pyo3(signature = (
         model,
@@ -47,6 +52,7 @@ impl PyOllama {
         url_prefetch=false,
         url_prefetch_allow_http=false,
         url_prefetch_allow_private_ips=false,
+        url_prefetch_allow_hosts=None,
         url_prefetch_timeout_secs=None,
         url_prefetch_max_bytes=None,
     ))]
@@ -58,6 +64,7 @@ impl PyOllama {
         url_prefetch: bool,
         url_prefetch_allow_http: bool,
         url_prefetch_allow_private_ips: bool,
+        url_prefetch_allow_hosts: Option<Vec<String>>,
         url_prefetch_timeout_secs: Option<u64>,
         url_prefetch_max_bytes: Option<usize>,
     ) -> PyResult<Self> {
@@ -76,6 +83,12 @@ impl PyOllama {
         }
         if url_prefetch_allow_private_ips {
             b = b.with_url_prefetch_allow_private_ips();
+        }
+        // Phase 30.C — per-host allowlist.
+        if let Some(hosts) = url_prefetch_allow_hosts {
+            for host in hosts {
+                b = b.with_url_prefetch_allow_host(host);
+            }
         }
         if let Some(secs) = url_prefetch_timeout_secs {
             b = b.with_url_prefetch_timeout(std::time::Duration::from_secs(secs));
