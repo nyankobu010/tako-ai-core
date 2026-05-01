@@ -9,6 +9,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.23.0] - 2026-05-01
+
+Phase 22 — closes the long-deferred URL-source-image gap.
+Phases 19 + 20 framed the deferral as "server-side fetch needs
+a security story", but that concern only applies when *tako*
+fetches the URL. The three vendors whose API servers fetch URLs
+themselves (Anthropic, OpenAI, Mistral) now accept URL-source
+content; the three that would need tako-side pre-fetch (Vertex
+file-data, Bedrock, Ollama) stay deferred. Plan:
+[PLAN_PHASE22.md](PLAN_PHASE22.md).
+
+### Added
+
+- **Phase 22.A — `tako_core::ContentPart::ImageUrl` variant +
+  provider stubs
+  ([crates/tako-core/src/types.rs](crates/tako-core/src/types.rs)).**
+  New `ContentPart::ImageUrl { url: String, mime: Option<String> }`
+  variant. The optional `mime` is a hint some vendors use; others
+  ignore it.
+
+  All six provider adapter `convert.rs` files gain exhaustive
+  match arms for the new variant; per-vendor disposition:
+  - Anthropic: full wiring in 22.B.
+  - OpenAI / Mistral: full wiring in 22.C.
+  - Vertex: silent-drop (deferred). Gemini's `fileData` accepts
+    only vendor-specific URI schemes (`gs://...` GCS, Vertex
+    File API URIs); arbitrary `https://` not supported.
+  - Bedrock: silent-drop (deferred). The AWS SDK's `ImageSource`
+    has no URL variant — would need a tako-side pre-fetch.
+  - Ollama: silent-drop (deferred). `images` field carries bare
+    base64 only.
+
+  Existing `match`-with-wildcard sites in tako-orchestrator,
+  tako-py, tako-compat, and the http-generic provider are
+  unaffected (they all use `_ => ...` arms over `ContentPart`).
+
+- **Phase 22.B — Anthropic URL-source via `AnImageSource` enum
+  ([crates/tako-providers/anthropic/src/convert.rs](crates/tako-providers/anthropic/src/convert.rs)).**
+  `AnImageSource` refactors from a flat struct (with `kind:
+  "base64"` literal) to a `#[serde(tag = "type")]`-tagged enum
+  with two variants:
+  - `Base64 { media_type, data }` — Phase 19.A wire shape, byte-
+    for-byte preserved (the literal `kind: "base64"` becomes the
+    enum tag). Pinned by the new
+    `image_block_base64_wire_shape_unchanged_after_enum_refactor`
+    regression test.
+  - `Url { url }` — Phase 22.B. Per Anthropic Messages API:
+    `{"type": "url", "url": "https://..."}`. No `media_type`
+    field — Anthropic's URL variant doesn't accept one.
+
+  The optional `mime` from the core `ContentPart::ImageUrl` is
+  intentionally dropped — Anthropic's API rejects unknown source
+  fields. Phase 22.B does not pre-validate the URL scheme;
+  Anthropic rejects non-`https` URLs at the API boundary.
+
+  Four new unit tests including a multi-source-type regression
+  pin (`image_url_and_base64_can_coexist_in_one_message`).
+
+- **Phase 22.C — OpenAI + Mistral URL pass-through
+  ([crates/tako-providers/openai/src/convert.rs](crates/tako-providers/openai/src/convert.rs),
+  [crates/tako-providers/mistral/src/convert.rs](crates/tako-providers/mistral/src/convert.rs)).**
+  Both vendors accept `https://` URLs in `image_url.url`
+  directly (the same field that holds data-URLs in 19.B / 20.B).
+  The adapter passes `url` through verbatim — no `data:` prefix
+  wrapping (regression-pinned by `image_url_does_not_get_data_url_wrapped`).
+  Optional `mime` intentionally dropped; neither vendor accepts
+  a separate mime hint on URL-source blocks.
+
+  Five new unit tests across the two crates. The Phase 19.B /
+  20.B `text_only_message_keeps_flat_string_content` regression
+  pins still hold byte-for-byte — the URL-source path shares the
+  `has_image` guard with the base64 path, so non-vision messages
+  keep the flat-string `content` shape.
+
+- **Phase 22.D — Python facade
+  ([python/tako/models.py](python/tako/models.py)).**
+  Pydantic `ContentPart` model gains an explicit `url: str | None`
+  field. The model already had `extra="allow"` so URL-source
+  dicts round-tripped through the wheel before this commit, but
+  the explicit field gives type checking, IDE completion, and a
+  pinned-by-test surface. Eight new Python tests in
+  [`tests/python/test_phase22_image_url.py`](tests/python/test_phase22_image_url.py)
+  including parameterised coverage for various HTTPS URL forms
+  and a mixed `image` + `image_url` regression pin.
+
+### Changed
+
+- `AnImageSource` widens from `pub struct` to
+  `pub enum` (provider-internal type; wire shape on the existing
+  `Base64` path is byte-for-byte preserved).
+- Workspace + Python crate version bumped to v0.23.0.
+
+### Carried forward to Phase 23+
+
+- URL-source images for Vertex / Bedrock / Ollama. Vertex needs
+  per-URL-scheme branching (`gs://...`); Bedrock + Ollama need
+  the SSRF security story Phase 22 dodged.
+- OIDC introspection mTLS auth methods, OIDC refresh-token /
+  revocation-endpoint flows, eval-harness real graders,
+  `ChainedAuthResolver` short-circuit-on-transport-error.
+
 ## [0.22.0] - 2026-05-01
 
 Phase 21 — closes the long-standing operator gap on the

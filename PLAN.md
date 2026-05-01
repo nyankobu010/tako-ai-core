@@ -40,21 +40,24 @@ synopsis and quickstart.
 | 19 — Vision content support: Anthropic + OpenAI | v0.20.0 | done (2026-05-01) | [PLAN_PHASE19.md](PLAN_PHASE19.md) | [`## [0.20.0]`](CHANGELOG.md) |
 | 20 — Vision content support: Vertex + Mistral + Ollama | v0.21.0 | done (2026-05-01) | [PLAN_PHASE20.md](PLAN_PHASE20.md) | [`## [0.21.0]`](CHANGELOG.md) |
 | 21 — Composite AuthResolver | v0.22.0 | done (2026-05-01) | [PLAN_PHASE21.md](PLAN_PHASE21.md) | [`## [0.22.0]`](CHANGELOG.md) |
+| 22 — URL-source images: Anthropic + OpenAI + Mistral | v0.23.0 | done (2026-05-01) | [PLAN_PHASE22.md](PLAN_PHASE22.md) | [`## [0.23.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 22 candidates (indicative, not yet committed)
+### Phase 23 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 21's holding pen — composite
-`AuthResolver` landed in Phase 21. The remainder:
+Carry-forward from Phase 22's holding pen — URL-source images
+landed for Anthropic + OpenAI + Mistral in Phase 22 (the three
+vendors whose API servers fetch URLs themselves). The remainder:
 
-- **URL-source images** — Anthropic's `source.type = "url"`,
-  OpenAI's `image_url.url` with `https://...`, Vertex's
-  `file_data` with `file_uri`. Server-side fetch from
-  request-supplied URLs needs a security story.
+- **URL-source images for Vertex / Bedrock / Ollama** — different
+  model: Vertex needs vendor-specific URI schemes (`gs://...`,
+  Vertex File API URIs); Bedrock and Ollama would require a
+  tako-side pre-fetch (back to the SSRF concern Phase 22 dodged
+  by doing vendor-fetched URLs only).
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
   Sandboxed runner needed.
@@ -66,9 +69,8 @@ Carry-forward from Phase 21's holding pen — composite
   the existing `AuthResolver` surface).
 - **`ChainedAuthResolver` short-circuit semantics** — Phase 21
   treats every `Err` as fall-through. If patterns emerge for
-  "fail fast on transport errors" (e.g. don't fall back to a
-  static-API-key resolver when the OIDC issuer is unreachable),
-  Phase 22+ may add `with_short_circuit_on_transport_error`.
+  "fail fast on transport errors", a future phase may add
+  `with_short_circuit_on_transport_error`.
 
 ### Beyond (speculative)
 
