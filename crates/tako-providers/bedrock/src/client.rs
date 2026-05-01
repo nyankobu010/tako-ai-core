@@ -104,22 +104,33 @@ impl BedrockBuilder {
         self
     }
 
-    /// Phase 30 — add a hostname to the URL pre-fetch allowlist.
+    /// Phase 30 / 31 — add a hostname or wildcard pattern to
+    /// the URL pre-fetch allowlist.
     ///
-    /// Hosts in the allowlist bypass the private-IP blocklist
-    /// (Phase 29.A) for that hostname only — but the scheme
-    /// check, timeout, size cap, and MIME validation still apply.
-    /// Useful for permitting an internal artifact registry on a
-    /// private RFC 1918 address while keeping the rest of the
-    /// blocklist active.
+    /// Hosts matched by the allowlist bypass the private-IP
+    /// blocklist (Phase 29.A) for that host only — but the
+    /// scheme check, timeout, size cap, and MIME validation
+    /// still apply. Useful for permitting an internal artifact
+    /// registry on a private RFC 1918 address while keeping the
+    /// rest of the blocklist active.
     ///
     /// Chainable; can be called multiple times to add more
-    /// hosts. Matching is exact-string against the URL's host
-    /// component (so `with_url_prefetch_allow_host("registry.corp")`
-    /// matches `https://registry.corp/cat.png` but NOT
-    /// `https://other.corp/cat.png`). For IP-literal URLs, match
-    /// against the raw IP string (e.g.
-    /// `with_url_prefetch_allow_host("10.0.5.4")`).
+    /// hosts. Two match modes:
+    ///
+    /// - **Exact string** (Phase 30) — `"registry.corp"` matches
+    ///   `https://registry.corp/cat.png` but NOT
+    ///   `https://other.corp/cat.png`. For IP-literal URLs,
+    ///   match against the raw IP string (e.g. `"10.0.5.4"`).
+    ///
+    /// - **Wildcard suffix** (Phase 31) — `"*.internal.corp"`
+    ///   matches any hostname ending with `.internal.corp`,
+    ///   including multi-level subdomains
+    ///   (`registry.internal.corp`,
+    ///   `staging.images.internal.corp`). Does NOT match the
+    ///   bare apex (`internal.corp`); add the apex as a
+    ///   separate exact entry if needed. Wildcards must be the
+    ///   leftmost label only (`"*.X"`); patterns like `"X.*.Y"`
+    ///   are not supported.
     ///
     /// Does NOT auto-enable [`Self::with_url_prefetch`] — the
     /// master switch must already be on for this flag to have

@@ -62,10 +62,13 @@ pub(crate) struct UrlPrefetchConfig {
     /// IP-literal check inline in `fetch_one` (for URLs whose
     /// host is already an IP, where reqwest skips the resolver).
     pub(crate) block_private_ips: bool,
-    /// Phase 30 — per-host allowlist. Hostnames in this set
-    /// bypass the private-IP blocklist (but NOT the scheme /
-    /// timeout / size / MIME checks). Empty by default.
-    pub(crate) allow_hosts: Arc<HashSet<String>>,
+    /// Phase 30 / 31 — per-host allowlist. Hostnames matched by
+    /// this set bypass the private-IP blocklist (but NOT the
+    /// scheme / timeout / size / MIME checks). Phase 30 ships
+    /// exact-string match; Phase 31 adds wildcard suffix
+    /// patterns (`*.X` matches any host ending in `.X`,
+    /// including multi-level subdomains).
+    pub(crate) allow_hosts: Arc<AllowList>,
     pub(crate) http: reqwest::Client,
 }
 
@@ -75,7 +78,7 @@ impl UrlPrefetchConfig {
         timeout: Duration,
         max_bytes: usize,
         block_private_ips: bool,
-        allow_hosts: Arc<HashSet<String>>,
+        allow_hosts: Arc<AllowList>,
     ) -> Result<Self, TakoError> {
         let mut builder = reqwest::Client::builder().timeout(timeout);
         if block_private_ips {
@@ -282,12 +285,14 @@ pub(crate) fn is_blocked_ip(ip: &IpAddr) -> bool {
 /// through alongside a public one, and there's no second
 /// resolution between validation and connection.
 ///
-/// Phase 30 — `allow_hosts` is the per-host bypass. When the
-/// requested hostname is in this set, the blocklist is skipped
-/// for that hostname only.
+/// Phase 30 / 31 — `allow_hosts` is the per-host bypass. When
+/// the requested hostname is matched by [`AllowList::contains`]
+/// (exact-string for Phase 30 entries, wildcard suffix for
+/// Phase 31 entries), the blocklist is skipped for that host
+/// only.
 #[derive(Debug)]
 struct BlocklistResolver {
-    allow_hosts: Arc<HashSet<String>>,
+    allow_hosts: Arc<AllowList>,
 }
 
 impl Resolve for BlocklistResolver {
@@ -319,6 +324,57 @@ impl Resolve for BlocklistResolver {
             let iter: Addrs = Box::new(addrs.into_iter());
             Ok(iter)
         })
+    }
+}
+
+/// Phase 31.A — split exact-match hostnames from wildcard
+/// suffix patterns at config time so the runtime check is a
+/// single `HashSet::contains` + a short linear scan over
+/// dotted suffixes (no per-call `format!`).
+///
+/// Wildcard semantic: an entry `*.X` matches any host `Y` such
+/// that `Y.ends_with(".X")` literally — multi-level subdomains
+/// included (`*.internal.corp` matches `staging.images.internal.corp`).
+/// Bare-domain matches (`X` matching `X` itself) require the
+/// operator to add `X` as a separate exact-string entry.
+///
+/// Phase 30 entries (no `*.` prefix) go in `exact`. Phase 31
+/// entries (`*.X`) get the leading `*` stripped and stored in
+/// `suffixes` as `.X` (ready for `ends_with`).
+#[derive(Debug, Default)]
+pub(crate) struct AllowList {
+    exact: HashSet<String>,
+    suffixes: Vec<String>,
+}
+
+impl AllowList {
+    pub(crate) fn from_strings(entries: Vec<String>) -> Self {
+        let mut exact = HashSet::new();
+        let mut suffixes = Vec::new();
+        for entry in entries {
+            if let Some(suffix) = entry.strip_prefix("*.") {
+                // Store as `.X` so `host.ends_with(s)` does the
+                // right thing without per-call format!().
+                suffixes.push(format!(".{suffix}"));
+            } else {
+                exact.insert(entry);
+            }
+        }
+        Self { exact, suffixes }
+    }
+
+    pub(crate) fn contains(&self, host: &str) -> bool {
+        self.exact.contains(host) || self.suffixes.iter().any(|s| host.ends_with(s.as_str()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.exact.is_empty() && self.suffixes.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.exact.len() + self.suffixes.len()
     }
 }
 
@@ -361,7 +417,7 @@ impl UrlPrefetchOpts {
         if !self.enabled {
             return Ok(None);
         }
-        let allow_hosts: Arc<HashSet<String>> = Arc::new(self.allow_hosts.into_iter().collect());
+        let allow_hosts = Arc::new(AllowList::from_strings(self.allow_hosts));
         let cfg = UrlPrefetchConfig::new(
             self.allow_http,
             self.timeout.unwrap_or(DEFAULT_TIMEOUT),
@@ -437,7 +493,7 @@ mod tests {
             // dedicated DNS-blocklist tests live below.
             false,
             // Phase 30 — empty allowlist for this test.
-            Arc::new(HashSet::new()),
+            Arc::new(AllowList::default()),
         )
         .unwrap();
         let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
@@ -462,7 +518,7 @@ mod tests {
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             false, // block_private_ips off — scheme check fires first
-            Arc::new(HashSet::new()),
+            Arc::new(AllowList::default()),
         )
         .unwrap();
         let mut req = req_with_image_url("http://example.com/cat.png");
@@ -487,7 +543,7 @@ mod tests {
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             false,
-            Arc::new(HashSet::new()),
+            Arc::new(AllowList::default()),
         )
         .unwrap();
         let mut req = req_with_image_url(&format!("{}/icon.svg", server.uri()));
@@ -512,9 +568,14 @@ mod tests {
             .await;
 
         // Cap at 100 bytes — server returns 1024.
-        let cfg =
-            UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, 100, false, Arc::new(HashSet::new()))
-                .unwrap();
+        let cfg = UrlPrefetchConfig::new(
+            true,
+            DEFAULT_TIMEOUT,
+            100,
+            false,
+            Arc::new(AllowList::default()),
+        )
+        .unwrap();
         let mut req = req_with_image_url(&format!("{}/big.png", server.uri()));
         let err = cfg.rewrite(&mut req).await.unwrap_err();
         let msg = format!("{err:?}");
@@ -535,7 +596,7 @@ mod tests {
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             false,
-            Arc::new(HashSet::new()),
+            Arc::new(AllowList::default()),
         )
         .unwrap();
         let mut req = req_with_image_url(&format!("{}/oops", server.uri()));
@@ -716,7 +777,7 @@ mod tests {
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             true, // block_private_ips ON — Phase 29.A default
-            Arc::new(HashSet::new()),
+            Arc::new(AllowList::default()),
         )
         .unwrap();
 
@@ -730,6 +791,79 @@ mod tests {
             msg.contains("blocked IP") || msg.contains("PermissionDenied"),
             "expected resolver rejection in error, got: {msg}",
         );
+    }
+
+    // ----- Phase 31 — `AllowList` wildcard semantics. -----
+
+    #[test]
+    fn allow_list_default_is_empty() {
+        let allow = AllowList::default();
+        assert!(allow.is_empty());
+        assert_eq!(allow.len(), 0);
+    }
+
+    #[test]
+    fn allow_list_exact_match() {
+        let allow = AllowList::from_strings(vec!["registry.public.com".into(), "10.0.5.4".into()]);
+        // Phase 30 regression: exact match still works.
+        assert!(allow.contains("registry.public.com"));
+        assert!(allow.contains("10.0.5.4"));
+        assert!(!allow.contains("other.public.com"));
+        assert!(!allow.contains("10.0.5.5"));
+    }
+
+    #[test]
+    fn allow_list_wildcard_matches_subdomain() {
+        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        assert!(allow.contains("registry.internal.corp"));
+        assert!(allow.contains("images.internal.corp"));
+    }
+
+    #[test]
+    fn allow_list_wildcard_matches_multi_level() {
+        // Phase 31 explicitly allows multi-level matching
+        // (RFC 6125 strict semantics permit only one level;
+        // operator-controlled allowlists prefer the broader
+        // "any subdomain" intent).
+        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        assert!(allow.contains("staging.images.internal.corp"));
+        assert!(allow.contains("a.b.c.d.internal.corp"));
+    }
+
+    #[test]
+    fn allow_list_wildcard_does_not_match_bare_domain() {
+        // `*.internal.corp` requires a leading `.` — `internal.corp`
+        // itself is NOT matched. Operators add a separate exact
+        // entry if they want the apex too.
+        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        assert!(!allow.contains("internal.corp"));
+    }
+
+    #[test]
+    fn allow_list_wildcard_does_not_match_other_domain() {
+        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        assert!(!allow.contains("evil.com"));
+        assert!(!allow.contains("registry.public.com"));
+    }
+
+    #[test]
+    fn allow_list_wildcard_does_not_match_attacker_domain() {
+        // Confusable: `attacker-internal.corp` ends in
+        // `internal.corp` but not `.internal.corp` — the leading
+        // dot must be present.
+        let allow = AllowList::from_strings(vec!["*.internal.corp".into()]);
+        assert!(!allow.contains("attacker-internal.corp"));
+    }
+
+    #[test]
+    fn allow_list_exact_and_wildcard_coexist() {
+        let allow =
+            AllowList::from_strings(vec!["registry.public.com".into(), "*.internal.corp".into()]);
+        // Both match.
+        assert!(allow.contains("registry.public.com"));
+        assert!(allow.contains("registry.internal.corp"));
+        // Negative: neither pattern matches.
+        assert!(!allow.contains("evil.com"));
     }
 
     // ----- Phase 30 — per-host allowlist tests. -----
@@ -787,15 +921,14 @@ mod tests {
             .await;
 
         // Block-private-IPs ON, but `127.0.0.1` is in the allowlist.
-        let mut allow_hosts = HashSet::new();
-        allow_hosts.insert("127.0.0.1".to_string());
+        let allow_hosts = Arc::new(AllowList::from_strings(vec!["127.0.0.1".into()]));
 
         let cfg = UrlPrefetchConfig::new(
             true, // allow_http for wiremock
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             true, // block_private_ips ON
-            Arc::new(allow_hosts),
+            allow_hosts,
         )
         .unwrap();
 
@@ -834,17 +967,11 @@ mod tests {
             .await;
 
         // Block-private-IPs ON, allowlist contains a DIFFERENT host.
-        let mut allow_hosts = HashSet::new();
-        allow_hosts.insert("some-other-host".to_string());
+        let allow_hosts = Arc::new(AllowList::from_strings(vec!["some-other-host".into()]));
 
-        let cfg = UrlPrefetchConfig::new(
-            true,
-            DEFAULT_TIMEOUT,
-            DEFAULT_MAX_BYTES,
-            true,
-            Arc::new(allow_hosts),
-        )
-        .unwrap();
+        let cfg =
+            UrlPrefetchConfig::new(true, DEFAULT_TIMEOUT, DEFAULT_MAX_BYTES, true, allow_hosts)
+                .unwrap();
 
         let mut req = req_with_image_url(&format!("{}/cat.png", server.uri()));
         let err = cfg.rewrite(&mut req).await.unwrap_err();
@@ -877,7 +1004,7 @@ mod tests {
             DEFAULT_TIMEOUT,
             DEFAULT_MAX_BYTES,
             false, // block_private_ips OFF — operator opt-out
-            Arc::new(HashSet::new()),
+            Arc::new(AllowList::default()),
         )
         .unwrap();
 
