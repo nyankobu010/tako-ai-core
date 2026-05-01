@@ -353,11 +353,17 @@ Python:
   Vertex / Bedrock cross-cutter (carry-forward).
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   sandboxed runner needed (carry-forward).
-- **Per-delta streaming verifier in AB-MCTS rollouts** — would
-  require deeper refactor of the rollout sampler.
-- **Vault dynamic token rotation** (AppRole / Kubernetes auth methods).
-- **OIDC token introspection** (RFC 7662) — only signature validation
-  lands in 14.B.
+- ~~**Per-delta streaming verifier in AB-MCTS rollouts**~~ —
+  *closed in Phase 15.A (v0.16.0)* via `rollout_static_streaming`
+  helper + `tokio::select!` mpsc recv-loop in `AbMcts::stream`.
+- ~~**Vault dynamic token rotation**~~ — *closed in Phase 15.B.1
+  (v0.16.0)* via the new `VaultTokenProvider` trait +
+  `AppRoleTokenProvider` / `KubernetesTokenProvider` impls.
+- ~~**OIDC token introspection** (RFC 7662)~~ — *closed in Phase
+  15.B.2 (v0.16.0)* via new `IntrospectionConfig` +
+  `OidcAuthResolver::with_introspection` / `with_introspection_uri`
+  builders, fail-closed when the issuer doesn't advertise the
+  endpoint.
 - **Composite resolvers** (e.g. mTLS + bearer chaining).
 - **Bounded `mpsc` backpressure** for slow per-delta verifiers.
 - **Per-tenant rate limiting** in compat — orthogonal.

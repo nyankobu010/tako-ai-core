@@ -33,17 +33,18 @@ synopsis and quickstart.
 | 12 — MCP SSE notifications + HttpGeneric Python facade | v0.13.0 | done (2026-04-30) | [PLAN_PHASE12.md](PLAN_PHASE12.md) | [`## [0.13.0]`](CHANGELOG.md) |
 | 13 — Multi-replica `StateStore` + streaming verifier in Trinity | v0.14.0 | done (2026-04-30) | [PLAN_PHASE13.md](PLAN_PHASE13.md) | [`## [0.14.0]`](CHANGELOG.md) |
 | 14 — Streaming verifier in Conductor + tako-compat real auth providers | v0.15.0 | done (2026-04-30) | [PLAN_PHASE14.md](PLAN_PHASE14.md) | [`## [0.15.0]`](CHANGELOG.md) |
+| 15 — Streaming verifier in AbMcts + tako-compat auth hardening | v0.16.0 | done (2026-05-01) | [PLAN_PHASE15.md](PLAN_PHASE15.md) | [`## [0.16.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 15 candidates (indicative, not yet committed)
+### Phase 16 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 14's holding pen — the two items that
-landed in Phase 14 (streaming-aware verifier in Conductor;
-`tako-compat` JWT / OIDC / Vault `AuthResolver` impls) are now off
+Carry-forward from Phase 15's holding pen — the three items that
+landed in Phase 15 (per-delta streaming verifier in `AbMcts::stream`;
+Vault dynamic token rotation; OIDC token introspection) are now off
 the list. The remainder:
 
 - **Vision / image content support across providers.** Anthropic,
@@ -52,16 +53,16 @@ the list. The remainder:
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
   promised in Phase 3 PLAN, still raise `NotImplementedError`.
   Sandboxed runner needed.
-- **Per-delta streaming verifier in AB-MCTS rollouts** — Trinity
-  (Phase 13.B) and Conductor (Phase 14.A) now stream per-delta
-  verifier scores; `AbMcts::stream` calls the verifier per
-  rollout-complete only. Per-delta would require deeper rollout
-  sampler refactor.
-- **Vault dynamic token rotation** for `VaultAuthResolver`
-  (AppRole, Kubernetes auth methods); Phase 14.B uses a static
-  Vault token only.
-- **OIDC token introspection (RFC 7662)** for `OidcAuthResolver`;
-  Phase 14.B does signature validation only.
+- **OIDC `introspection_endpoint_auth_method` discovery.** Phase
+  15.B.2 supports HTTP Basic only; mTLS and `client_secret_jwt`
+  deferred.
+- **OIDC refresh-token flows / end-session endpoint.** Orthogonal
+  hardening for the `OidcAuthResolver`.
+- **Vault namespace support** (Vault Enterprise) — orthogonal.
+- **Composite `AuthResolver`s** (mTLS + bearer chaining) —
+  orthogonal.
+- **Bounded `mpsc` backpressure** for slow per-delta verifiers in
+  AB-MCTS / Conductor / Trinity rollouts.
 
 ### Beyond (speculative)
 
@@ -128,6 +129,28 @@ where the fix would land.
   one-shot force-refresh on signature failure;
   `VaultAuthResolver` looks up bearer tokens in KV v2 with a
   positive-only TTL cache.
+- [x] **Per-delta streaming `Verifier` in AB-MCTS rollouts.** Closed
+  in Phase 15.A (v0.16.0):
+  [`AbMcts::stream`](crates/tako-orchestrator/src/ab_mcts.rs)
+  now branches on `picked.capabilities().supports_streaming` and
+  drives `provider.stream(...)` through a new
+  `rollout_static_streaming` helper modelled on Trinity (13.B) and
+  Conductor (14.A). Per-delta `OrchEvent::VerifierScore` events
+  share `(step, branch=leaf_idx)` with the synthesis-complete
+  final.
+- [x] **Vault dynamic token rotation.** Closed in Phase 15.B.1
+  (v0.16.0): new public `VaultTokenProvider` async trait plus
+  `StaticVaultToken` / `AppRoleTokenProvider` /
+  `KubernetesTokenProvider` impls. `VaultAuthResolver` keeps its
+  `new(addr, token)` shape but gains `with_provider`,
+  `with_approle`, `with_kubernetes`, and `with_kubernetes_in_pod`
+  constructors; Python facade mirrors the new surface.
+- [x] **OIDC token introspection (RFC 7662).** Closed in Phase
+  15.B.2 (v0.16.0): new public `IntrospectionConfig` struct + two
+  `OidcAuthResolver` builders (`with_introspection` /
+  `with_introspection_uri`); Python facade mirrors them as
+  `OidcAuth.with_introspection_*`. Fail-closed when the issuer
+  doesn't advertise the endpoint.
 - [ ] **Vision / image content support across providers.**
   Anthropic ([convert.rs:171](crates/tako-providers/anthropic/src/convert.rs#L171)),
   Vertex ([convert.rs:203](crates/tako-providers/vertex/src/convert.rs#L203)),

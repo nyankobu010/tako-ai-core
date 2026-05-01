@@ -85,25 +85,25 @@ result = orch.run_sync("Quick question: ...")
 
 ## Feature matrix
 
-| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 | Phase 11 | Phase 12 | Phase 13 | Phase 14 |
-|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|:--------:|:--------:|:--------:|:--------:|
-| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | | ➕ Python custom provider streaming | ➕ `http-generic` streaming (`StreamConfig`) | ➕ `tako.providers.HttpGeneric` Python facade | | |
-| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events | | | | ➕ JWT / OIDC / Vault `AuthResolver` impls (cargo features) |
-| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | | | ➕ Streamable HTTP SSE notifications + `Mcp-Session-Id` lifecycle | | |
-| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | | | | | |
-| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta |
-| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | ➕ streaming `Verifier::evaluate_streaming` | |
-| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | | | | | |
-| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | | | | | |
-| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | | | | | |
-| Streaming verifier (`Verifier::evaluate_streaming`) | | | | | | | | | | | | | ✅ default-impl + Trinity per-delta + `RuleBasedVerifier` override | ➕ Conductor per-delta (worker fanout via mpsc) |
-| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | | | | | |
-| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | | | | | |
-| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | | | | | |
-| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | | | | | |
-| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | | | | | |
-| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` | ➕ review-driven hardening (race-free anchor; `0o600` state file; `BasicConstraints` + critical-ext checks) | | ➕ `StateStore` trait + `RedisStateStore` (multi-replica) | |
-| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | | | | | |
+| Capability                         | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 | Phase 6 | Phase 7 | Phase 8 | Phase 9 | Phase 10 | Phase 11 | Phase 12 | Phase 13 | Phase 14 | Phase 15 |
+|------------------------------------|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:--------:|:--------:|:--------:|:--------:|:--------:|:--------:|
+| `LlmProvider` trait + adapters     | ✅ Anthropic, OpenAI, http-generic | ➕ Azure, Bedrock, Vertex | | ➕ Mistral, Ollama | | | | | | ➕ Python custom provider streaming | ➕ `http-generic` streaming (`StreamConfig`) | ➕ `tako.providers.HttpGeneric` Python facade | | | |
+| OpenAI-compat HTTP server          |         | ✅      |         |         |         |         |         | ➕ `tako.*` SSE extensions (Phase 9) | | ➕ `tako.tool_call_*` named events | | | | ➕ JWT / OIDC / Vault `AuthResolver` impls (cargo features) | ➕ Vault AppRole / Kubernetes token rotation; OIDC RFC 7662 introspection |
+| MCP client (stdio + Streamable HTTP) | ✅    |         |         | ➕ WS, gRPC | ➕ gRPC mTLS |  |         |         |         | | | ➕ Streamable HTTP SSE notifications + `Mcp-Session-Id` lifecycle | | | |
+| `SingleAgent` orchestrator         | ✅      |         |         |         | ➕ budget |         |         |         |         | | | | | | |
+| `Conductor` orchestrator           |         | ✅      |         |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta | |
+| `Trinity` learned router           |         |         | ✅      |         |         | ➕ budget |         |         |         | ➕ verifier scores | | | ➕ streaming `Verifier::evaluate_streaming` | | |
+| `SelfCaller` recursion             |         |         | ✅      |         |         | ➕ judge budget | ✅ native streaming | ➕ streaming guard | | | | | | | |
+| `AbMcts` tree search               |         |         |         | ✅      |         |         |         | ✅ streaming + Python facade | ➕ router-driven branch expansion | | | | | | ➕ streaming `Verifier::evaluate_streaming` per-delta |
+| Streaming guards (`ConfidenceGuard::evaluate_streaming`) | | | | | | | | ✅ rule-based early-abort | ➕ opt-in `LlmJudgeGuard` per-N-delta | | | | | | |
+| Streaming verifier (`Verifier::evaluate_streaming`) | | | | | | | | | | | | | ✅ default-impl + Trinity per-delta + `RuleBasedVerifier` override | ➕ Conductor per-delta (worker fanout via mpsc) | ➕ AbMcts per-delta (rollout buffer + mpsc + `tokio::select!`) |
+| OPA / Rego policy enforcement      |         | ✅      |         |         |         |         |         |         |         | | | | | | |
+| PII / DLP redaction                | ✅      |         |         |         |         |         |         |         |         | | | | | | |
+| OTel tracing (`tako.*`, `gen_ai.*`) | ✅     |         |         |         |         |         |         |         |         | | | | | | |
+| Budgets (in-memory)                | ✅      |         |         | ➕ Redis | ➕ SingleAgent wiring | ➕ Conductor / Trinity / Judge | | | | | | | | | |
+| Circuit breakers + rate limits     | ✅      |         |         |         |         |         |         |         |         | | | | | | |
+| Sigstore tool-catalogue verify     |         |         |         | ✅ keyed | ➕ keyless | ➕ chain + Rekor SET | ➕ Rekor inclusion proof + cosign protobuf bundle | ➕ Rekor checkpoint | ➕ checkpoint freshness anchor | ➕ on-disk `JsonStateStore` | ➕ review-driven hardening (race-free anchor; `0o600` state file; `BasicConstraints` + critical-ext checks) | | ➕ `StateStore` trait + `RedisStateStore` (multi-replica) | | |
+| Sync + async dual API              | ✅      |         |         |         |         |         |         |         |         | | | | | | |
 
 ## Roadmap
 
@@ -249,6 +249,43 @@ result = orch.run_sync("Quick question: ...")
   `tako.compat.VaultAuth`; `tako.compat.serve_openai` gains an
   `auth=` parameter. Both items strictly additive — public APIs
   unchanged shape.
+- **Phase 15 — Streaming `Verifier` in AbMcts + tako-compat auth
+  hardening** *(done, v0.16.0)*: clears three more carry-forwards.
+  (A) `AbMcts::stream` now drives `provider.stream(...)` for
+  streaming-capable rollouts (mirroring Phase 13.B's Trinity wiring
+  and Phase 14.A's Conductor wiring) and surfaces per-delta
+  progress as `OrchEvent::AssistantText` +
+  `OrchEvent::VerifierScore { step, branch=leaf_idx, score }` on
+  the same `(step, branch)` as the existing synthesis-complete
+  final. New `rollout_static_streaming` helper runs concurrently
+  with the outer `try_stream!` block via a
+  `tokio::sync::mpsc::unbounded_channel` + `tokio::select!`
+  recv-loop. Branch identity = `leaf_idx as u32`, stamped before
+  the leaf is pushed so partials and the final share `(step,
+  branch)`. Phase 9.D router-driven mode is honoured: capability is
+  checked on the **picked** candidate, not the primary; mixed-
+  capability pools degrade gracefully. Non-streaming providers
+  still produce one full-text `AssistantText` per rollout — byte-
+  for-byte parity with v0.15.0. (B) `VaultAuthResolver` gains
+  AppRole + Kubernetes auth-method rotation via a new public
+  [`VaultTokenProvider`](crates/tako-compat/src/auth/vault_token.rs)
+  trait + three impls (`StaticVaultToken`, `AppRoleTokenProvider`,
+  `KubernetesTokenProvider`). New `with_provider`, `with_approle`,
+  `with_kubernetes`, and `with_kubernetes_in_pod` constructors;
+  `new(addr, token)` keeps working. AppRole / Kubernetes providers
+  POST directly via `reqwest` (no `vaultrs` dep bump);
+  re-authenticate lazily at `0.9 * lease_duration`. Bounded LRU of
+  `VaultClient`s (4 entries) keyed on Vault-token-string handles
+  rotation without rebuild storms. (C) `OidcAuthResolver` gains RFC
+  7662 token introspection via new `IntrospectionConfig` +
+  `with_introspection(client_id, secret)` (uses the discovered
+  `introspection_endpoint`; **fail-closed** when not advertised) /
+  `with_introspection_uri(uri, ...)` (explicit override) builders.
+  POSTs `token=<jwt>&token_type_hint=access_token` as URL-encoded
+  form data with HTTP Basic auth; `active=false` returns
+  `TakoError::Invalid("oidc: token revoked (introspection ...)")`.
+  Python facade mirrors all new surfaces. Three items strictly
+  additive — public APIs unchanged shape.
 
 See [`PLAN.md`](PLAN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 

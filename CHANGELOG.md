@@ -9,6 +9,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.16.0] - 2026-05-01
+
+Phase 15 — clears three more carry-forward items from the Phase 14
+holding pen. Strictly additive: streaming-aware `Verifier` in
+`AbMcts::stream` (closing the streaming-verifier triumvirate after
+Trinity in 13.B and Conductor in 14.A); Vault dynamic token rotation
+(AppRole / Kubernetes auth methods) for `VaultAuthResolver`; and
+RFC 7662 token introspection for `OidcAuthResolver`. Python facade
+mirrors the new auth surfaces.
+Plan: [PLAN_PHASE15.md](PLAN_PHASE15.md).
+
+### Added
+
+- **Phase 15.A — Streaming-aware `Verifier` in `AbMcts::stream`.**
+  Completes the streaming-verifier triumvirate (Trinity in 13.B →
+  Conductor in 14.A → AB-MCTS in 15.A). When the rollout's picked
+  provider advertises `Capabilities::supports_streaming` (Phase 9.D
+  router-driven mode honoured: capability is checked on the **picked**
+  candidate, not the primary), every provider turn in the rollout
+  goes through `provider.stream(...)` — tool-call turns assemble
+  `ToolCallDelta`s into `ContentPart::ToolCall` exactly like Trinity,
+  the final turn produces only `ContentPart::Text`. A cumulative
+  text buffer spans the entire rollout; on each non-empty
+  `ChatChunk::Delta` the buffer grows and
+  `Verifier::evaluate_streaming(&principal, &cumulative)` is called.
+  `Ok(Some(score))` returns produce intermediate
+  `OrchEvent::VerifierScore { step, branch=leaf_idx, score }` events
+  on the same `(step, branch)` as the eventual synthesis-complete
+  final. The default `Ok(None)` impl preserves Phase 8 behaviour
+  byte-for-byte. Non-streaming providers (and routed candidates
+  lacking streaming capability) still produce one full-text
+  `OrchEvent::AssistantText` and one final per rollout — identical
+  to v0.15.0. Branch identity = `leaf_idx as u32`, computed before
+  the leaf is pushed so partials and the final share `(step, branch)`.
+  New helper `rollout_static_streaming` runs concurrently with the
+  outer `try_stream!` block via a `tokio::sync::mpsc::unbounded_channel`
+  + `tokio::select!` recv-loop. `AbMcts::run` (non-streaming path)
+  is untouched. Files:
+  [crates/tako-orchestrator/src/ab_mcts.rs](crates/tako-orchestrator/src/ab_mcts.rs).
+  Tests: seven new tests in
+  [ab_mcts_streaming_verifier.rs](crates/tako-orchestrator/tests/ab_mcts_streaming_verifier.rs)
+  cover (a) per-delta `AssistantText` events in scripted order, (b)
+  per-delta `VerifierScore` partial-and-final shape, (c) partials
+  share branch with their rollout's final, (d) `AlwaysScore`
+  (default `Ok(None)`) zero-partial regression, (e) non-streaming
+  fallback byte-parity, (f) router picks streaming candidate, (g)
+  router picks non-streaming candidate. No Python facade changes —
+  `PyAbMcts.stream` (Phase 8.B) already surfaces `OrchEvent`
+  partials through `PyOrchEventStream`; Phase 15.A just populates
+  the existing pipe with new event types.
+- **Phase 15.B.1 — Vault dynamic token rotation.**
+  [`VaultAuthResolver`](crates/tako-compat/src/auth/vault.rs)
+  (Phase 14.B) shipped with a static Vault token baked into a single
+  `VaultClient` at construction. Phase 15.B.1 abstracts the bearer-
+  token-acquisition strategy behind a new public
+  [`VaultTokenProvider`](crates/tako-compat/src/auth/vault_token.rs)
+  async trait and ships three impls:
+  - `StaticVaultToken` — wraps a fixed string (lossless equivalent
+    of v0.15.0 behaviour; `VaultAuthResolver::new(addr, token)`
+    internally constructs one).
+  - `AppRoleTokenProvider` — POSTs `{role_id, secret_id}` to
+    `<addr>/v1/auth/approle/login`, parses `auth.client_token` +
+    `auth.lease_duration`, re-authenticates lazily at
+    `0.9 * lease_duration`.
+  - `KubernetesTokenProvider` — reads the SA JWT from a configurable
+    path on each (re-)auth so SA-token rotation is picked up; POSTs
+    `{role, jwt}` to `<addr>/v1/auth/kubernetes/login`. Same caching
+    pattern as AppRole. Constructor is infallible — missing-JWT
+    errors surface only when `token()` is actually called, so unit
+    tests on dev workstations work without a populated
+    `/var/run/secrets/...`. Convenience constructor
+    `KubernetesTokenProvider::in_pod` hardcodes the canonical path.
+
+  All providers POST directly via `reqwest` (NOT
+  `vaultrs::auth::approle/auth::kubernetes`) so we don't bump the
+  `vaultrs 0.7` dep. Internal helper `vault_login` parses the
+  standard Vault auth-response JSON shape (`auth.client_token` +
+  `auth.lease_duration` u64 seconds).
+
+  `VaultAuthResolver` keeps its v0.15.0 `new(addr, token)` signature
+  and gains `with_provider`, `with_approle`, `with_kubernetes`, and
+  `with_kubernetes_in_pod` constructors. Internally a bounded LRU
+  (4 entries) of `VaultClient`s keyed on Vault-token-string lets the
+  resolver build a fresh client per rotation without rebuilding on
+  every request. The principal cache (token → Principal, 60s TTL)
+  is **orthogonal** to Vault-token rotation — documented in rustdoc
+  to forestall confusion. Feature gate updated:
+  `vault = ["dep:vaultrs", "dep:reqwest"]`. Python facade gains
+  three `VaultAuth.with_*` static-method constructors mirroring the
+  Rust API. Files:
+  [crates/tako-compat/Cargo.toml](crates/tako-compat/Cargo.toml),
+  [crates/tako-compat/src/auth/vault.rs](crates/tako-compat/src/auth/vault.rs),
+  [crates/tako-compat/src/auth/vault_token.rs](crates/tako-compat/src/auth/vault_token.rs),
+  [crates/tako-compat/src/auth/mod.rs](crates/tako-compat/src/auth/mod.rs),
+  [crates/tako-compat/src/lib.rs](crates/tako-compat/src/lib.rs),
+  [crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs).
+  Tests: 6 new wiremock-driven integration tests in
+  [crates/tako-compat/tests/vault_token.rs](crates/tako-compat/tests/vault_token.rs)
+  (login response parsing + caching, 5xx propagation, Kubernetes
+  JWT-from-file, missing-JWT path → `TakoError::Transport`,
+  re-auth after lease expiry, static-token byte-parity).
+- **Phase 15.B.2 — OIDC token introspection (RFC 7662).**
+  [`OidcAuthResolver`](crates/tako-compat/src/auth/oidc.rs)
+  (Phase 14.B) shipped with signature validation only; revoked
+  tokens whose signature still verifies passed. Phase 15.B.2 adds
+  opt-in RFC 7662 token introspection as a post-signature-validation
+  hook. New public `IntrospectionConfig { introspect_uri, client_id,
+  client_secret }` struct. `DiscoveryDoc` is extended with an
+  optional `introspection_endpoint` field, captured at `discover()`
+  time. Two new builders: `with_introspection(client_id,
+  client_secret)` (uses the discovered URI; **fail-closed** if the
+  issuer didn't advertise an `introspection_endpoint`) and
+  `with_introspection_uri(uri, client_id, client_secret)` (explicit
+  URI, infallible — bypasses discovery). The introspection POST
+  sends `token=<jwt>&token_type_hint=access_token` as URL-encoded
+  form data with HTTP Basic auth carrying
+  `client_id:client_secret`. Workspace `reqwest` is configured
+  without the `urlencoded` feature, so the body is built via
+  `url::form_urlencoded::Serializer` (added behind the `oidc`
+  feature gate). Response with `active=false` returns
+  `TakoError::Invalid("oidc: token revoked (introspection ...)")`.
+  `OidcAuthResolver` derives `Clone` (cheap — JWKS cache is
+  `Arc<RwLock<...>>` so cloning shares the cache). Python facade
+  gains `OidcAuth.with_introspection` / `with_introspection_uri`
+  builder methods returning a NEW pyclass instance (immutable
+  builder, matching the Rust `mut self -> Result<Self>` shape).
+  Files:
+  [crates/tako-compat/Cargo.toml](crates/tako-compat/Cargo.toml),
+  [crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs),
+  [crates/tako-compat/src/auth/mod.rs](crates/tako-compat/src/auth/mod.rs),
+  [crates/tako-compat/src/lib.rs](crates/tako-compat/src/lib.rs),
+  [crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs).
+  Tests: 8 new `#[cfg(test)]` unit tests covering builder behaviour,
+  fail-closed semantics, basic-auth header construction, active=true
+  / active=false / 5xx flows, and discovery-doc parsing. Plus 5 new
+  pytest smokes in
+  [tests/python/test_phase15_auth_hardening.py](tests/python/test_phase15_auth_hardening.py).
+
 ## [0.15.0] - 2026-04-30
 
 Phase 14 — clears two more carry-forward items from the Phase 13
