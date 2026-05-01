@@ -9,6 +9,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.25.0] - 2026-05-01
+
+Phase 24 — closes the OIDC introspection mTLS gap that's been
+deferred since Phase 16 with the framing "needs reqwest TLS
+feature changes at workspace scope". That framing was wrong:
+the existing workspace reqwest features
+(`["rustls", "webpki-roots", ...]`) already expose
+`reqwest::Identity::from_pem` (verified via a probe compile).
+Phase 24 implements RFC 8705 mTLS introspection without any
+workspace-level dep change. Plan: [PLAN_PHASE24.md](PLAN_PHASE24.md).
+
+After Phase 24 the OIDC introspection auth-method surface
+covers all five RFC 7662 §2.1 / RFC 8414-listed methods tako
+intends to ship: `client_secret_basic` / `_post` / `_jwt` /
+`private_key_jwt` / `tls_client_auth`. RFC 8705 §2.2
+`self_signed_tls_client_auth` corner case (issuer accepts
+self-signed certs without a CA chain) and end-to-end
+mTLS-handshake integration tests (real TLS server requiring
+client auth) remain deferred to Phase 25+.
+
+### Added
+
+- **Phase 24.A — OIDC introspection mTLS / `tls_client_auth`
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+
+  New surfaces:
+  - `IntrospectionAuthMethod::TlsClientAuth` variant on the
+    introspection auth-method enum.
+  - `IntrospectionConfig.mtls_client:
+    Option<Arc<reqwest::Client>>` field. `Arc` because
+    `reqwest::Client` is already internally `Arc`'d; cloning
+    is cheap.
+  - `OidcAuthResolver::with_introspection_mtls(cert_pem,
+    key_pem)` builder. Loads the cert + key, builds a
+    per-resolver mTLS-enabled `reqwest::Client` via
+    `reqwest::Identity::from_pem`, attaches to the
+    introspection config, flips `auth_method` to
+    `TlsClientAuth`. PEM parse failure (or `Client` build
+    failure) surfaces as
+    `TakoError::Invalid("oidc: invalid mTLS identity PEM:
+    ...")` at builder time.
+  - `OidcAuthResolver::with_introspection_mtls_combined(combined_pem)`
+    convenience for the common `cat cert.pem key.pem` shape.
+  - Internal helper `build_mtls_identity` that concatenates
+    separate cert + key PEMs with a separating newline (which
+    is what `reqwest::Identity::from_pem` requires).
+
+  Auto-selector extension: extends the Phase 18.A four-tier
+  preference order to a five-tier ordering with
+  `tls_client_auth` at the head when (a) the issuer advertises
+  it AND (b) an mTLS identity is configured. Rationale: mTLS
+  is the strongest authentication method (the private key
+  never leaves the client; the cert binds to a DN / SAN the
+  issuer pre-registered).
+
+  `introspect()` extension: when `auth_method ==
+  TlsClientAuth`, swap to `cfg.mtls_client` (not the resolver's
+  default `self.http`) for the POST. Body is credential-free
+  (same as Basic) — the issuer authenticates via the TLS
+  handshake's client cert, not a body field or `Authorization`
+  header. Pre-flight check errors with
+  `TakoError::Invalid("oidc: tls_client_auth requires
+  mtls_client to be set")` when the auth method was flipped
+  without configuring identity (matches the Phase 17.B / 18.A
+  request-time-fail pattern for missing JWT keys).
+
+  Seven new unit tests:
+  - `with_introspection_mtls_accepts_valid_pem`
+  - `with_introspection_mtls_combined_accepts_concatenated_pem`
+  - `with_introspection_mtls_rejects_garbage_pem` — PEM parse
+    failure surfaces at builder time.
+  - `with_introspection_mtls_no_op_without_introspection` —
+    chainable-builder cadence (no PEM parsing if no
+    introspection config attached yet).
+  - `auto_select_prefers_tls_client_auth_when_listed_and_identity_present`
+  - `auto_select_skips_tls_client_auth_when_no_identity` —
+    falls back to `client_secret_basic` when listed but
+    identity missing.
+  - `introspect_tls_client_auth_errors_when_mtls_client_missing`
+    — request-time fail.
+
+  A 2048-bit RSA self-signed test cert + matching PKCS#8 key
+  are embedded as `static &[u8]` PEM fixtures in the test
+  module (matches the Phase 18.A pattern).
+
+- **Phase 24.B — OidcAuth mTLS Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `OidcAuth.with_introspection_mtls(cert_pem: bytes, key_pem:
+  bytes)` and `with_introspection_mtls_combined(combined_pem:
+  bytes)` mirror the Rust builders. Returns a NEW `OidcAuth`.
+  Raises `ValueError` on PEM parse failure.
+
+  `OidcAuth.with_introspection_auth_method(method)` alias
+  parser extended to accept three case-insensitive aliases for
+  the new variant: `"tls_client_auth"` (RFC 8705 spec name),
+  `"tls-client-auth"` (kebab variant), `"mtls"`
+  (operator-friendly shorthand).
+
+  `tako.compat` module docstring updated. New
+  [`tests/python/test_phase24_mtls.py`](tests/python/test_phase24_mtls.py)
+  covers facade attribute presence + the alias-parser entries.
+
+### Changed
+
+- `IntrospectionAuthMethod` gains a fifth unit variant
+  `TlsClientAuth`. The enum keeps `#[derive(Debug, Clone,
+  Copy, Default, PartialEq, Eq)]`; default is unchanged
+  (`ClientSecretBasic`).
+- `IntrospectionConfig` gains a public `mtls_client:
+  Option<Arc<reqwest::Client>>` field; existing struct-literal
+  initialisers (test code) need to pass `mtls_client: None`.
+- Workspace + Python crate version bumped to v0.25.0.
+
+### Carried forward to Phase 25+
+
+- `self_signed_tls_client_auth` (RFC 8705 §2.2) — issuer
+  accepts self-signed certs without a CA chain. Identical wire
+  shape to `tls_client_auth`; same builder works, but the
+  discovery-list entry is distinct.
+- OIDC mTLS end-to-end integration test — real TLS server
+  requiring client auth (e.g. rustls-server in the test
+  harness) would close the loop.
+- OIDC mTLS cert / key rotation — Phase 24 builds the mTLS
+  Client once at builder time; long-running deployments that
+  rotate client certs would need a refresh mechanism.
+- URL-source images for Bedrock / Ollama (need tako-side
+  pre-fetch with SSRF guard), Vertex File API upload flow,
+  eval-harness real graders, OIDC refresh-token / revocation,
+  ChainedAuth short-circuit-on-transport-error.
+
 ## [0.24.0] - 2026-05-01
 
 Phase 23 — extends Phase 22's URL-source-image work to Vertex.

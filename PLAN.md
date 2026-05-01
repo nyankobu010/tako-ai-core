@@ -42,41 +42,44 @@ synopsis and quickstart.
 | 21 — Composite AuthResolver | v0.22.0 | done (2026-05-01) | [PLAN_PHASE21.md](PLAN_PHASE21.md) | [`## [0.22.0]`](CHANGELOG.md) |
 | 22 — URL-source images: Anthropic + OpenAI + Mistral | v0.23.0 | done (2026-05-01) | [PLAN_PHASE22.md](PLAN_PHASE22.md) | [`## [0.23.0]`](CHANGELOG.md) |
 | 23 — URL-source images: Vertex (Gemini fileData) | v0.24.0 | done (2026-05-01) | [PLAN_PHASE23.md](PLAN_PHASE23.md) | [`## [0.24.0]`](CHANGELOG.md) |
+| 24 — OIDC introspection mTLS / `tls_client_auth` | v0.25.0 | done (2026-05-01) | [PLAN_PHASE24.md](PLAN_PHASE24.md) | [`## [0.25.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 24 candidates (indicative, not yet committed)
+### Phase 25 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 23's holding pen — URL-source images
-now flow through four of the six provider adapters (Anthropic +
-OpenAI + Mistral in Phase 22, Vertex in Phase 23). The remainder:
+Carry-forward from Phase 24's holding pen — OIDC introspection
+mTLS landed in Phase 24 (`tls_client_auth`). After Phase 24 the
+OIDC introspection auth-method surface covers all five RFC 7662
+§2.1 / RFC 8414-listed methods we ship: `client_secret_basic` /
+`_post` / `_jwt` / `private_key_jwt` / `tls_client_auth`. The
+remainder:
 
-- **URL-source images for Bedrock / Ollama** — different model
-  from the four vendors that fetch URLs themselves. Bedrock's
-  AWS SDK `ImageSource` has no URL variant; Ollama's `images`
-  field carries bare base64 only. Both would require a tako-side
-  pre-fetch with an SSRF guard. Needs a security design first.
-- **Vertex File API upload flow** — separate API surface for
-  uploading bytes and getting back a Vertex File URI; not just
-  a content-block mapping. The Phase 23 `VxFileData` part
-  already accepts those URIs, but tako doesn't expose an upload
-  helper.
+- **`self_signed_tls_client_auth`** (RFC 8705 §2.2) — corner
+  case where the issuer accepts self-signed certs without a CA
+  chain. Identical wire shape to `tls_client_auth` so the same
+  builder works, but the discovery-list entry is distinct.
+- **OIDC mTLS end-to-end integration test** — Phase 24 ships
+  builder-level tests; a real TLS server requiring client auth
+  (e.g. rustls-server in the test harness) would close the loop.
+- **OIDC mTLS cert / key rotation** — Phase 24 builds the mTLS
+  Client once at builder time; long-running deployments that
+  rotate client certs would need a refresh mechanism.
+- **URL-source images for Bedrock / Ollama** — both need
+  tako-side pre-fetch with an SSRF guard. Different design
+  problem from the vendor-fetched-URL case Phases 22 + 23
+  covered.
+- **Vertex File API upload flow** — separate API surface; the
+  Phase 23 `VxFileData` already accepts uploaded URIs.
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
-  promised in Phase 3 PLAN, still raise `NotImplementedError`.
-  Sandboxed runner needed.
-- **OIDC introspection mTLS auth methods** (`tls_client_auth` /
-  `self_signed_tls_client_auth`). Needs client TLS material plumbed
-  through `reqwest::ClientBuilder` at workspace scope.
+  needs a sandboxed runner.
 - **OIDC refresh-token / revocation-endpoint flows** — tako as
-  token *consumer* rather than validator (different model from
-  the existing `AuthResolver` surface).
-- **`ChainedAuthResolver` short-circuit semantics** — Phase 21
-  treats every `Err` as fall-through. If patterns emerge for
-  "fail fast on transport errors", a future phase may add
-  `with_short_circuit_on_transport_error`.
+  token *consumer* rather than validator.
+- **`ChainedAuthResolver` short-circuit semantics** — fail-fast
+  on transport errors, if usage patterns emerge.
 
 ### Beyond (speculative)
 
