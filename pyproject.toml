@@ -33,7 +33,7 @@ server  = ["uvicorn>=0.46"]
 training = ["numpy>=2.2", "onnx>=1.21"]
 eval    = ["datasets>=4.0", "huggingface_hub>=0.27"]
 dev     = ["pytest>=8.4", "pytest-asyncio>=0.25", "ruff>=0.13", "mypy>=1.20", "hypothesis>=6.130", "cryptography>=47"]
-docs    = ["mkdocs-material>=9.7", "mkdocstrings[python]>=0.30"]
+docs    = ["mkdocs-material>=9.7.6", "mkdocstrings[python]>=0.30"]
 
 [project.urls]
 Homepage      = "https://github.com/nyankobu010/tako-ai-core"
