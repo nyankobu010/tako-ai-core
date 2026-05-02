@@ -10,10 +10,13 @@ Doesn't require a running collector — verifies that:
    underlying ``tracing-subscriber::registry().try_init()`` is a one-shot
    per process by design.
 
-A full end-to-end test against an in-process gRPC collector is deferred
-to Phase 2 — it requires the ``opentelemetry-collector-contrib`` binary
-or a tonic-based mock, neither of which is in the Phase-1.5 acceptance
-criteria.
+A full end-to-end test against an in-process gRPC collector lives in
+``crates/tako-governance/tests/otlp_collector_e2e.rs`` (Phase 47): a
+``tonic`` mock implementing ``TraceService::Export`` receives spans
+emitted via ``init_otlp_tracing`` and asserts on names + resource +
+span attributes. This Python file exercises the **lifecycle / facade
+contract** (init → run → re-init rejected → shutdown idempotent);
+span content lives on the Rust side where the wire path runs.
 
 NOTE: ``tracing-subscriber`` is process-wide and cannot be replaced.
 Once ``init_otlp`` succeeds in a process, calling it again raises

@@ -77,3 +77,11 @@ wiremock = { workspace = true }
 sigstore = { workspace = true }
 rcgen    = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 time     = "0.3"
+
+# Phase 47 — OTel real-collector e2e test. Implements the
+# `TraceService::Export` server trait via `tonic` and asserts
+# spans land in the mock. Already a transitive dep via
+# `opentelemetry-otlp` so this just widens visibility.
+opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic", "gen-tonic-messages", "trace"] }
+tonic               = { workspace = true }
+tokio-stream        = { workspace = true, features = ["net"] }

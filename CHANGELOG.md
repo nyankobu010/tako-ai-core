@@ -9,6 +9,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.48.0] - 2026-05-02
+
+Phase 47 — closes the **"OTel end-to-end test against a real
+gRPC collector"** carry-forward item from
+[PLAN.md](PLAN.md), originally deferred from the Phase 1.5
+acceptance criteria. Until now no test asserted that spans
+actually arrive at a collector — only that
+[`init_otlp_tracing`](crates/tako-governance/src/otel.rs)
+doesn't error and the orchestrator keeps running while
+attached. A regression in span emission (e.g. a breaking
+change in `tracing-opentelemetry` causing spans to silently
+drop) wouldn't have been caught by any test. Phase 47 fixes
+that with a self-contained `tonic`-based mock collector — no
+external `otelcol-contrib` binary, no Docker.
+Plan: [plans/PLAN_PHASE47.md](plans/PLAN_PHASE47.md).
+
+### Tests
+
+- **`crates/tako-governance/tests/otlp_collector_e2e.rs`** —
+  spawns an in-process `tonic` server implementing
+  `opentelemetry_proto::tonic::collector::trace::v1::TraceService::Export`
+  on `127.0.0.1:0`. Every received `ResourceSpans` is buffered
+  in a shared `Mutex<Vec<_>>`. The test:
+    1. Calls `init_otlp_tracing` pointed at the mock's
+       endpoint.
+    2. Emits a marker span via
+       `tracing::info_span!("phase47_marker_span", marker = "phase47-e2e")`.
+    3. Drops the `TracerGuard` to flush the
+       `BatchSpanProcessor`.
+    4. Asserts the span name reached the mock with the
+       `marker` attribute intact, plus the `service.name=tako`
+       and `service.version=<crate version>` resource
+       attributes that `init_otlp_tracing` always sets.
+
+  This proves the **full path**: `tracing` → `tracing-opentelemetry`
+  layer → `opentelemetry-otlp` exporter → `tonic` client →
+  wire → `tonic` server → assertion.
+
+### Docs
+
+- [`tests/python/test_otlp.py`](tests/python/test_otlp.py) —
+  removed the "Phase 2 deferred" caveat and pointed at the
+  new Rust e2e file. The Python test continues to cover the
+  lifecycle / facade contract (init → run → re-init
+  rejected → shutdown idempotent); span content is now
+  asserted on the Rust side where the wire path runs.
+
+### Dev-deps
+
+- `opentelemetry-proto` 0.31 (`gen-tonic` + `gen-tonic-messages`
+  + `trace`) — gRPC server traits for the mock. Already a
+  transitive dep via `opentelemetry-otlp`, so this only
+  widens visibility.
+- `tonic` (workspace; promoted from production-only on other
+  crates to dev-dep on `tako-governance`).
+- `tokio-stream` (workspace, `net` feature) for
+  `TcpListenerStream` glue between `tokio` listener and
+  `tonic::transport::Server::serve_with_incoming`.
+
+No runtime dep changes.
+
 ## [0.47.0] - 2026-05-02
 
 Phase 46 — Phase-1 placeholder sweep. Three independent
