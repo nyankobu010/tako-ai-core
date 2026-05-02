@@ -27,8 +27,11 @@ endorsed by, or sponsored by Sakana AI or any model provider.
 ## Install
 
 ```bash
-pip install tako
+pip install tako-ai-core
 ```
+
+The Python import name is `tako` (`import tako`); the PyPI
+distribution is `tako-ai-core`.
 
 No Rust toolchain required at install time — wheels are prebuilt for
 manylinux, musllinux, macOS universal2, and Windows x64/arm64.

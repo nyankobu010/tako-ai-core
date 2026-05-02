@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: "3.12"
       # Phase 50.B — released wheels bake in every pure-Rust feature
-      # (auth-*, sigstore*, ws, grpc, redis) so `pip install tako`
+      # (auth-*, sigstore*, ws, grpc, redis) so `pip install tako-ai-core`
       # gives a wheel where `JwtAuth` / `OidcAuth` / `VaultAuth` /
       # mTLS rotation / sigstore verification / Redis budget backend
       # are all functional out of the box. The only feature kept

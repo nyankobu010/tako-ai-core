@@ -5,7 +5,7 @@
 > Many arms, one mind.
 
 [![CI](https://github.com/nyankobu010/tako-ai-core/actions/workflows/ci.yml/badge.svg)](https://github.com/nyankobu010/tako-ai-core/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/tako.svg)](https://pypi.org/project/tako/)
+[![PyPI](https://img.shields.io/pypi/v/tako-ai-core.svg)](https://pypi.org/project/tako-ai-core/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 `tako` is an open-source framework for building production agentic systems. It
@@ -44,8 +44,12 @@ plus AB-MCTS tree search:
 ## Install
 
 ```bash
-pip install tako
+pip install tako-ai-core
 ```
+
+The Python import name is still `tako` (`import tako`); the PyPI
+distribution is `tako-ai-core` because the bare `tako` slot was
+already taken by an unrelated 2011-era project.
 
 No Rust toolchain required at install time — wheels are prebuilt for
 manylinux, musllinux, macOS universal2, and Windows x64/arm64.

@@ -33,12 +33,12 @@ agree** at release time:
 
    ```bash
    # Update workspace + internal pins
-   sed -i '' 's/version = "0\.50\.0"/version = "0.51.0"/g' Cargo.toml
-   sed -i '' 's/version      = "0\.50\.0"/version      = "0.51.0"/g' Cargo.toml
-   sed -i '' 's/version = "0\.50\.0"/version = "0.51.0"/g' pyproject.toml
+   sed -i '' 's/version = "0\.51\.0"/version = "0.51.1"/g' Cargo.toml
+   sed -i '' 's/version      = "0\.51\.0"/version      = "0.51.1"/g' Cargo.toml
+   sed -i '' 's/version = "0\.51\.0"/version = "0.51.1"/g' pyproject.toml
    # Update python facade
-   sed -i '' 's/__version__ = "0\.50\.0"/__version__ = "0.51.0"/' python/tako/__init__.py
-   sed -i '' 's/"0\.50\.0"/"0.51.0"/g' tests/python/test_smoke.py
+   sed -i '' 's/__version__ = "0\.51\.0"/__version__ = "0.51.1"/' python/tako/__init__.py
+   sed -i '' 's/"0\.51\.0"/"0.51.1"/g' tests/python/test_smoke.py
 
    cargo check --workspace   # regenerates Cargo.lock
    ```
@@ -61,8 +61,8 @@ agree** at release time:
    ```bash
    git checkout main
    git pull origin main
-   git tag -a v0.51.0 -m "v0.51.0"
-   git push origin v0.51.0
+   git tag -a v0.51.1 -m "v0.51.1"
+   git push origin v0.51.1
    ```
 
 6. **CI takes over**. The
@@ -82,7 +82,7 @@ agree** at release time:
 
    ```bash
    # Wait ~1-5 min for PyPI to index, then:
-   pip install --upgrade tako==0.51.0
+   pip install --upgrade tako-ai-core==0.51.1
    python -c "import tako; print(tako.__version__)"
    ```
 
@@ -101,7 +101,9 @@ exist on PyPI yet:
 1. Sign in to <https://pypi.org/manage/account/publishing/>.
 2. Click **"Add a new pending publisher"**.
 3. Fill in:
-   - **PyPI Project Name**: `tako`
+   - **PyPI Project Name**: `tako-ai-core` (the bare `tako` slot is
+     held by an unrelated 2011-era project; `tako-ai-core` matches
+     the GitHub repo and is the actual published distribution)
    - **Owner**: `nyankobu010`
    - **Repository name**: `tako-ai-core`
    - **Workflow name**: `wheels.yml`
@@ -113,10 +115,10 @@ exist on PyPI yet:
 
 ### Path B: Project already on PyPI
 
-If `tako` was previously published with a classic API token:
+If `tako-ai-core` was previously published with a classic API token:
 
 1. Sign in to PyPI as the project owner.
-2. Go to <https://pypi.org/manage/project/tako/settings/publishing/>.
+2. Go to <https://pypi.org/manage/project/tako-ai-core/settings/publishing/>.
 3. Add a new Trusted Publisher with the same fields as Path A.
 4. Optionally remove the old API token under **API tokens**
    once a release has succeeded via Trusted Publishing.
@@ -171,7 +173,8 @@ Before tagging, confirm:
 After tagging:
 
 - [ ] Wheels workflow succeeded (matrix + sdist + publish).
-- [ ] `pip install tako==X.Y.Z` works from a clean venv.
+- [ ] `pip install tako-ai-core==X.Y.Z` works from a clean venv;
+      `python -c "import tako; print(tako.__version__)"` succeeds.
 - [ ] [GitHub Releases](https://github.com/nyankobu010/tako-ai-core/releases) auto-created (if a release-from-tag GitHub action is wired) or manually created with the changelog excerpt.
 
 ## Hot-fix releases

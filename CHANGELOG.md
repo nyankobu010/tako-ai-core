@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.51.1] - 2026-05-03
+
+Hot-fix release. The `v0.51.0` workflow run built all seven wheels +
+sdist successfully but the publish step failed with PyPI returning
+`403 Invalid API Token: OIDC scoped token is not valid for project
+'tako'`. The bare `tako` slot on PyPI is held by an unrelated
+2011-era project; the GitHub Trusted Publisher is registered for
+`tako-ai-core` (matching the GitHub repo). Renaming the PyPI
+distribution lets the OIDC token match.
+
+### Changed
+
+- **PyPI distribution name** is now `tako-ai-core` (was `tako`).
+  The Python import name is **unchanged** — `import tako` still
+  works because the source layout (`python/tako/`) and the maturin
+  `module-name = "tako._native"` setting are independent of the
+  distribution name. Install command becomes
+  `pip install tako-ai-core`. README badge, docs install
+  instructions, and `RELEASING.md` Pending Publisher fields all
+  updated to match.
+
+### Fixed
+
+- **CI: wheels build for all 7 platform/arch targets**
+  ([#49](https://github.com/nyankobu010/tako-ai-core/pull/49)).
+  Switched the `--features` argument in `.github/workflows/wheels.yml`
+  from a space-separated quoted list to a comma-separated form;
+  the previous form had `--features` consume only `auth-jwt` while
+  the remaining nine features leaked past `--` to rustc as
+  positional input filenames, hitting `error: multiple input
+  filenames provided (first two filenames are
+  'crates/tako-py/src/lib.rs' and 'auth-oidc')` on every target.
+- **CI: PyO3 `generate-import-lib` for Windows aarch64
+  cross-compile**
+  ([#50](https://github.com/nyankobu010/tako-ai-core/pull/50)).
+  Enabled `pyo3/generate-import-lib` in the workspace
+  `Cargo.toml` so PyO3 emits the Windows import library at build
+  time without needing a target-arch Python interpreter; PyO3
+  0.28's `abi3-py310` does not auto-imply this feature, contrary
+  to assumption. The `python3-dll-a` dep is gated on
+  `cfg(target_family = "windows")` so the change is a no-op on
+  Linux / macOS.
+
 ## [0.51.0] - 2026-05-02
 
 Phase 50 — repo housekeeping for the open-source release.
@@ -36,7 +79,7 @@ metadata, CI, and docs only. Plan: [plans/PLAN_PHASE50.md](plans/PLAN_PHASE50.md
   (`auth-jwt auth-oidc auth-vault auth-mtls-fs-watch
   auth-mtls-identity-provider sigstore sigstore-protobuf ws
   grpc redis`) to `maturin build`. Previously released
-  wheels were slim (no features) so `pip install tako` from
+  wheels were slim (no features) so `pip install tako-ai-core` from
   PyPI gave a wheel where `JwtAuth` / `OidcAuth` /
   `VaultAuth` / mTLS rotation / sigstore verification /
   Redis budget backend were all `None`. Now everything
