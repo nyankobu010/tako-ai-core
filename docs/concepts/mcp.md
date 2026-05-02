@@ -1,12 +1,16 @@
 # MCP (Model Context Protocol)
 
 `tako-mcp` wraps the [official Rust SDK](https://github.com/modelcontextprotocol/rust-sdk)
-(`rmcp`) to expose two transports as `tako._native` types:
+(`rmcp`) to expose four transports as `tako._native` types:
 
 - **`Stdio`** — spawns a subprocess speaking JSON-RPC over its stdin/stdout.
-- **`StreamableHttp`** — talks to an MCP server over HTTP+SSE.
-
-WebSocket and gRPC transports are queued for Phase 4.
+- **`StreamableHttp`** — talks to an MCP server over HTTP, including the
+  `notifications()` SSE channel and the `Mcp-Session-Id` lifecycle
+  header captured from the initial POST.
+- **`WebSocket`** — bidirectional, low-latency transport for MCP servers
+  speaking the JSON-RPC-over-WebSocket variant.
+- **`Grpc`** — gRPC transport with full mTLS support for production
+  deployments where mutual identity is required.
 
 ## Discover and use tools
 
@@ -42,10 +46,19 @@ result = await agent.run("Use a tool to find the weather in Tokyo.")
    `ContentPart::ToolResult`.
 4. The result feeds back into the next provider call.
 
+## Notifications
+
+`StreamableHttp.notifications()` opens a long-lived `GET {url}` over
+`text/event-stream`, parses each `data:` line as JSON-RPC, and
+broadcasts method-bearing frames to subscribers via
+`tokio::sync::broadcast`. The latched `Mcp-Session-Id` header from the
+initial POST is attached to the GET; `close()` shuts the channel down
+via `tokio::sync::Notify`.
+
 ## Limitations
 
 - **No streaming tool results yet.** MCP supports streaming; tako today
   only consumes complete results.
 - **No tool sampling.** MCP defines `sampling/createMessage` for
   servers that want to invoke their *own* models on the host's behalf.
-  Phase 3 will add this.
+  On the roadmap; not yet shipped.

@@ -1,8 +1,8 @@
 site_name: tako
 site_description: Rust-core, Python-facade framework for enterprise agentic systems.
-site_url: https://TODO(<org>).github.io/tako-ai-core
-repo_url: https://github.com/TODO(<org>)/tako-ai-core
-repo_name: TODO(<org>)/tako-ai-core
+site_url: https://nyankobu010.github.io/tako-ai-core
+repo_url: https://github.com/nyankobu010/tako-ai-core
+repo_name: nyankobu010/tako-ai-core
 edit_uri: edit/main/docs/
 docs_dir: docs
 
@@ -13,8 +13,13 @@ nav:
   - Concepts:
       - Providers: concepts/providers.md
       - Orchestrators: concepts/orchestrators.md
+      - Streaming: concepts/streaming.md
       - Routing: concepts/routing.md
       - SelfCaller: concepts/self_caller.md
+      - Vision content: concepts/vision.md
+      - URL pre-fetch & SSRF: concepts/url_prefetch.md
+      - OpenAI-compat server: concepts/compat.md
+      - Sigstore: concepts/sigstore.md
       - Policy: concepts/policy.md
       - Secrets: concepts/secrets.md
       - Budgets: concepts/budgets.md
@@ -24,7 +29,15 @@ nav:
       - Azure OpenAI: recipes/azure_openai.md
       - Vertex AI: recipes/vertex.md
       - Bedrock: recipes/bedrock.md
+      - Mistral: recipes/mistral.md
+      - Ollama: recipes/ollama.md
+      - Vision: recipes/vision.md
+      - URL pre-fetch: recipes/url_prefetch.md
       - OpenAI-compat server: recipes/openai_compat_server.md
+      - OIDC introspection: recipes/oidc_introspection.md
+      - Chained auth: recipes/chained_auth.md
+      - mTLS rotation: recipes/mtls_rotation.md
+      - Sigstore keyless: recipes/sigstore_keyless.md
       - Conductor: recipes/conductor.md
       - Trinity: recipes/trinity.md
       - SelfCaller: recipes/self_caller.md

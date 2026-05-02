@@ -53,12 +53,31 @@ assert result.text == "hello"
 
 ## Tracing
 
-Process-wide tracing is one call away:
+Process-wide stderr tracing is one call away:
 
 ```python
 import tako.tracing
 tako.tracing.init(filter="tako=debug,info", json=True)
 ```
 
-OTLP exporter integration arrives in Phase 2; the `tako.tracing.Otlp(...)`
-type already exists so user code is forward-compatible.
+For an OTLP exporter against a real collector:
+
+```python
+guard = tako.tracing.init_otlp(
+    endpoint="http://otel-collector:4317",
+    protocol="grpc",
+    resource_attrs={"service.name": "my-agent"},
+)
+# ... your application ...
+tako.tracing.shutdown_otlp()  # flushes pending spans
+```
+
+See [Tracing](concepts/tracing.md) for the full set of `tako.*` and
+`gen_ai.*` semconv attributes emitted by orchestrators, providers, tools,
+and policy decisions.
+
+## What's next
+
+- [Architecture](architecture.md) — crate graph + sequence diagrams.
+- [Concepts](concepts/providers.md) — page-per-feature design surface.
+- [Recipes](recipes/azure_openai.md) — copy-pasteable end-to-end integrations.

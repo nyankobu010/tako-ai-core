@@ -12,31 +12,31 @@ graph TD
     runtime[tako-runtime<br/>budget, breaker, retry, limiter]
     runtime --> core
 
-    anthropic[tako-providers/anthropic]
-    openai[tako-providers/openai]
-    httpgeneric[tako-providers/http-generic]
-    anthropic --> core
-    openai --> core
-    httpgeneric --> core
+    providers[tako-providers/*<br/>anthropic, openai, azure-openai,<br/>bedrock, vertex, mistral, ollama,<br/>http-generic]
+    providers --> core
 
-    mcp[tako-mcp<br/>stdio + Streamable HTTP]
+    mcp[tako-mcp<br/>stdio, Streamable HTTP,<br/>WebSocket, gRPC mTLS]
     mcp --> core
 
-    orch[tako-orchestrator<br/>SingleAgent]
+    orch[tako-orchestrator<br/>SingleAgent, Conductor, Trinity,<br/>SelfCaller, AbMcts]
     orch --> core
     orch --> runtime
 
-    gov[tako-governance<br/>OTel, PII, secrets]
+    gov[tako-governance<br/>OTel, OPA, PII, secrets,<br/>sigstore, StateStore]
     gov --> core
+
+    compat[tako-compat<br/>OpenAI-compat HTTP server,<br/>AuthResolver impls]
+    compat --> core
+    compat --> orch
 
     py[tako-py<br/>PyO3 bindings]
     py --> core
     py --> runtime
-    py --> anthropic
-    py --> openai
+    py --> providers
     py --> mcp
     py --> orch
     py --> gov
+    py --> compat
 
     facade[python/tako<br/>Pydantic v2 facade]
     facade --> py
@@ -44,10 +44,17 @@ graph TD
 
 **Hard rules:**
 
-- `tako-core` has no I/O, no Tokio. It defines the contracts.
-- Provider crates depend only on `tako-core` + their vendor SDK + `reqwest`/`eventsource-stream`. They never depend on each other or on `tako-runtime`.
+- `tako-core` has no I/O, no Tokio. It defines the contracts — five public
+  traits (`LlmProvider`, `Tool`, `McpTransport`, `Router`, `PolicyEngine`,
+  `Verifier`) plus the request/response/error types every provider speaks.
+- Provider crates depend only on `tako-core` + their vendor SDK + `reqwest` /
+  `eventsource-stream`. They never depend on each other or on
+  `tako-runtime`. Per-provider helpers (URL pre-fetch SSRF guard, MIME
+  filters, data-URL prefix normalisation) are duplicated per crate rather
+  than centralised — the dep-graph rule wins over DRY.
 - `tako-py` is the only crate that knows about Python.
-- `python/tako/` imports `tako._native` and **only** `tako._native`. End users import `tako.*`.
+- `python/tako/` imports `tako._native` and **only** `tako._native`. End
+  users `import tako.*`.
 
 ## Sequence: a `SingleAgent.run(prompt)` call
 
@@ -91,6 +98,39 @@ OTel spans:
   `tako.cost.usd`, plus the `gen_ai.*` semconv attributes
 - per tool call: child `tako.tool.invoke` with `tako.tool.name`,
   `tako.tool.duration_ms`
+- per policy decision: child `tako.policy.evaluate` with
+  `tako.policy.stage`, `tako.policy.decision`
+
+## Streaming sequence (`Conductor::stream`)
+
+`Conductor`, `Trinity`, and `AbMcts` all stream natively via `OrchEvent`.
+The wiring uses bounded `mpsc::channel(64)` channels for per-delta
+backpressure: producers block on `send().await` once the consumer is
+behind, capping in-flight memory under slow `evaluate_streaming`
+verifiers or slow downstream sinks. Trinity is naturally serial (no
+channel needed).
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Conductor
+    participant Worker as Worker (mpsc producer)
+    participant Verifier
+
+    User->>Conductor: stream(prompt)
+    par per worker (bounded fanout)
+        Conductor->>Worker: provider.stream(...)
+        loop per delta
+            Worker-->>Conductor: ChatChunk::Delta
+            Conductor-->>User: OrchEvent::AssistantText
+            Conductor->>Verifier: evaluate_streaming(buf)
+            Verifier-->>Conductor: Option<f32>
+            Conductor-->>User: OrchEvent::VerifierScore { step, branch, score }
+        end
+        Worker-->>Conductor: ChatChunk::End
+    end
+    Conductor-->>User: synthesis-complete final
+```
 
 ## Async + GIL discipline
 
@@ -121,10 +161,15 @@ status + body preserved in the structured `details` field. Streaming
 contract: yield all received chunks, then `ChatChunk::Error`, then exactly
 one `ChatChunk::End` — even on mid-stream failure.
 
+Vision content (`ContentPart::Image`, `ContentPart::ImageUrl`) flows
+through every SDK-backed provider; Bedrock and Ollama use opt-in
+tako-side URL pre-fetch with full SSRF mitigation (default-on private-IP
+blocklist + DNS-rebind defence + per-host / wildcard / CIDR allowlist).
+
 ## Reliability layers
 
 ```
-SingleAgent.run
+Orchestrator (SingleAgent | Conductor | Trinity | SelfCaller | AbMcts)
     ↓
 FallbackProvider (cascade)
     ↓
@@ -138,13 +183,16 @@ LlmProvider impl (vendor SDK / HTTP)
 ```
 
 `BudgetTracker` is consulted both before the call (using
-`LlmProvider::estimate_cost_usd`) and after (reconciling against actual usage
-returned in the response).
+`LlmProvider::estimate_cost_usd`) and after (reconciling against actual
+usage returned in the response). Budget backends ship in two flavours:
+in-memory (single-process) and Redis (multi-replica, with monotonic-write
+Lua so a slow replica cannot clobber a higher water-mark).
 
 ## Phase boundaries
 
-This file describes **Phase 1**. Phase 2 adds Conductor, OPA enforcement, the
-OpenAI-compat server, and cloud-vendor providers. Phase 3 adds Trinity
-routing and SelfCaller recursion. Phase 4 adds AB-MCTS, Sigstore, and the
-Redis budget backend. The trait surface in `tako-core` is designed so each
-phase is purely additive.
+The trait surface in `tako-core` is designed so each phase is purely
+additive — public APIs from earlier phases never break. As of v0.35.0
+(Phase 34), the project ships every capability described on this page.
+For the chronological ledger of which capability landed in which phase,
+see the [feature matrix in README.md](https://github.com/nyankobu010/tako-ai-core/blob/main/README.md#feature-matrix)
+and [`PLAN.md`](https://github.com/nyankobu010/tako-ai-core/blob/main/PLAN.md).

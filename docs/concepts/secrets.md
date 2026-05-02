@@ -16,8 +16,8 @@ async fn resolve(&self, key: &str) -> Result<SecretString, TakoError>;
 | `EnvResolver` | env vars | Default; reads `std::env::var(key)` |
 | `VaultResolver` | `X-Vault-Token` | KV-v2 REST API; `path#field` selects sub-key |
 | `AwsSecretsManagerResolver` | AWS chain | Reuses `aws-config` from Bedrock |
-| `AzureKeyVaultResolver` | bearer token (deferred) | REST API; `name#version` opt |
-| `GcpSecretManagerResolver` | bearer token (deferred) | REST API; `name#version` opt |
+| `AzureKeyVaultResolver` | bring-your-own bearer | REST API; `name#version` selects version |
+| `GcpSecretManagerResolver` | bring-your-own bearer | REST API; `name#version` selects version |
 
 ## Deferred-auth pattern
 
