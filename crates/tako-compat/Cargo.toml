@@ -27,13 +27,14 @@ tower-http         = { workspace = true }
 hyper              = { workspace = true }
 # Phase 14.B — optional auth providers. Defaults stay off so existing
 # `StaticTokens`-only deployments see no new transitive deps.
-# jsonwebtoken 10.x dropped PEM support from `from_rsa_pem` /
-# `from_ec_pem` / `from_ed_pem` — migration requires layering a
-# PEM-decode step over the new DER-only API. Phase 39 reverts to
-# 9.3 to unblock until a proper migration phase lands. PR #32's
-# bump landed on main without the API migration, leaving main's
-# tests broken; Phase 39 restores green tests as a side effect.
-jsonwebtoken       = { version = "9.3", optional = true }
+# Phase 41: bumped 9.3 -> 10.3 to clear GHSA-vfgw-wj55-mp36 (Type
+# Confusion → potential authorization bypass). 10.x retains the PEM
+# helper functions (`from_rsa_pem` / `from_ec_pem` / `from_ed_pem`)
+# but moves them behind the `use_pem` feature, and requires explicit
+# selection of a `CryptoProvider` (`rust_crypto` keeps the pure-Rust
+# crypto stack — no OpenSSL / aws-lc-rs system dep). With both
+# features pinned, call sites remain identical to the 9.x API.
+jsonwebtoken       = { version = "10.3", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
 reqwest            = { workspace = true, optional = true }
 vaultrs            = { version = "0.7", optional = true }
 # Phase 15.B.2 — `url::form_urlencoded` for manual RFC 7662 body

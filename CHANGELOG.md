@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.42.0] - 2026-05-02
+
+Phase 41 — security fix: bump `jsonwebtoken` from 9.3 to 10.3
+to clear the Type-Confusion advisory (GHSA-vfgw-wj55-mp36,
+medium severity, potential authorization bypass). PR #32
+attempted this bump previously but the breaking-change
+handling was wrong — 10.x requires explicit selection of a
+`CryptoProvider` and moves the PEM helpers behind the
+`use_pem` feature. Phase 39 reverted to 9.3 to unblock;
+Phase 41 finishes the migration properly.
+Plan: [plans/PLAN_PHASE41.md](plans/PLAN_PHASE41.md).
+
+### Security
+
+- **`jsonwebtoken` 9.3 → 10.3** — closes
+  [GHSA-vfgw-wj55-mp36](https://github.com/Keats/jsonwebtoken/security/advisories/GHSA-vfgw-wj55-mp36)
+  (Type Confusion that leads to potential authorization
+  bypass). No source-code changes — every existing call site
+  (`jwt.rs:68,75`, `oidc.rs:213,225,238,2254`) keeps working
+  verbatim under the 10.x API once `use_pem` is on. Pinned
+  `default-features = false, features = ["rust_crypto", "use_pem"]`
+  to keep the pure-Rust crypto stack (no OpenSSL / aws-lc-rs
+  system-library dep).
+- **`rustls-webpki` 0.101.x advisories** — three open
+  dependabot alerts (RUSTSEC-2026-0098 / -0099 / -0104) all
+  reach via `aws-smithy-http-client → rustls 0.21.12`. The
+  current `Cargo.lock` already has `rustls-webpki 0.103.13`
+  on the modern paths; the legacy 0.101.x line stays pinned
+  by the AWS SDK. Tako's URL-allowlist + URL pre-fetch
+  surface doesn't parse CRLs or use URI-based name
+  constraints, so the affected code paths aren't reachable.
+  Documented + ignored in [`.cargo/audit.toml`](.cargo/audit.toml)
+  with re-evaluation triggers; dependabot alerts dismissed
+  with the same rationale. Will clear when AWS SDK migrates
+  to rustls 0.23+ (`awslabs/aws-sdk-rust#1295`).
+
 ## [0.41.0] - 2026-05-02
 
 Phase 40 — Python facade for the Phase 39 ``MtlsRefreshHook``.
@@ -4382,7 +4418,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.38.0...v0.39.0
