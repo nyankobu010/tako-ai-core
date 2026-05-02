@@ -6,6 +6,7 @@ from typing import Any
 
 from tako import _native
 from tako.budget import Budget, InMemoryBackend, RedisBackend
+from tako.models import Usage
 from tako.providers import _ProviderBase
 
 # A budget backend acceptable to ``SingleAgent``, ``Conductor``, etc.
@@ -13,18 +14,42 @@ _BudgetBackend = InMemoryBackend | RedisBackend
 
 
 class _Result:
-    """Phase-1 placeholder: orchestrators currently return the assistant
-    text only. Future versions will include usage, full message, and step
-    count; the field name `text` is stable."""
+    """Result of a single orchestrator run.
 
-    __slots__ = ("text",)
+    The field name ``text`` is stable since Phase 1. Phase 46.B added
+    ``usage`` (``input_tokens`` / ``output_tokens`` / ``total``) and
+    ``steps`` (assistant turns produced) — both populated from the
+    Rust ``OrchOutput`` struct.
 
-    def __init__(self, text: str) -> None:
-        self.text = text
+    Exposing the full assistant ``message`` (including tool calls
+    when the loop hit ``max_steps``) is deferred until operator ask;
+    it requires ``ContentPart``/``Message`` round-tripping machinery
+    on the PyO3 side.
+    """
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner: Any) -> None:
+        # ``inner`` is a ``tako._native.OrchOutput`` instance.
+        self._inner = inner
+
+    @property
+    def text(self) -> str:
+        return self._inner.text
+
+    @property
+    def usage(self) -> Usage:
+        return Usage(
+            input_tokens=self._inner.input_tokens,
+            output_tokens=self._inner.output_tokens,
+        )
+
+    @property
+    def steps(self) -> int:
+        return self._inner.steps
 
     def __repr__(self) -> str:
-        snippet = self.text[:60] + ("..." if len(self.text) > 60 else "")
-        return f"OrchResult(text={snippet!r})"
+        return repr(self._inner)
 
 
 class SingleAgent:
@@ -88,8 +113,8 @@ class SingleAgent:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
     def run_sync(
         self,
@@ -98,8 +123,8 @@ class SingleAgent:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
 
 class Conductor:
@@ -155,8 +180,8 @@ class Conductor:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
     def run_sync(
         self,
@@ -165,8 +190,8 @@ class Conductor:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
 
 class Trinity:
@@ -218,8 +243,8 @@ class Trinity:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
     def run_sync(
         self,
@@ -228,8 +253,8 @@ class Trinity:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
 
 class SelfCaller:
@@ -270,8 +295,8 @@ class SelfCaller:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
     def run_sync(
         self,
@@ -280,8 +305,8 @@ class SelfCaller:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
     async def stream(
         self,
@@ -372,8 +397,8 @@ class AbMcts:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = await self._inner.run(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
     def run_sync(
         self,
@@ -382,8 +407,8 @@ class AbMcts:
         tenant_id: str | None = None,
         user_id: str | None = None,
     ) -> _Result:
-        text = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
-        return _Result(text)
+        out = self._inner.run_sync(prompt, tenant_id=tenant_id, user_id=user_id)
+        return _Result(out)
 
     async def stream(
         self,

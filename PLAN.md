@@ -63,7 +63,8 @@ synopsis and quickstart.
 | 42 — OIDC mTLS end-to-end integration test | v0.43.0 | done (2026-05-02) | [plans/PLAN_PHASE42.md](plans/PLAN_PHASE42.md) | [`## [0.43.0]`](CHANGELOG.md) |
 | 43 — Python facade for `_extra_root` mTLS introspection builders | v0.44.0 | done (2026-05-02) | [plans/PLAN_PHASE43.md](plans/PLAN_PHASE43.md) | [`## [0.44.0]`](CHANGELOG.md) |
 | 44 — Operator-supplied root CA for OIDC discovery + JWKS | v0.45.0 | done (2026-05-02) | [plans/PLAN_PHASE44.md](plans/PLAN_PHASE44.md) | [`## [0.45.0]`](CHANGELOG.md) |
-| 45 — Python facade for `discover_with_extra_root` | v0.46.0 | in progress | [plans/PLAN_PHASE45.md](plans/PLAN_PHASE45.md) | [`## [0.46.0]`](CHANGELOG.md) |
+| 45 — Python facade for `discover_with_extra_root` | v0.46.0 | done (2026-05-02) | [plans/PLAN_PHASE45.md](plans/PLAN_PHASE45.md) | [`## [0.46.0]`](CHANGELOG.md) |
+| 46 — Phase-1 placeholder sweep | v0.47.0 | in progress | [plans/PLAN_PHASE46.md](plans/PLAN_PHASE46.md) | [`## [0.47.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
@@ -270,9 +271,15 @@ where the fix would land.
 - [ ] **OTel end-to-end test against a real gRPC collector.** Full e2e
   test deferred from Phase 1.5 acceptance criteria.
   [tests/python/test_otlp.py:13-16](tests/python/test_otlp.py#L13-L16).
-- [ ] **Vertex deterministic-per-call placeholder logic.** Stub flagged
-  inline; revisit when usage patterns warrant.
-  [crates/tako-providers/vertex/src/convert.rs:291](crates/tako-providers/vertex/src/convert.rs#L291).
+- [x] **Vertex deterministic-per-call placeholder logic.** Closed in
+  Phase 46.C (v0.47.0). Replaced position-derived `vertex_call_<n>`
+  IDs with stable `SipHash13((name, args))` digests in
+  [`from_vertex_response`](crates/tako-providers/vertex/src/convert.rs).
+  Fixes tool-call correlation across re-fetches and serialisation
+  round-trips. The streaming path
+  ([`stream.rs`](crates/tako-providers/vertex/src/stream.rs)) still
+  uses per-stream `tool_call_index` (within-stream chunk reassembly,
+  different concern; defer until ask).
 
 #### Documentation maintenance
 
