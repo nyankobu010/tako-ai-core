@@ -21,7 +21,7 @@ members = [
 [workspace.package]
 version      = "0.35.0"
 edition      = "2024"
-rust-version = "1.85"
+rust-version = "1.91.1"
 license      = "Apache-2.0"
 repository   = "https://github.com/nyankobu010/tako-ai-core"
 authors      = ["The tako contributors"]
@@ -36,6 +36,13 @@ expect_used = "deny"
 panic       = "deny"
 todo        = "deny"
 dbg_macro   = "deny"
+# Stylistic lints introduced in rustc 1.95 that fire inside
+# `async_stream::try_stream!` macro expansions where auto-fix can't
+# safely rewrite (let-chains across macro boundaries). The existing
+# `if let X { if Y { ... } }` style is the team's choice for readability
+# inside the complex streaming orchestrator code paths.
+collapsible_if         = "allow"
+manual_is_multiple_of  = "allow"
 
 [workspace.dependencies]
 # async core

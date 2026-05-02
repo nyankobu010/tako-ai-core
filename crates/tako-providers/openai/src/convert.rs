@@ -303,10 +303,10 @@ pub fn from_openai_response(resp: OaResponse) -> Result<ChatResponse, TakoError>
         .ok_or_else(|| TakoError::Invalid("openai response had no choices".into()))?;
 
     let mut content: Vec<ContentPart> = Vec::new();
-    if let Some(text) = choice.message.content {
-        if !text.is_empty() {
-            content.push(ContentPart::Text { text });
-        }
+    if let Some(text) = choice.message.content
+        && !text.is_empty()
+    {
+        content.push(ContentPart::Text { text });
     }
     for tc in choice.message.tool_calls {
         let args: serde_json::Value = if tc.function.arguments.is_empty() {

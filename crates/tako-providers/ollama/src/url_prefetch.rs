@@ -132,21 +132,21 @@ impl UrlPrefetchConfig {
         // blocklist. Match against the raw host_str (not the
         // parsed IpAddr) so `with_url_prefetch_allow_host("10.0.5.4")`
         // matches a URL whose host is exactly `10.0.5.4`.
-        if self.block_private_ips {
-            if let Some(host_str) = parsed.host_str() {
-                let trimmed = host_str.trim_start_matches('[').trim_end_matches(']');
-                if let Ok(ip) = trimmed.parse::<IpAddr>() {
-                    // Phase 32 — bypass when host OR IP is allowlisted.
-                    let bypass =
-                        self.allow_hosts.contains(host_str) || self.allow_hosts.contains_ip(&ip);
-                    if !bypass && is_blocked_ip(&ip) {
-                        return Err(TakoError::Invalid(format!(
-                            "ollama: prefetch URL `{url}` resolves to blocked IP `{ip}` \
+        if self.block_private_ips
+            && let Some(host_str) = parsed.host_str()
+        {
+            let trimmed = host_str.trim_start_matches('[').trim_end_matches(']');
+            if let Ok(ip) = trimmed.parse::<IpAddr>() {
+                // Phase 32 — bypass when host OR IP is allowlisted.
+                let bypass =
+                    self.allow_hosts.contains(host_str) || self.allow_hosts.contains_ip(&ip);
+                if !bypass && is_blocked_ip(&ip) {
+                    return Err(TakoError::Invalid(format!(
+                        "ollama: prefetch URL `{url}` resolves to blocked IP `{ip}` \
                              (use `with_url_prefetch_allow_private_ips` to opt out, \
                              `with_url_prefetch_allow_host` to permit this host, \
                              or `with_url_prefetch_allow_cidr` to permit this subnet)",
-                        )));
-                    }
+                    )));
                 }
             }
         }

@@ -102,40 +102,39 @@ impl BudgetTracker {
         estimated_usd: f64,
         estimated_tokens: u32,
     ) -> Result<(), TakoError> {
-        if let Some(max) = self.budget.max_usd_per_request {
-            if estimated_usd > max {
-                return Err(TakoError::BudgetExhausted(format!(
-                    "request estimated at ${estimated_usd:.4} exceeds per-request cap ${max:.4}"
-                )));
-            }
+        if let Some(max) = self.budget.max_usd_per_request
+            && estimated_usd > max
+        {
+            return Err(TakoError::BudgetExhausted(format!(
+                "request estimated at ${estimated_usd:.4} exceeds per-request cap ${max:.4}"
+            )));
         }
-        if let Some(max) = self.budget.max_tokens_per_request {
-            if estimated_tokens > max {
-                return Err(TakoError::BudgetExhausted(format!(
-                    "request estimated at {estimated_tokens} tokens exceeds per-request cap {max}"
-                )));
-            }
+        if let Some(max) = self.budget.max_tokens_per_request
+            && estimated_tokens > max
+        {
+            return Err(TakoError::BudgetExhausted(format!(
+                "request estimated at {estimated_tokens} tokens exceeds per-request cap {max}"
+            )));
         }
         let cur = self.backend.current_usage(&principal.tenant_id).await?;
-        if let Some(max) = self.budget.max_usd_per_day {
-            if cur.usd_today + estimated_usd > max {
-                return Err(TakoError::BudgetExhausted(format!(
-                    "tenant `{}` would exceed daily cap ${max:.2}",
-                    principal.tenant_id
-                )));
-            }
+        if let Some(max) = self.budget.max_usd_per_day
+            && cur.usd_today + estimated_usd > max
+        {
+            return Err(TakoError::BudgetExhausted(format!(
+                "tenant `{}` would exceed daily cap ${max:.2}",
+                principal.tenant_id
+            )));
         }
         if let Some(max) = self
             .budget
             .max_usd_per_tenant_per_day
             .get(&principal.tenant_id)
+            && cur.usd_today + estimated_usd > *max
         {
-            if cur.usd_today + estimated_usd > *max {
-                return Err(TakoError::BudgetExhausted(format!(
-                    "tenant `{}` would exceed tenant-specific daily cap ${max:.2}",
-                    principal.tenant_id
-                )));
-            }
+            return Err(TakoError::BudgetExhausted(format!(
+                "tenant `{}` would exceed tenant-specific daily cap ${max:.2}",
+                principal.tenant_id
+            )));
         }
         Ok(())
     }

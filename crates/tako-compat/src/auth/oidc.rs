@@ -1056,20 +1056,19 @@ impl OidcAuthResolver {
     async fn jwks(&self, force: bool) -> Result<JwkSet, TakoError> {
         if !force {
             let guard = self.cache.read().await;
-            if let Some(c) = guard.as_ref() {
-                if c.fetched_at.elapsed() < self.refresh_interval {
-                    return Ok(c.jwks.clone());
-                }
+            if let Some(c) = guard.as_ref()
+                && c.fetched_at.elapsed() < self.refresh_interval
+            {
+                return Ok(c.jwks.clone());
             }
         }
         // Drop read guard, take write lock, double-check, fetch.
         let mut guard = self.cache.write().await;
-        if !force {
-            if let Some(c) = guard.as_ref() {
-                if c.fetched_at.elapsed() < self.refresh_interval {
-                    return Ok(c.jwks.clone());
-                }
-            }
+        if !force
+            && let Some(c) = guard.as_ref()
+            && c.fetched_at.elapsed() < self.refresh_interval
+        {
+            return Ok(c.jwks.clone());
         }
         let resp = self
             .http
