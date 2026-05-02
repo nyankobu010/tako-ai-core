@@ -34,6 +34,11 @@ mod oidc;
 #[cfg(feature = "oidc")]
 pub use oidc::{IntrospectionAuthMethod, IntrospectionConfig, MtlsClient, OidcAuthResolver};
 
+#[cfg(feature = "oidc")]
+mod oidc_mtls_hook;
+#[cfg(feature = "oidc")]
+pub use oidc_mtls_hook::MtlsRefreshHook;
+
 #[cfg(feature = "mtls-fs-watch")]
 mod oidc_mtls_watcher;
 #[cfg(feature = "mtls-fs-watch")]

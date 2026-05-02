@@ -27,7 +27,13 @@ tower-http         = { workspace = true }
 hyper              = { workspace = true }
 # Phase 14.B — optional auth providers. Defaults stay off so existing
 # `StaticTokens`-only deployments see no new transitive deps.
-jsonwebtoken       = { version = "10.3", optional = true }
+# jsonwebtoken 10.x dropped PEM support from `from_rsa_pem` /
+# `from_ec_pem` / `from_ed_pem` — migration requires layering a
+# PEM-decode step over the new DER-only API. Phase 39 reverts to
+# 9.3 to unblock until a proper migration phase lands. PR #32's
+# bump landed on main without the API migration, leaving main's
+# tests broken; Phase 39 restores green tests as a side effect.
+jsonwebtoken       = { version = "9.3", optional = true }
 reqwest            = { workspace = true, optional = true }
 vaultrs            = { version = "0.7", optional = true }
 # Phase 15.B.2 — `url::form_urlencoded` for manual RFC 7662 body
