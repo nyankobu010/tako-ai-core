@@ -3,7 +3,13 @@ requires      = ["maturin>=1.13.1,<2"]
 build-backend = "maturin"
 
 [project]
-name = "tako"
+# PyPI distribution name. The Python import name (`import tako`) is
+# distinct, controlled by the `python/tako/` source layout and the
+# `[tool.maturin] module-name = "tako._native"` setting below. The bare
+# `tako` slot on PyPI is held by an unrelated 2011-era project so we
+# publish under `tako-ai-core` to match the GitHub repo and the PyPI
+# Trusted Publisher configuration.
+name = "tako-ai-core"
 version = "0.51.0"
 description = "Rust-core, Python-facade framework for enterprise agentic systems."
 readme = "README.md"

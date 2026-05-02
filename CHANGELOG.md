@@ -36,7 +36,7 @@ metadata, CI, and docs only. Plan: [plans/PLAN_PHASE50.md](plans/PLAN_PHASE50.md
   (`auth-jwt auth-oidc auth-vault auth-mtls-fs-watch
   auth-mtls-identity-provider sigstore sigstore-protobuf ws
   grpc redis`) to `maturin build`. Previously released
-  wheels were slim (no features) so `pip install tako` from
+  wheels were slim (no features) so `pip install tako-ai-core` from
   PyPI gave a wheel where `JwtAuth` / `OidcAuth` /
   `VaultAuth` / mTLS rotation / sigstore verification /
   Redis budget backend were all `None`. Now everything
