@@ -1,17 +1,26 @@
 """Eval harness implementation.
 
 `Dataset` and `Task` are Pydantic models. Each task carries a prompt
-plus a verifier (``expected_substring`` or ``expected_regex``) and an
-optional ``max_tokens`` hint. ``Eval(orch, dataset, k=...)`` runs each
-task k times concurrently (bounded by ``concurrency``) and folds the
-outcomes into an ``EvalReport`` (pass@k, mean USD, p50/p95 latency).
+plus a verifier and an optional ``max_tokens`` hint.
+``Eval(orch, dataset, k=...)`` runs each task k times concurrently
+(bounded by ``concurrency``) and folds the outcomes into an
+``EvalReport`` (pass@k, mean USD, p50/p95 latency).
+
+Three verifier modes:
+
+- ``Task.expected_substring`` — output must contain a literal token.
+- ``Task.expected_regex`` — output must match a regex.
+- ``Task.verify_patch`` (Phase 49) — apply ``output`` as a unified
+  diff inside a fresh checkout and run a test command. See
+  :mod:`tako.eval.grader`.
 
 ``swe_bench_lite`` and ``gpqa_diamond`` are loaded on-demand from
 Hugging Face via :mod:`tako.eval.datasets.external` (requires
-``pip install tako[eval]``). Verification is intentionally lightweight:
-SWE-Bench uses substring-match on filenames in the gold patch; GPQA
-uses an A/B/C/D positional verifier. Real SWE-Bench grading (apply
-patch + run sandboxed repo tests) is deferred to a later phase.
+``pip install tako[eval]``). SWE-Bench supports both the lightweight
+filename-substring grader (default) and the Phase 49 patch grader
+via ``load_swe_bench_lite(grader="patch")``. The patch grader runs
+model-generated code via subprocess and is gated behind
+``Eval(allow_unsafe_grader=True)``.
 """
 
 from __future__ import annotations
@@ -27,25 +36,55 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tako.eval.grader import PatchSpec, grade_patch
+
 _DATASETS_DIR = Path(__file__).parent / "datasets"
 
 
 class Task(BaseModel):
-    """One eval task. Either ``expected_substring`` or ``expected_regex``
-    must be set; both is allowed (both must match)."""
+    """One eval task. Either ``expected_substring`` / ``expected_regex``
+    OR ``verify_patch`` must be set. Substring + regex can coexist
+    (both must match). Patch grading is exclusive — the harness uses
+    :meth:`verify_async` to dispatch to the right path.
+    """
 
     id: str
     prompt: str
     expected_substring: str | None = None
     expected_regex: str | None = None
+    verify_patch: PatchSpec | None = None
     max_tokens: int | None = None
 
     def passes(self, output: str) -> bool:
+        """Sync verifier — substring + regex only.
+
+        Patch tasks always return ``False`` here so callers that
+        haven't migrated to :meth:`verify_async` see a clear "fail"
+        rather than silent missing verification. Production callers
+        (the harness) use :meth:`verify_async`.
+        """
+        if self.verify_patch is not None:
+            return False
         if self.expected_substring is not None and self.expected_substring not in output:
             return False
         if self.expected_regex is not None and not re.search(self.expected_regex, output):
             return False
         return self.expected_substring is not None or self.expected_regex is not None
+
+    async def verify_async(self, output: str) -> bool:
+        """Async verifier covering all three modes.
+
+        Patch tasks: delegate to :func:`tako.eval.grader.grade_patch`,
+        which clones the repo, applies the diff, runs the test
+        command, and returns pass/fail. Subprocess errors and
+        timeouts surface as ``False`` (never raise).
+
+        Substring/regex tasks: delegate to :meth:`passes`.
+        """
+        if self.verify_patch is not None:
+            ok, _log = await grade_patch(self.verify_patch, output)
+            return ok
+        return self.passes(output)
 
 
 class Dataset(BaseModel):
@@ -131,7 +170,15 @@ RunFn = Callable[[str], Awaitable[Any]]
 
 
 class Eval(BaseModel):
-    """Run a dataset against an orchestrator-like callable."""
+    """Run a dataset against an orchestrator-like callable.
+
+    Phase 49 — when the dataset contains any task with
+    ``verify_patch`` set, the harness runs ``git`` and the
+    operator-supplied test command via subprocess. That's
+    unsafe with untrusted models. Pass
+    ``allow_unsafe_grader=True`` to acknowledge — the harness
+    fails closed otherwise.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -140,8 +187,21 @@ class Eval(BaseModel):
     k: int = 1
     concurrency: int = 4
     orch_name: str = "orchestrator"
+    allow_unsafe_grader: bool = False
 
     async def run(self) -> EvalReport:
+        # Phase 49 — refuse to run subprocess-based graders without
+        # explicit operator opt-in. Surfaces the threat model
+        # instead of silently shelling out.
+        has_patch = any(t.verify_patch is not None for t in self.dataset.tasks)
+        if has_patch and not self.allow_unsafe_grader:
+            raise ValueError(
+                "Patch grading runs model-generated code via subprocess, "
+                "which is unsafe with untrusted models. Pass "
+                "`Eval(allow_unsafe_grader=True)` to enable, and consider "
+                "running the eval inside a container."
+            )
+
         sem = asyncio.Semaphore(self.concurrency)
 
         async def run_attempt(task: Task) -> tuple[Task, float, str | None, str | None]:
@@ -169,6 +229,9 @@ class Eval(BaseModel):
             )
             for t in self.dataset.tasks
         }
+        # Phase 49 — `verify_async` covers all three verifier modes.
+        # Sequential await is fine because the orch call already
+        # ran concurrent inside the semaphore.
         for task, elapsed, text, err in outcomes:
             r = per_task[task.id]
             r.attempts += 1
@@ -176,7 +239,7 @@ class Eval(BaseModel):
             if err is not None:
                 r.error = err
                 continue
-            if text is not None and task.passes(text):
+            if text is not None and await task.verify_async(text):
                 r.passes += 1
 
         total_attempts = sum(r.attempts for r in per_task.values())
@@ -264,10 +327,12 @@ __all__ = [
     "Dataset",
     "Eval",
     "EvalReport",
+    "PatchSpec",
     "RunFn",
     "Task",
     "TaskResult",
     "cli",
+    "grade_patch",
     "load_dataset",
     "load_jsonl",
     "load_synthetic",

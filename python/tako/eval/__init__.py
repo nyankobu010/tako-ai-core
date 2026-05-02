@@ -23,6 +23,16 @@ print(report.json())
 
 from __future__ import annotations
 
+from .grader import PatchSpec, grade_patch
 from .harness import Dataset, Eval, EvalReport, Task, load_dataset, load_synthetic
 
-__all__ = ["Dataset", "Eval", "EvalReport", "Task", "load_dataset", "load_synthetic"]
+__all__ = [
+    "Dataset",
+    "Eval",
+    "EvalReport",
+    "PatchSpec",
+    "Task",
+    "grade_patch",
+    "load_dataset",
+    "load_synthetic",
+]

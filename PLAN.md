@@ -66,7 +66,8 @@ synopsis and quickstart.
 | 45 — Python facade for `discover_with_extra_root` | v0.46.0 | done (2026-05-02) | [plans/PLAN_PHASE45.md](plans/PLAN_PHASE45.md) | [`## [0.46.0]`](CHANGELOG.md) |
 | 46 — Phase-1 placeholder sweep | v0.47.0 | done (2026-05-02) | [plans/PLAN_PHASE46.md](plans/PLAN_PHASE46.md) | [`## [0.47.0]`](CHANGELOG.md) |
 | 47 — OTel real-collector e2e test | v0.48.0 | done (2026-05-02) | [plans/PLAN_PHASE47.md](plans/PLAN_PHASE47.md) | [`## [0.48.0]`](CHANGELOG.md) |
-| 48 — Stable Vertex tool-call IDs in streaming | v0.49.0 | in progress | [plans/PLAN_PHASE48.md](plans/PLAN_PHASE48.md) | [`## [0.49.0]`](CHANGELOG.md) |
+| 48 — Stable Vertex tool-call IDs in streaming | v0.49.0 | done (2026-05-02) | [plans/PLAN_PHASE48.md](plans/PLAN_PHASE48.md) | [`## [0.49.0]`](CHANGELOG.md) |
+| 49 — Eval harness patch grader | v0.50.0 | in progress | [plans/PLAN_PHASE49.md](plans/PLAN_PHASE49.md) | [`## [0.50.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
@@ -265,11 +266,23 @@ where the fix would land.
   (Anthropic, OpenAI, Vertex, Bedrock, Mistral, Ollama) handle
   outbound `ContentPart::Image`. URL-source images (server-side
   fetch from request-supplied URLs) remain deferred to Phase 21+.
-- [ ] **Eval harness real graders.** `swe_bench_lite` and `gpqa_diamond`
-  raise `NotImplementedError`; real SWE-Bench (apply patch + run sandboxed
-  repo tests) deferred to "a later phase".
-  [python/tako/eval/harness.py:9-10](python/tako/eval/harness.py#L9-L10),
-  [python/tako/eval/datasets/external.py:8-11](python/tako/eval/datasets/external.py#L8-L11).
+- [x] **Eval harness real graders.** Closed in Phase 49 (v0.50.0).
+  New
+  [`tako.eval.PatchSpec`](python/tako/eval/grader.py) +
+  [`grade_patch`](python/tako/eval/grader.py) drive a real grader
+  that clones a target repo at a SHA, applies the model's output
+  as a unified diff via ``git apply``, and runs an
+  operator-supplied test command. ``Task.verify_patch`` is the
+  opt-in field; ``Task.verify_async`` dispatches between the
+  Phase-1 substring/regex verifiers and the new patch verifier.
+  ``load_swe_bench_lite(grader="patch")`` produces tasks that
+  hit the real grader against ``FAIL_TO_PASS`` test ids.
+  ``Eval.allow_unsafe_grader=True`` is required to acknowledge
+  that subprocess-based graders run model-generated code.
+  Sandboxing (Docker / containers) is the operator's
+  responsibility — Phase 49 is the substrate, not a runtime.
+  GPQA's positional A/B/C/D verifier is unchanged (multiple
+  choice doesn't benefit from real grading).
 - [x] **OTel end-to-end test against a real gRPC collector.** Closed in
   Phase 47 (v0.48.0). New `crates/tako-governance/tests/otlp_collector_e2e.rs`
   spawns a `tonic` mock implementing `TraceService::Export`, calls
