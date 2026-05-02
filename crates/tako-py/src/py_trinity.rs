@@ -98,7 +98,7 @@ impl PyTrinity {
                 .run(&principal, OrchInput::from_user(prompt))
                 .await
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            Ok(out.text)
+            Ok(crate::py_orch_output::PyOrchOutput::new(out))
         })
     }
 
@@ -109,7 +109,7 @@ impl PyTrinity {
         prompt: String,
         tenant_id: Option<String>,
         user_id: Option<String>,
-    ) -> PyResult<String> {
+    ) -> PyResult<crate::py_orch_output::PyOrchOutput> {
         let inner = Arc::clone(&self.inner);
         let principal = crate::conv::principal_from(tenant_id.as_deref(), user_id.as_deref());
         let rt = pyo3_async_runtimes::tokio::get_runtime();
@@ -117,6 +117,6 @@ impl PyTrinity {
             rt.block_on(async move { inner.run(&principal, OrchInput::from_user(prompt)).await })
         });
         let out = out.map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(out.text)
+        Ok(crate::py_orch_output::PyOrchOutput::new(out))
     }
 }

@@ -1,5 +1,7 @@
 //! Conversion between `tako-core` types and Vertex AI Gemini JSON.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tako_core::{
@@ -372,11 +374,24 @@ pub fn from_vertex_response(resp: VxResponse) -> Result<ChatResponse, TakoError>
             }
             if let Some(fc) = part.function_call {
                 had_tool_call = true;
-                // Vertex tool calls have no stable id; synthesise a
-                // deterministic-per-call placeholder so the orchestrator
-                // can correlate with later tool results.
+                // Vertex tool calls have no stable id (Phase 46.C).
+                // Hash `(name, args-as-canonical-JSON)` so the same
+                // logical call gets the same id across:
+                //   - streaming chunk boundaries (re-assembly),
+                //   - re-fetches of the same response (retries),
+                //   - serialisation round-trips.
+                // The previous `vertex_call_<position>` scheme broke
+                // under all three. `DefaultHasher` is SipHash13 —
+                // non-cryptographic but deterministic per process for
+                // a given (name, args) pair.
+                let mut hasher = DefaultHasher::new();
+                fc.name.hash(&mut hasher);
+                serde_json::to_string(&fc.args)
+                    .unwrap_or_default()
+                    .hash(&mut hasher);
+                let id = format!("vertex_call_{:016x}", hasher.finish());
                 content.push(ContentPart::ToolCall {
-                    id: format!("vertex_call_{}", content.len()),
+                    id,
                     name: fc.name,
                     args: fc.args,
                 });
@@ -620,6 +635,84 @@ mod tests {
         let vx = message_to_vx(&m, &names);
         let serialised = serde_json::to_value(&vx).unwrap();
         assert_eq!(serialised["parts"], json!([{ "text": "fallback" }]),);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 46.C — stable tool-call ID derivation.
+    //
+    // Replaces the old `vertex_call_<position>` placeholder. The id
+    // must be deterministic across re-parses of the same payload AND
+    // distinguish distinct (name, args) pairs.
+    // -----------------------------------------------------------------
+
+    fn vx_response_with_tool_call(name: &str, args: serde_json::Value) -> VxResponse {
+        VxResponse {
+            candidates: vec![VxCandidate {
+                content: Some(VxResponseContent {
+                    parts: vec![VxResponsePart {
+                        text: None,
+                        function_call: Some(VxResponseFunctionCall {
+                            name: name.into(),
+                            args,
+                        }),
+                    }],
+                }),
+                finish_reason: Some("STOP".into()),
+            }],
+            usage_metadata: None,
+        }
+    }
+
+    fn first_tool_call_id(resp: VxResponse) -> String {
+        let chat = from_vertex_response(resp).unwrap();
+        for part in chat.message.content {
+            if let ContentPart::ToolCall { id, .. } = part {
+                return id;
+            }
+        }
+        panic!("expected at least one ToolCall in response");
+    }
+
+    #[test]
+    fn vertex_call_id_is_stable_across_reparses() {
+        // Same (name, args) → same id, every time. Proves the
+        // streaming-chunk-boundary / retry contract.
+        let id1 = first_tool_call_id(vx_response_with_tool_call(
+            "lookup",
+            json!({"city": "Tokyo"}),
+        ));
+        let id2 = first_tool_call_id(vx_response_with_tool_call(
+            "lookup",
+            json!({"city": "Tokyo"}),
+        ));
+        assert_eq!(id1, id2);
+        assert!(id1.starts_with("vertex_call_"), "got: {id1}");
+        // The hex suffix is 16 chars (u64).
+        assert_eq!(id1.len(), "vertex_call_".len() + 16);
+    }
+
+    #[test]
+    fn vertex_call_id_distinguishes_different_calls() {
+        let id_lookup_tokyo = first_tool_call_id(vx_response_with_tool_call(
+            "lookup",
+            json!({"city": "Tokyo"}),
+        ));
+        let id_lookup_paris = first_tool_call_id(vx_response_with_tool_call(
+            "lookup",
+            json!({"city": "Paris"}),
+        ));
+        let id_search_tokyo = first_tool_call_id(vx_response_with_tool_call(
+            "search",
+            json!({"city": "Tokyo"}),
+        ));
+        assert_ne!(
+            id_lookup_tokyo, id_lookup_paris,
+            "same name + different args should produce different ids"
+        );
+        assert_ne!(
+            id_lookup_tokyo, id_search_tokyo,
+            "different name + same args should produce different ids"
+        );
     }
 
     #[test]

@@ -142,7 +142,10 @@ impl PyOrchestrator {
         })
     }
 
-    /// Async run; returns a Python coroutine that resolves to a string.
+    /// Async run; returns a Python coroutine that resolves to an
+    /// `OrchOutput` (Phase 46.B). `result.text` is unchanged from the
+    /// pre-46 string return; new fields `input_tokens`,
+    /// `output_tokens`, `total_tokens`, and `steps` are additive.
     #[pyo3(signature = (prompt, tenant_id=None, user_id=None))]
     fn run<'py>(
         &self,
@@ -158,12 +161,13 @@ impl PyOrchestrator {
                 .run(&principal, OrchInput::from_user(prompt))
                 .await
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            Ok(out.text)
+            Ok(crate::py_orch_output::PyOrchOutput::new(out))
         })
     }
 
     /// Synchronous run. Releases the GIL while blocking on the runtime so
-    /// concurrent threads can hold it.
+    /// concurrent threads can hold it. Returns an `OrchOutput`
+    /// (Phase 46.B).
     #[pyo3(signature = (prompt, tenant_id=None, user_id=None))]
     fn run_sync(
         &self,
@@ -171,7 +175,7 @@ impl PyOrchestrator {
         prompt: String,
         tenant_id: Option<String>,
         user_id: Option<String>,
-    ) -> PyResult<String> {
+    ) -> PyResult<crate::py_orch_output::PyOrchOutput> {
         let agent = Arc::clone(&self.inner);
         let principal = crate::conv::principal_from(tenant_id.as_deref(), user_id.as_deref());
         let rt = pyo3_async_runtimes::tokio::get_runtime();
@@ -179,6 +183,6 @@ impl PyOrchestrator {
             rt.block_on(async move { agent.run(&principal, OrchInput::from_user(prompt)).await })
         });
         let out = out.map_err(crate::py_provider::map_err)?;
-        Ok(out.text)
+        Ok(crate::py_orch_output::PyOrchOutput::new(out))
     }
 }

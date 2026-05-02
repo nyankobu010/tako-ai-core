@@ -6,8 +6,12 @@ optional ``max_tokens`` hint. ``Eval(orch, dataset, k=...)`` runs each
 task k times concurrently (bounded by ``concurrency``) and folds the
 outcomes into an ``EvalReport`` (pass@k, mean USD, p50/p95 latency).
 
-Stub references for ``swe_bench_lite`` and ``gpqa_diamond`` exist for
-forward compatibility but raise ``NotImplementedError`` — Phase 4 work.
+``swe_bench_lite`` and ``gpqa_diamond`` are loaded on-demand from
+Hugging Face via :mod:`tako.eval.datasets.external` (requires
+``pip install tako[eval]``). Verification is intentionally lightweight:
+SWE-Bench uses substring-match on filenames in the gold patch; GPQA
+uses an A/B/C/D positional verifier. Real SWE-Bench grading (apply
+patch + run sandboxed repo tests) is deferred to a later phase.
 """
 
 from __future__ import annotations

@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.47.0] - 2026-05-02
+
+Phase 46 — Phase-1 placeholder sweep. Three independent
+small cleanups identified in the post-Phase-45 tech-debt
+review: a stale module docstring, an under-populated Python
+result wrapper, and a non-stable Vertex tool-call ID
+scheme. Closes the "Vertex deterministic-per-call placeholder
+logic" carry-forward item from
+[PLAN.md](PLAN.md). Plan: [plans/PLAN_PHASE46.md](plans/PLAN_PHASE46.md).
+
+### Added
+
+- **`tako._native.OrchOutput`** — new pyclass returned from
+  every orchestrator's `run` / `run_sync`. Exposes `text`
+  (unchanged from Phase 1; field name remains stable),
+  `input_tokens`, `output_tokens`, `total_tokens`, and
+  `steps` getters. The Rust `OrchOutput::message` field
+  stays internal — exposing it cleanly needs `ContentPart` /
+  `Message` round-tripping machinery; defer until ask.
+- **`tako.SingleAgent` / `Conductor` / `SelfCaller` / `AbMcts` /
+  `Trinity` results** now carry `usage` (a Pydantic
+  [`Usage`](python/tako/models.py)) and `steps`
+  (`int`, number of provider calls). The Python `_Result`
+  wrapper swapped from a `text`-only placeholder
+  ([python/tako/orchestrator.py](python/tako/orchestrator.py))
+  to a thin façade over the new `OrchOutput` pyclass —
+  `result.text` keeps working unchanged for existing
+  callers.
+
+### Fixed
+
+- **Vertex tool-call IDs are now stable** across re-parses,
+  retries, and serialisation round-trips
+  ([crates/tako-providers/vertex/src/convert.rs](crates/tako-providers/vertex/src/convert.rs)).
+  Previously the non-streaming response parser used the
+  position-derived placeholder `vertex_call_<n>` where `n`
+  was the current `content` vector length — IDs flipped
+  whenever intervening text content reordered. Replaced
+  with `SipHash13((name, args-as-canonical-JSON))` rendered
+  as `vertex_call_<16-hex-chars>`. Same name + same args →
+  same id; different name OR different args → different id.
+  Two new unit tests (`vertex_call_id_is_stable_across_reparses`,
+  `vertex_call_id_distinguishes_different_calls`) pin the
+  contract. **Note**: the streaming path
+  ([crates/tako-providers/vertex/src/stream.rs](crates/tako-providers/vertex/src/stream.rs))
+  still uses per-stream `tool_call_index` for within-stream
+  chunk reassembly — that's a different concern (chunk
+  identity vs cross-call identity) and is out of scope here.
+- **Stale `harness.py` docstring**
+  ([python/tako/eval/harness.py](python/tako/eval/harness.py))
+  — claimed `swe_bench_lite` and `gpqa_diamond` raise
+  `NotImplementedError`. They don't; Phase 4 wired up
+  on-demand HuggingFace loaders. Docstring now accurately
+  describes the loaders + their lightweight verifiers, and
+  flags real SWE-Bench grading (apply patch + sandboxed
+  tests) as future work.
+
+### Tests
+
+- **`tests/python/test_phase46_orch_output_fields.py`** —
+  4 new tests covering `result.text` / `usage` / `steps`
+  exposure on `SingleAgent` (async + sync) plus a `repr`
+  assertion. Use `FakeProvider`; no API keys needed.
+- **2 new lib tests** in
+  [crates/tako-providers/vertex/src/convert.rs](crates/tako-providers/vertex/src/convert.rs)
+  for the Vertex tool-call ID contract.
+
+### Internal
+
+- New module
+  [crates/tako-py/src/py_orch_output.rs](crates/tako-py/src/py_orch_output.rs)
+  hosts the `PyOrchOutput` pyclass. Registered in
+  `_native` (always-on; no feature gate). Five orchestrator
+  pyclasses (`PyOrchestrator`, `PyConductor`, `PySelfCaller`,
+  `PyAbMcts`, `PyTrinity`) updated to return `PyOrchOutput`
+  from `run` / `run_sync` instead of `String`. The wire
+  contract for `result.text` is unchanged.
+
 ## [0.46.0] - 2026-05-02
 
 Phase 45 — closes the Python facade gap on the Phase 44

@@ -23,6 +23,7 @@ mod py_http_generic;
 mod py_mcp;
 mod py_ollama;
 mod py_orch_event;
+mod py_orch_output;
 mod py_orchestrator;
 mod py_provider;
 mod py_python_provider;
@@ -58,6 +59,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_ab_mcts::PyRuleBasedVerifier>()?;
     m.add_class::<py_orch_event::PyOrchEvent>()?;
     m.add_class::<py_orch_event::PyOrchEventStream>()?;
+    m.add_class::<py_orch_output::PyOrchOutput>()?;
     m.add_class::<py_router::PyRegexRouter>()?;
     #[cfg(feature = "onnx")]
     m.add_class::<py_router::PyOnnxRouter>()?;
