@@ -53,17 +53,17 @@ synopsis and quickstart.
 | 32 — URL pre-fetch CIDR allowlist | v0.33.0 | done (2026-05-02) | [plans/PLAN_PHASE32.md](plans/PLAN_PHASE32.md) | [`## [0.33.0]`](CHANGELOG.md) |
 | 33 — OIDC mTLS cert/key rotation | v0.34.0 | done (2026-05-02) | [plans/PLAN_PHASE33.md](plans/PLAN_PHASE33.md) | [`## [0.34.0]`](CHANGELOG.md) |
 | 34 — Public-release prep, tech-debt + docs sweep | v0.35.0 | done (2026-05-02) | [plans/PLAN_PHASE34.md](plans/PLAN_PHASE34.md) | [`## [0.35.0]`](CHANGELOG.md) |
+| 35 — OIDC mTLS filesystem-watcher auto-reload | v0.36.0 | done (2026-05-02) | [plans/PLAN_PHASE35.md](plans/PLAN_PHASE35.md) | [`## [0.36.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 35 candidates (indicative, not yet committed)
+### Phase 36 candidates (indicative, not yet committed)
 
-The original Phase 34 candidate list is postponed to Phase 35+ to
-make room for the Phase 34 cleanup sweep ([plans/PLAN_PHASE34.md](plans/PLAN_PHASE34.md)).
-Carry-forward items, mostly from Phase 33:
+Carry-forward items. The two remaining Phase 33 mTLS-rotation
+strategies (1) and (2) still stand; (3) shipped in Phase 35.
 
 - **Trait-based `MtlsIdentityProvider`** — async trait that
   yields fresh cert+key bytes on demand; tako would call it
@@ -72,10 +72,10 @@ Carry-forward items, mostly from Phase 33:
   Phase 33 carry-forward.
 - **Automatic refresh-on-handshake-failure** — catch TLS
   handshake errors at request time and trigger reload. Needs
-  retry logic + cycle-detection. Phase 33 carry-forward.
-- **Filesystem watcher integration** — auto-reload when the
-  cert+key files on disk change. `notify` crate dep. Phase 33
-  carry-forward.
+  retry logic + cycle-detection. Phase 33 carry-forward. Now
+  that Phase 35 ships filesystem-watcher integration, this
+  becomes a thin layer on top of either that or the trait
+  provider.
 - **Wildcard at non-leftmost positions** — patterns like
   `registry.*.corp` (wildcard in middle). Phase 31 ships only
   the leftmost-`*.` convention. Probably never worth shipping
