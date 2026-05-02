@@ -10,6 +10,7 @@ nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Architecture: architecture.md
+  - Feature matrix: feature_matrix.md
   - Concepts:
       - Providers: concepts/providers.md
       - Orchestrators: concepts/orchestrators.md
