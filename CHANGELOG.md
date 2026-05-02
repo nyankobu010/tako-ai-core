@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.44.0] - 2026-05-02
+
+Phase 43 — closes the Python facade gap on the Phase 42
+operator-supplied-CA mTLS introspection builders. Phase 42
+shipped the Rust API + wire-level integration tests; Python
+wheel operators now reach the same surface without dropping
+to a custom `reqwest::Client` route. Closes the Phase 42
+follow-up identified in
+[plans/PLAN_PHASE42.md](plans/PLAN_PHASE42.md).
+Plan: [plans/PLAN_PHASE43.md](plans/PLAN_PHASE43.md).
+
+### Added
+
+- **`OidcAuth.with_introspection_mtls_extra_root(cert_pem,
+  key_pem, extra_root_ca_pem)`** — Python sibling of the
+  Phase 42
+  [`OidcAuthResolver::with_introspection_mtls_extra_root`](crates/tako-compat/src/auth/oidc.rs)
+  Rust builder. Loads a client cert + private key AND adds
+  an operator-supplied PEM-encoded root CA bundle (single
+  cert or concatenated multi-cert PEM) to the underlying
+  HTTP client's trust store. The bundle is persisted on
+  `IntrospectionConfig::extra_root_ca_pem` so Phase 33 / 35
+  / 37 / 39 rotation surfaces re-apply the same trust
+  anchors after a cert/key swap. PEM parse failures (empty
+  bundle, garbage bytes) raise `ValueError` at builder
+  time — fail-closed, no runtime surprises. For enterprise
+  self-hosted OIDC issuers (Keycloak / Auth0 self-hosted /
+  Authentik) presenting a server cert signed by a private
+  internal CA. Returns a NEW `OidcAuth` (immutable builder).
+  Gated on the `auth-oidc` cargo feature (same as the parent
+  `OidcAuth` pyclass).
+- **`OidcAuth.with_introspection_self_signed_mtls_extra_root(...)`**
+  — RFC 8705 §2.2 sibling of the above. Identical wire
+  shape, same CA persistence; only the auth-method enum
+  variant differs (`SelfSignedTlsClientAuth`).
+
+### Tests
+
+- **`tests/python/test_phase43_mtls_extra_root_python.py`** —
+  three new smoke tests pin the Python-side surface
+  (binding name + arg shape + callability) so a regression
+  in the PyO3 wrapping lands here before user code. The
+  wire-level / PEM-parse / persistence semantics are
+  covered by the Rust unit + integration tests in
+  [`crates/tako-compat/src/auth/oidc.rs`](crates/tako-compat/src/auth/oidc.rs)
+  and
+  [`crates/tako-compat/tests/oidc_mtls_e2e.rs`](crates/tako-compat/tests/oidc_mtls_e2e.rs).
+
+### Docs
+
+- `python/tako/compat.py` — appended a Phase 42 paragraph to
+  the `serve_openai` running docstring documenting the new
+  builders alongside the Phase 24 / 25 / 33 mTLS prose.
+
 ## [0.43.0] - 2026-05-02
 
 Phase 42 — closes the "OIDC mTLS end-to-end integration test"

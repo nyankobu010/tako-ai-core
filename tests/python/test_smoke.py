@@ -6,11 +6,11 @@ import tako
 
 
 async def test_import_and_version() -> None:
-    assert tako.__version__ == "0.43.0"
+    assert tako.__version__ == "0.44.0"
     # Native module exposes its own version too.
     from tako import _native
 
-    assert _native.__version__ == "0.43.0"
+    assert _native.__version__ == "0.44.0"
 
 
 async def test_single_agent_run_with_fake(fake_provider: tako.providers.Fake) -> None:

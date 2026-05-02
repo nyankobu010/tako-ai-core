@@ -107,6 +107,18 @@ def serve_openai(
        preserves the previously installed Client on PEM parse
        failure.
 
+       Phase 42 — ``OidcAuth.with_introspection_mtls_extra_root(cert_pem, key_pem, ca_pem)``
+       and ``with_introspection_self_signed_mtls_extra_root(...)``
+       are the operator-supplied-CA siblings of the Phase 24 / 25
+       mTLS introspection builders. The CA bundle (single root or
+       concatenated multi-cert PEM) is added to the underlying
+       HTTP client's trust store and is persisted across the
+       Phase 33 / 35 / 37 / 39 rotation surfaces. For enterprise
+       self-hosted OIDC issuers (Keycloak / Auth0 self-hosted /
+       Authentik) presenting a server cert signed by a private
+       internal CA. Raises ``ValueError`` on PEM parse failure
+       (empty bundle, garbage bytes) at builder time — fail-closed.
+
        Phase 21.B — ``tako.compat.ChainedAuth`` (always-on; no
        cargo feature gate) is a composite resolver that wraps N
        child resolvers and tries them in append order. The first
