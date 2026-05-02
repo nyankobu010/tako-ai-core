@@ -27,7 +27,7 @@ tower-http         = { workspace = true }
 hyper              = { workspace = true }
 # Phase 14.B — optional auth providers. Defaults stay off so existing
 # `StaticTokens`-only deployments see no new transitive deps.
-jsonwebtoken       = { version = "9.3", optional = true }
+jsonwebtoken       = { version = "10.3", optional = true }
 reqwest            = { workspace = true, optional = true }
 vaultrs            = { version = "0.7", optional = true }
 # Phase 15.B.2 — `url::form_urlencoded` for manual RFC 7662 body
