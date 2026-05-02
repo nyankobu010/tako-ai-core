@@ -525,6 +525,37 @@ impl PyOidcAuth {
             .map_err(map_err)
     }
 
+    /// Phase 35 — spawn a background filesystem-watcher task that
+    /// auto-calls `reload_mtls_identity` whenever the cert or key
+    /// file changes on disk.
+    ///
+    /// Hold the returned `MtlsFsWatcher` for the lifetime of the
+    /// resolver — typically a module-scope variable in
+    /// production. Dropping the handle (or calling its
+    /// `shutdown()` / using it as a context manager) stops the
+    /// watcher cleanly.
+    ///
+    /// Raises `ValueError` when no prior `with_introspection_mtls`
+    /// or `with_introspection_self_signed_mtls` call has been
+    /// made, when either parent directory is missing, or when
+    /// the platform's filesystem watcher cannot be installed
+    /// (kernel limit, permission, unsupported filesystem).
+    #[cfg(feature = "auth-mtls-fs-watch")]
+    fn watch_mtls_files(
+        &self,
+        cert_path: std::path::PathBuf,
+        key_path: std::path::PathBuf,
+    ) -> PyResult<PyMtlsFsWatcher> {
+        let watcher = self
+            .inner
+            .clone()
+            .watch_mtls_files(cert_path, key_path)
+            .map_err(map_err)?;
+        Ok(PyMtlsFsWatcher {
+            inner: Some(watcher),
+        })
+    }
+
     /// Phase 18.B — return the OIDC Session Management 1.0
     /// `end_session_endpoint` URL the issuer advertised at discovery
     /// time. `None` when the issuer doesn't implement OIDC Session
@@ -750,5 +781,79 @@ impl PyChainedAuth {
     /// recent policy setter.
     fn short_circuits_on_infrastructure_errors(&self) -> bool {
         self.inner.short_circuits_on_infrastructure_errors()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 35 — MtlsFsWatcher pyclass.
+//
+// Returned by `OidcAuth.watch_mtls_files(cert_path, key_path)`.
+// Holds the background tokio task that re-reads + reloads the
+// mTLS identity on filesystem changes. Drop / `shutdown` /
+// `__exit__` stop the task cleanly.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "auth-mtls-fs-watch")]
+#[pyclass(name = "MtlsFsWatcher", module = "tako._native")]
+pub struct PyMtlsFsWatcher {
+    inner: Option<tako_compat::MtlsFsWatcher>,
+}
+
+#[cfg(feature = "auth-mtls-fs-watch")]
+impl std::fmt::Debug for PyMtlsFsWatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MtlsFsWatcher")
+            .field("running", &self.inner.is_some())
+            .finish()
+    }
+}
+
+#[cfg(feature = "auth-mtls-fs-watch")]
+#[pymethods]
+impl PyMtlsFsWatcher {
+    /// Stop the watcher and await teardown of the background
+    /// task. Idempotent; calling twice is a no-op the second
+    /// time.
+    fn shutdown(&mut self, py: Python<'_>) -> PyResult<()> {
+        if let Some(w) = self.inner.take() {
+            py.detach(|| {
+                pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+                    w.shutdown().await;
+                });
+            });
+        }
+        Ok(())
+    }
+
+    /// Context-manager `__enter__`: returns `self`. Use as
+    /// `with oidc.watch_mtls_files(cert, key) as w:` to scope
+    /// the watcher to a block.
+    fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf
+    }
+
+    /// Context-manager `__exit__`: shuts the watcher down.
+    /// Returns `False` so any in-flight exception still
+    /// propagates.
+    fn __exit__(
+        &mut self,
+        py: Python<'_>,
+        _exc_type: Py<PyAny>,
+        _exc: Py<PyAny>,
+        _tb: Py<PyAny>,
+    ) -> PyResult<bool> {
+        self.shutdown(py)?;
+        Ok(false)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MtlsFsWatcher(running={})",
+            if self.inner.is_some() {
+                "True"
+            } else {
+                "False"
+            }
+        )
     }
 }

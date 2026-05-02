@@ -61,3 +61,8 @@ redis             = ["sigstore", "tako-runtime/redis", "tako-governance/redis"]
 auth-jwt          = ["tako-compat/jwt"]
 auth-oidc         = ["tako-compat/oidc"]
 auth-vault        = ["tako-compat/vault"]
+# Phase 35 — wheel-side feature gate for the OIDC mTLS filesystem
+# watcher. Adds the `notify` dep tree; off by default. Implies
+# `auth-oidc` (the watcher only makes sense if mTLS introspection
+# is wired up).
+auth-mtls-fs-watch = ["auth-oidc", "tako-compat/mtls-fs-watch"]

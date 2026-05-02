@@ -163,11 +163,16 @@ VaultAuth = getattr(_native, "VaultAuth", None)
 # Phase 21.B — composite resolver. Always-on; children themselves
 # carry whatever `auth-*` gates they were built under.
 ChainedAuth = getattr(_native, "ChainedAuth", None)
+# Phase 35 — handle returned by ``OidcAuth.watch_mtls_files``.
+# Only present when the wheel was built with the
+# ``auth-mtls-fs-watch`` feature.
+MtlsFsWatcher = getattr(_native, "MtlsFsWatcher", None)
 
 
 __all__ = [
     "ChainedAuth",
     "JwtAuth",
+    "MtlsFsWatcher",
     "OidcAuth",
     "VaultAuth",
     "serve_openai",

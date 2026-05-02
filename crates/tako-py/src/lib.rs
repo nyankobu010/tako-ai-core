@@ -94,6 +94,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_compat::PyJwtAuth>()?;
     #[cfg(feature = "auth-oidc")]
     m.add_class::<py_compat::PyOidcAuth>()?;
+    #[cfg(feature = "auth-mtls-fs-watch")]
+    m.add_class::<py_compat::PyMtlsFsWatcher>()?;
     #[cfg(feature = "auth-vault")]
     m.add_class::<py_compat::PyVaultAuth>()?;
     // Phase 21.B — composite resolver. Always-on (no feature gate);
