@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.39.0] - 2026-05-02
+
+Phase 38 — Python facade for the Phase 37 trait-based mTLS
+identity provider. Closes the deferred Python facade carry-
+forward from Phase 37: Python-wheel operators can now wrap an
+``async def fetch() -> tuple[bytes, bytes] | dict`` in
+``tako.compat.MtlsIdentityProvider(...)`` and pass it to
+``OidcAuth.watch_mtls_provider(provider)``. After Phase 38,
+HSM-backed keys, in-memory secret stores, SPIFFE Workload API
+and AWS IAM Roles Anywhere are all expressible through the
+wheel — full parity with the Rust API.
+Plan: [plans/PLAN_PHASE38.md](plans/PLAN_PHASE38.md).
+
+### Added
+
+- **`tako-py`: `tako.compat.MtlsIdentityProvider`** pyclass
+  wrapping a Python async callable. Bridges via
+  `pyo3_async_runtimes::tokio::into_future` (same pattern as
+  `PyPythonProvider` for the LlmProvider trait). Accepted
+  return shapes: `(cert_pem, key_pem)` tuple of bytes, or
+  `{"cert_pem": bytes, "key_pem": bytes}` dict. Other shapes
+  raise `TakoError::Invalid` at refresh time with a
+  diagnostic.
+- **`tako-py`: `OidcAuth.watch_mtls_provider(provider)`**
+  Python method mirroring the Phase 37 Rust API. Returns a
+  `MtlsProviderWatcher` handle whose `Drop` impl /
+  `shutdown()` / `__exit__` stops the background task
+  cleanly.
+- **`tako-py`: new wheel feature `auth-mtls-identity-provider`**
+  forwarding to `tako-compat/mtls-identity-provider`. Implies
+  `auth-oidc`. Default wheel is unchanged.
+
 ## [0.38.0] - 2026-05-02
 
 Phase 37 — trait-based `MtlsIdentityProvider` for proactive
@@ -4270,7 +4302,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.35.0...v0.36.0
