@@ -1,5 +1,5 @@
 [build-system]
-requires      = ["maturin>=1.7,<2"]
+requires      = ["maturin>=1.9,<2"]
 build-backend = "maturin"
 
 [project]
@@ -23,17 +23,17 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "pydantic>=2.7",
-  "typing-extensions>=4.10",
+  "pydantic>=2.11",
+  "typing-extensions>=4.13",
 ]
 
 [project.optional-dependencies]
-otel    = ["opentelemetry-api>=1.25", "opentelemetry-sdk>=1.25"]
-server  = ["uvicorn>=0.30"]
-training = ["numpy>=1.26", "onnx>=1.16"]
-eval    = ["datasets>=2.20", "huggingface_hub>=0.24"]
-dev     = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.10", "hypothesis>=6", "cryptography>=43"]
-docs    = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.25"]
+otel    = ["opentelemetry-api>=1.34", "opentelemetry-sdk>=1.34"]
+server  = ["uvicorn>=0.46"]
+training = ["numpy>=2.2", "onnx>=1.21"]
+eval    = ["datasets>=4.0", "huggingface_hub>=0.27"]
+dev     = ["pytest>=8.4", "pytest-asyncio>=0.25", "ruff>=0.13", "mypy>=1.20", "hypothesis>=6.130", "cryptography>=47"]
+docs    = ["mkdocs-material>=9.7", "mkdocstrings[python]>=0.30"]
 
 [project.urls]
 Homepage      = "https://github.com/nyankobu010/tako-ai-core"

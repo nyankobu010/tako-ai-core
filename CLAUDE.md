@@ -16,7 +16,7 @@ and the wheel target is `crates/tako-py` built with maturin + PyO3.
 - `cargo fmt --all` and `ruff format python/` before commit.
 
 ## Code style
-- Rust 2024 edition, MSRV 1.82, no `unsafe` outside `tako-py` FFI shims.
+- Rust 2024 edition, MSRV 1.91.1, no `unsafe` outside `tako-py` FFI shims.
 - All public traits use `#[async_trait]` and require `Send + Sync + 'static` impls.
 - All errors use `thiserror`; never `unwrap()` or `expect()` in library code.
 - Python uses Pydantic v2 models, `from __future__ import annotations`, and full type hints.

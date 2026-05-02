@@ -7,7 +7,7 @@ workflow for contributing.
 
 Prerequisites:
 
-- Rust **1.82** or newer (`rustup default stable`)
+- Rust **1.91.1** or newer (`rustup default stable`)
 - Python **3.10** or newer
 - [`uv`](https://docs.astral.sh/uv/) (recommended) or `pip` + `venv`
 - [`maturin`](https://www.maturin.rs/) (`uv tool install maturin` or `pipx install maturin`)
