@@ -75,3 +75,23 @@ tokio              = { workspace = true, features = ["full"] }
 reqwest            = { workspace = true }
 wiremock           = { workspace = true }
 tempfile           = "3"
+# Phase 42 — OIDC mTLS end-to-end integration test
+# (`tests/oidc_mtls_e2e.rs`, gated to `feature = "oidc"`).
+# Generates a per-test CA + server cert + client cert via
+# `rcgen`, spins up an `axum-server` with `rustls` configured
+# in `RequireAndVerifyClientCert` mode, and runs a real mTLS
+# handshake against the resolver's introspection client.
+# Pinning matches `tako-mcp` Phase 5.B mTLS coverage so both
+# crates share crypto-provider install logic.
+rcgen              = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+axum-server        = { version = "0.8", default-features = false, features = ["tls-rustls"] }
+rustls             = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+# Sign per-test JWTs with a fresh RS256 keypair; matches the
+# Phase 41 jsonwebtoken 10.3 main-dep pin so the dev-dep does
+# not pull a second copy.
+jsonwebtoken       = { version = "10.3", default-features = false, features = ["rust_crypto", "use_pem"] }
+# Sign the JWKS-published RSA key. `rsa` 0.9 emits PKCS#8 PEM
+# that `jsonwebtoken::EncodingKey::from_rsa_pem` accepts; the
+# JWK side reuses the same `n`/`e` modulus.
+rsa                = { version = "0.9", features = ["pem"] }
+base64             = "0.22"

@@ -299,6 +299,21 @@ pub struct IntrospectionConfig {
     /// the inner Client at runtime when operators rotate the
     /// underlying cert+key.
     pub mtls_client: Option<Arc<MtlsClient>>,
+    /// Phase 42 — operator-supplied extra root CA PEM bundle
+    /// for the mTLS introspection HTTP client. `None` (the
+    /// common case) means the default `reqwest` root store is
+    /// used (system roots + webpki-roots). `Some(...)` is the
+    /// concatenated PEM bundle passed to
+    /// [`OidcAuthResolver::with_introspection_mtls_extra_root`] /
+    /// [`OidcAuthResolver::with_introspection_self_signed_mtls_extra_root`].
+    /// Stored so [`OidcAuthResolver::reload_mtls_identity`]
+    /// (and the rotation surfaces in Phases 35 / 37 / 39 that
+    /// call it) re-apply the same trust roots when rebuilding
+    /// the underlying [`reqwest::Client`] after a cert/key
+    /// swap. `Arc<Vec<u8>>` because [`OidcAuthResolver`] is
+    /// `#[derive(Clone)]`; the byte contents are immutable
+    /// after construction.
+    pub extra_root_ca_pem: Option<Arc<Vec<u8>>>,
 }
 
 /// Phase 33 — swap-able holder for the mTLS-enabled
@@ -520,6 +535,7 @@ impl OidcAuthResolver {
             auth_method: IntrospectionAuthMethod::default(),
             client_assertion_key: None,
             mtls_client: None,
+            extra_root_ca_pem: None,
         });
         Ok(self)
     }
@@ -539,6 +555,7 @@ impl OidcAuthResolver {
             auth_method: IntrospectionAuthMethod::default(),
             client_assertion_key: None,
             mtls_client: None,
+            extra_root_ca_pem: None,
         });
         self
     }
@@ -705,15 +722,57 @@ impl OidcAuthResolver {
         if self.introspection.is_none() {
             return Ok(self);
         }
-        let identity = build_mtls_identity(cert_pem, key_pem)?;
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .identity(identity)
-            .build()
-            .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))?;
+        let client = build_mtls_reqwest_client(cert_pem, key_pem, None)?;
         if let Some(cfg) = self.introspection.as_mut() {
             cfg.mtls_client = Some(Arc::new(MtlsClient::new(client)));
             cfg.auth_method = IntrospectionAuthMethod::TlsClientAuth;
+            cfg.extra_root_ca_pem = None;
+        }
+        Ok(self)
+    }
+
+    /// Phase 42 — same as [`Self::with_introspection_mtls`] but
+    /// adds the operator-supplied PEM-encoded root CA bundle to
+    /// the underlying [`reqwest::Client`]'s root store.
+    ///
+    /// Use this builder when the OIDC issuer presents a server
+    /// certificate signed by a private / internal CA (the common
+    /// case for enterprise self-hosted issuers — Keycloak behind
+    /// an internal PKI, etc.). The extra root is **additive** to
+    /// the system + webpki-roots store, so public-CA-signed
+    /// downstream calls continue to work.
+    ///
+    /// `extra_root_ca_pem` accepts a PEM-encoded root cert or a
+    /// concatenated multi-cert PEM bundle (the common
+    /// `cat root.pem intermediates.pem` form). At least one cert
+    /// must parse; an empty bundle errors at builder time. PEM
+    /// parse failures map to `TakoError::Invalid`.
+    ///
+    /// The CA bundle is also stored in
+    /// [`IntrospectionConfig::extra_root_ca_pem`] so subsequent
+    /// [`Self::reload_mtls_identity`] calls (and the rotation
+    /// surfaces in Phases 35 / 37 / 39 that route through it)
+    /// re-apply the same trust anchors when rebuilding the
+    /// mTLS client after a cert/key swap.
+    ///
+    /// Sets `auth_method` to
+    /// [`IntrospectionAuthMethod::TlsClientAuth`], matching
+    /// [`Self::with_introspection_mtls`]. Silent no-op when no
+    /// introspection config has been attached yet.
+    pub fn with_introspection_mtls_extra_root(
+        mut self,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        extra_root_ca_pem: &[u8],
+    ) -> Result<Self, TakoError> {
+        if self.introspection.is_none() {
+            return Ok(self);
+        }
+        let client = build_mtls_reqwest_client(cert_pem, key_pem, Some(extra_root_ca_pem))?;
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.mtls_client = Some(Arc::new(MtlsClient::new(client)));
+            cfg.auth_method = IntrospectionAuthMethod::TlsClientAuth;
+            cfg.extra_root_ca_pem = Some(Arc::new(extra_root_ca_pem.to_vec()));
         }
         Ok(self)
     }
@@ -755,15 +814,38 @@ impl OidcAuthResolver {
         if self.introspection.is_none() {
             return Ok(self);
         }
-        let identity = build_mtls_identity(cert_pem, key_pem)?;
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .identity(identity)
-            .build()
-            .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))?;
+        let client = build_mtls_reqwest_client(cert_pem, key_pem, None)?;
         if let Some(cfg) = self.introspection.as_mut() {
             cfg.mtls_client = Some(Arc::new(MtlsClient::new(client)));
             cfg.auth_method = IntrospectionAuthMethod::SelfSignedTlsClientAuth;
+            cfg.extra_root_ca_pem = None;
+        }
+        Ok(self)
+    }
+
+    /// Phase 42 — same as
+    /// [`Self::with_introspection_self_signed_mtls`] but adds
+    /// the operator-supplied PEM-encoded root CA bundle to the
+    /// underlying [`reqwest::Client`]'s root store. See
+    /// [`Self::with_introspection_mtls_extra_root`] for the full
+    /// rationale; the only difference is the `auth_method` enum
+    /// variant ([`IntrospectionAuthMethod::SelfSignedTlsClientAuth`]
+    /// per RFC 8705 §2.2). Silent no-op when no introspection
+    /// config has been attached yet.
+    pub fn with_introspection_self_signed_mtls_extra_root(
+        mut self,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        extra_root_ca_pem: &[u8],
+    ) -> Result<Self, TakoError> {
+        if self.introspection.is_none() {
+            return Ok(self);
+        }
+        let client = build_mtls_reqwest_client(cert_pem, key_pem, Some(extra_root_ca_pem))?;
+        if let Some(cfg) = self.introspection.as_mut() {
+            cfg.mtls_client = Some(Arc::new(MtlsClient::new(client)));
+            cfg.auth_method = IntrospectionAuthMethod::SelfSignedTlsClientAuth;
+            cfg.extra_root_ca_pem = Some(Arc::new(extra_root_ca_pem.to_vec()));
         }
         Ok(self)
     }
@@ -803,23 +885,26 @@ impl OidcAuthResolver {
     /// through an `Arc<OidcAuthResolver>` shared across request
     /// handlers — no exclusive access needed.
     pub fn reload_mtls_identity(&self, cert_pem: &[u8], key_pem: &[u8]) -> Result<(), TakoError> {
-        let holder = self
-            .introspection
-            .as_ref()
-            .and_then(|cfg| cfg.mtls_client.as_ref())
-            .ok_or_else(|| {
-                TakoError::Invalid(
-                    "oidc: reload_mtls_identity called but no mTLS identity configured \
-                     (call with_introspection_mtls or with_introspection_self_signed_mtls first)"
-                        .into(),
-                )
-            })?;
-        let identity = build_mtls_identity(cert_pem, key_pem)?;
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .identity(identity)
-            .build()
-            .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))?;
+        let cfg = self.introspection.as_ref().ok_or_else(|| {
+            TakoError::Invalid(
+                "oidc: reload_mtls_identity called but no mTLS identity configured \
+                 (call with_introspection_mtls or with_introspection_self_signed_mtls first)"
+                    .into(),
+            )
+        })?;
+        let holder = cfg.mtls_client.as_ref().ok_or_else(|| {
+            TakoError::Invalid(
+                "oidc: reload_mtls_identity called but no mTLS identity configured \
+                 (call with_introspection_mtls or with_introspection_self_signed_mtls first)"
+                    .into(),
+            )
+        })?;
+        // Phase 42 — re-apply the operator-supplied extra root
+        // CA bundle (if any) so a rotation doesn't silently drop
+        // private-CA trust. `Arc::as_ref` keeps the borrow
+        // lifetime to this scope only.
+        let extra_root: Option<&[u8]> = cfg.extra_root_ca_pem.as_deref().map(Vec::as_slice);
+        let client = build_mtls_reqwest_client(cert_pem, key_pem, extra_root)?;
         holder.swap(client);
         Ok(())
     }
@@ -1424,6 +1509,49 @@ fn build_mtls_identity(cert_pem: &[u8], key_pem: &[u8]) -> Result<reqwest::Ident
         .map_err(|e| TakoError::Invalid(format!("oidc: invalid mTLS identity PEM: {e}")))
 }
 
+/// Phase 42 — build the mTLS-enabled `reqwest::Client` used by
+/// the OIDC introspection POST. Extracted from the
+/// per-builder bodies so [`OidcAuthResolver::with_introspection_mtls`] /
+/// [`OidcAuthResolver::with_introspection_self_signed_mtls`] /
+/// the new `..._extra_root` variants / [`OidcAuthResolver::reload_mtls_identity`]
+/// share one Client-construction code path.
+///
+/// `extra_root_ca_pem` is `None` for the default (public-CA)
+/// case and `Some(pem_bundle)` when the operator runs against a
+/// private OIDC issuer behind an internal CA. The bundle is
+/// parsed via [`reqwest::Certificate::from_pem_bundle`] so a
+/// concatenated multi-cert PEM (root + intermediates) works
+/// without per-cert splitting at the call site. Each parsed
+/// cert is added to the `reqwest` root store via
+/// [`reqwest::ClientBuilder::add_root_certificate`]; the
+/// system + webpki-roots store is preserved (additive trust).
+fn build_mtls_reqwest_client(
+    cert_pem: &[u8],
+    key_pem: &[u8],
+    extra_root_ca_pem: Option<&[u8]>,
+) -> Result<reqwest::Client, TakoError> {
+    let identity = build_mtls_identity(cert_pem, key_pem)?;
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .identity(identity);
+    if let Some(ca_pem) = extra_root_ca_pem {
+        let extra_roots = reqwest::Certificate::from_pem_bundle(ca_pem).map_err(|e| {
+            TakoError::Invalid(format!("oidc: invalid mTLS extra root CA PEM bundle: {e}"))
+        })?;
+        if extra_roots.is_empty() {
+            return Err(TakoError::Invalid(
+                "oidc: mTLS extra root CA PEM bundle parsed zero certificates".into(),
+            ));
+        }
+        for cert in extra_roots {
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+    builder
+        .build()
+        .map_err(|e| TakoError::Invalid(format!("oidc: failed to build mTLS client: {e}")))
+}
+
 #[async_trait]
 impl AuthResolver for OidcAuthResolver {
     async fn resolve(&self, token: &str) -> Result<Principal, TakoError> {
@@ -1502,6 +1630,7 @@ mod tests {
             auth_method: IntrospectionAuthMethod::default(),
             client_assertion_key: None,
             mtls_client: None,
+            extra_root_ca_pem: None,
         };
         let cloned = cfg.clone();
         assert_eq!(cloned.introspect_uri, cfg.introspect_uri);
@@ -2500,6 +2629,121 @@ h7ACptP3tF94pcBzOgJ3bhM=\n\
         assert!(r.introspection.is_none());
     }
 
+    // -----------------------------------------------------------------
+    // Phase 42 — `_extra_root` builders + rotation preservation.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn with_introspection_mtls_extra_root_accepts_valid_ca_pem() {
+        // Reuse `TEST_MTLS_CERT_PEM` as a sample "private CA"
+        // bundle — it parses as a valid X.509 cert, which is
+        // all `add_root_certificate` requires.
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls_extra_root(
+                TEST_MTLS_CERT_PEM,
+                TEST_MTLS_KEY_PEM,
+                TEST_MTLS_CERT_PEM,
+            )
+            .unwrap();
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(cfg.auth_method, IntrospectionAuthMethod::TlsClientAuth);
+        assert!(cfg.mtls_client.is_some());
+        assert_eq!(
+            cfg.extra_root_ca_pem.as_deref().map(Vec::as_slice),
+            Some(TEST_MTLS_CERT_PEM),
+            "extra_root_ca_pem should be persisted on the config"
+        );
+    }
+
+    #[test]
+    fn with_introspection_mtls_extra_root_rejects_garbage_ca_pem() {
+        // `reqwest::Certificate::from_pem_bundle` is permissive
+        // on non-PEM input — garbage bytes simply parse as zero
+        // certs (no `-----BEGIN CERTIFICATE-----` markers found).
+        // Either error path (`invalid ... PEM bundle` from
+        // `from_pem_bundle` itself, or `parsed zero certificates`
+        // from our empty-bundle guard) surfaces as
+        // `TakoError::Invalid` with mTLS-extra-root context.
+        let err = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls_extra_root(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM, b"not a pem")
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("mTLS extra root CA PEM bundle")
+                || msg.contains("parsed zero certificates"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn with_introspection_mtls_extra_root_rejects_empty_ca_bundle() {
+        // An empty PEM blob parses as zero certs — `from_pem_bundle`
+        // returns Ok(vec![]). The builder must surface this as a
+        // hard error rather than silently building a Client with
+        // no extra trust.
+        let err = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls_extra_root(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM, b"")
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("parsed zero certificates"), "got: {msg}");
+    }
+
+    #[test]
+    fn with_introspection_mtls_extra_root_no_op_without_introspection() {
+        // Same chain-order forgiveness as `with_introspection_mtls`.
+        let r = test_resolver(Client::new(), "https://issuer.example")
+            .with_introspection_mtls_extra_root(b"garbage", b"garbage", b"garbage")
+            .unwrap();
+        assert!(r.introspection.is_none());
+    }
+
+    #[test]
+    fn with_introspection_self_signed_mtls_extra_root_accepts_valid_ca_pem() {
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_self_signed_mtls_extra_root(
+                TEST_MTLS_CERT_PEM,
+                TEST_MTLS_KEY_PEM,
+                TEST_MTLS_CERT_PEM,
+            )
+            .unwrap();
+        let cfg = r.introspection.expect("introspection set");
+        assert_eq!(
+            cfg.auth_method,
+            IntrospectionAuthMethod::SelfSignedTlsClientAuth,
+        );
+        assert!(cfg.mtls_client.is_some());
+        assert!(cfg.extra_root_ca_pem.is_some());
+    }
+
+    #[test]
+    fn reload_mtls_identity_preserves_extra_root_ca() {
+        // Phase 42 — `reload_mtls_identity` must re-apply the
+        // operator-supplied extra root CA bundle so a rotation
+        // (cert-manager / Vault / filesystem-watcher / refresh
+        // hook) doesn't silently drop private-CA trust.
+        let r = test_resolver_with_introspection_for_mtls()
+            .with_introspection_mtls_extra_root(
+                TEST_MTLS_CERT_PEM,
+                TEST_MTLS_KEY_PEM,
+                TEST_MTLS_CERT_PEM,
+            )
+            .unwrap();
+        // Reload with the same cert/key — the swap should
+        // succeed AND the persisted bundle should still be
+        // present afterwards.
+        r.reload_mtls_identity(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap();
+        let cfg = r.introspection.as_ref().expect("introspection set");
+        assert!(
+            cfg.extra_root_ca_pem.is_some(),
+            "rotation should preserve the persisted extra root CA bundle"
+        );
+        assert_eq!(
+            cfg.extra_root_ca_pem.as_deref().map(Vec::as_slice),
+            Some(TEST_MTLS_CERT_PEM),
+        );
+    }
+
     #[test]
     fn auto_select_prefers_tls_client_auth_when_listed_and_identity_present() {
         let mut r = test_resolver(Client::new(), "https://issuer.example");
@@ -2905,6 +3149,7 @@ h7ACptP3tF94pcBzOgJ3bhM=\n\
             auth_method: IntrospectionAuthMethod::TlsClientAuth,
             client_assertion_key: None,
             mtls_client: Some(Arc::new(MtlsClient::new(reqwest::Client::new()))),
+            extra_root_ca_pem: None,
         };
         let (hook, _trigger) = refresh_channel();
         let some_hook = Some(hook);
@@ -2938,6 +3183,7 @@ h7ACptP3tF94pcBzOgJ3bhM=\n\
             auth_method: IntrospectionAuthMethod::TlsClientAuth,
             client_assertion_key: None,
             mtls_client: Some(Arc::new(MtlsClient::new(reqwest::Client::new()))),
+            extra_root_ca_pem: None,
         };
         let no_hook = None;
         assert!(!should_retry_with_refresh(
@@ -2959,6 +3205,7 @@ h7ACptP3tF94pcBzOgJ3bhM=\n\
             auth_method: IntrospectionAuthMethod::ClientSecretBasic,
             client_assertion_key: None,
             mtls_client: None,
+            extra_root_ca_pem: None,
         };
         let (hook, _trigger) = refresh_channel();
         let some_hook = Some(hook);
