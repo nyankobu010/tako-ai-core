@@ -23,7 +23,16 @@ jobs:
           - { os: ubuntu-latest,  target: aarch64-unknown-linux-musl,  manylinux: musllinux_1_2 }
           - { os: macos-latest,   target: universal2-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
-          - { os: windows-latest, target: aarch64-pc-windows-msvc }
+          # aarch64-pc-windows-msvc is a cross-compile from the x64 host.
+          # `--interpreter python` forces maturin to invoke the host's
+          # Python (resolved via PATH to setup-python's install) to query
+          # `sys.version_info` instead of falling back to name-based
+          # discovery, which skips bare `python.exe` with the warning
+          # "could not determine version from interpreter name". The wheel
+          # is abi3 so any host interpreter is fine for version metadata;
+          # PyO3's abi3 path generates the aarch64 import lib without
+          # needing a target-arch interpreter.
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, interpreter_arg: "--interpreter python" }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -37,13 +46,20 @@ jobs:
       # opt-in is `onnx`, because ONNX Runtime has system-level
       # dynamic-library deps that would require per-platform
       # bundling. Operators who need `OnnxRouter` build from source.
+      #
+      # Features are passed comma-separated (not space-separated inside a
+      # quoted string) so the action's argv parser routes the entire list
+      # to cargo's `--features` flag. The previous space-separated form
+      # caused all but the first feature to leak past `--` and be passed
+      # to rustc as positional input filenames.
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || '' }}
           args: >-
             --release --locked --compatibility pypi
-            --features "auth-jwt auth-oidc auth-vault auth-mtls-fs-watch auth-mtls-identity-provider sigstore sigstore-protobuf ws grpc redis"
+            --features auth-jwt,auth-oidc,auth-vault,auth-mtls-fs-watch,auth-mtls-identity-provider,sigstore,sigstore-protobuf,ws,grpc,redis
+            ${{ matrix.interpreter_arg || '' }}
       - uses: actions/upload-artifact@v5
         with:
           name: wheels-${{ matrix.target }}
