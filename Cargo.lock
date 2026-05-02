@@ -2366,17 +2366,16 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "10.3.0"
+version = "9.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
+checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
 dependencies = [
  "base64",
- "getrandom 0.2.17",
  "js-sys",
  "pem",
+ "ring",
  "serde",
  "serde_json",
- "signature",
  "simple_asn1",
 ]
 
@@ -4505,7 +4504,7 @@ dependencies = [
 
 [[package]]
 name = "tako-compat"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4533,7 +4532,7 @@ dependencies = [
 
 [[package]]
 name = "tako-core"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -4546,7 +4545,7 @@ dependencies = [
 
 [[package]]
 name = "tako-governance"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4586,7 +4585,7 @@ dependencies = [
 
 [[package]]
 name = "tako-mcp"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4615,7 +4614,7 @@ dependencies = [
 
 [[package]]
 name = "tako-orchestrator"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4638,7 +4637,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-anthropic"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4658,7 +4657,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-azure-openai"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -4676,7 +4675,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-bedrock"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4697,7 +4696,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-http-generic"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4718,7 +4717,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-mistral"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4738,7 +4737,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-ollama"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4760,7 +4759,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-openai"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4780,7 +4779,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-vertex"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4800,7 +4799,7 @@ dependencies = [
 
 [[package]]
 name = "tako-py"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4830,7 +4829,7 @@ dependencies = [
 
 [[package]]
 name = "tako-runtime"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "async-trait",

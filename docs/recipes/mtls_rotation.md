@@ -218,6 +218,69 @@ await tako.compat.serve_openai(
 )
 ```
 
+## Auto-retry on TLS handshake failure (Phase 39)
+
+The Phase 35 / Phase 37 watchers refresh on a fixed cadence —
+fast enough for normal rotation but not always fast enough when
+something rotates the cert out from under us mid-request (e.g.
+the issuer rotated its trust store, an out-of-band rotation
+desynchronised tako, the cert was revoked early).
+
+Phase 39 closes that gap with an opt-in retry layer. When wired,
+the introspection POST:
+
+1. Sees a `TakoError::Transport` (TLS handshake failure, DNS,
+   connection reset).
+2. Triggers an out-of-band reload via the watcher / provider's
+   refresh hook (capped at 2s).
+3. Re-sends the POST exactly once.
+
+Cycle-detection is structural — at most one retry per
+introspection call. A persistent issuer outage cannot loop.
+
+```rust
+use std::sync::Arc;
+use tako_compat::OidcAuthResolver;
+
+let oidc = Arc::new(
+    OidcAuthResolver::discover("https://issuer.example.com", "my-api")
+        .await?
+        .with_introspection("my-api", None)?
+        .with_introspection_mtls(initial_cert, initial_key)?,
+);
+
+let watcher = oidc.clone().watch_mtls_files(cert_path, key_path)?;
+
+// Pair the resolver with the watcher's refresh hook. Both
+// the watcher's normal cadence and the on-demand retry refresh
+// run through the same `reload_mtls_identity` primitive.
+let oidc = (*oidc).clone()
+    .with_mtls_refresh_hook(watcher.refresh_hook());
+let oidc = Arc::new(oidc);
+```
+
+`MtlsRefreshHook` is `Clone`-able; the same hook can be wired
+into multiple resolvers if you have several mTLS-introspecting
+endpoints sharing one cert source.
+
+The retry only fires when **all three** conditions hold:
+
+- The error variant is `TakoError::Transport`.
+- A refresh hook is configured via `with_mtls_refresh_hook`.
+- The active introspection auth method actually uses an
+  `MtlsClient` (Basic / Post / JWT auth methods skip the
+  retry — they have no per-request identity to refresh).
+
+When any condition is unmet, the introspection POST behaves
+byte-for-byte the same as Phase 24/25/33/34/35/37/38: the
+transport error propagates verbatim.
+
+Refresh failures inside `force_refresh()` (timeout, source
+dropped, reload error) are logged at `warn` and the retry
+proceeds anyway with whatever client is currently installed —
+worst case the second attempt fails the same way and the
+caller sees the original error.
+
 ## Atomicity
 
 The swap is atomic from the request-handler's perspective. Concurrent
