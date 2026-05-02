@@ -315,6 +315,46 @@ impl PyOidcAuth {
         })
     }
 
+    /// Phase 44 — async constructor that builds the resolver-wide
+    /// HTTP client with an operator-supplied PEM-encoded root CA
+    /// bundle added to its trust store. Use this for enterprise
+    /// self-hosted OIDC issuers (Keycloak / Auth0 self-hosted /
+    /// Authentik) presenting a server cert signed by a private
+    /// internal CA — without it, the discovery GET fails TLS
+    /// verification before the resolver is even returned.
+    ///
+    /// `extra_root_ca_pem` accepts a single root cert or a
+    /// concatenated multi-cert PEM bundle. The same trust anchor
+    /// covers both the OIDC discovery doc fetch (during
+    /// construction) AND every subsequent JWKS refresh, because
+    /// the resolver holds a single HTTP client for non-introspection
+    /// HTTP. PEM parse failures (empty bundle, garbage bytes) raise
+    /// `ValueError` at construction time — fail-closed at the
+    /// operator boundary.
+    ///
+    /// Independent from `with_introspection_mtls_extra_root`: the
+    /// introspection mTLS client carries its own CA store.
+    /// Operators with one PKI for the whole stack pass the same
+    /// PEM bundle to both.
+    #[staticmethod]
+    fn discover_with_extra_root<'py>(
+        py: Python<'py>,
+        issuer: String,
+        audience: String,
+        extra_root_ca_pem: Vec<u8>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let r = tako_compat::OidcAuthResolver::discover_with_extra_root(
+                &issuer,
+                &audience,
+                &extra_root_ca_pem,
+            )
+            .await
+            .map_err(map_err)?;
+            Ok(PyOidcAuth { inner: Arc::new(r) })
+        })
+    }
+
     /// Phase 15.B.2 — enable RFC 7662 token introspection using the
     /// `introspection_endpoint` advertised by the issuer's discovery
     /// doc. Returns a NEW `OidcAuth` instance (immutable builder);
