@@ -65,7 +65,8 @@ synopsis and quickstart.
 | 44 — Operator-supplied root CA for OIDC discovery + JWKS | v0.45.0 | done (2026-05-02) | [plans/PLAN_PHASE44.md](plans/PLAN_PHASE44.md) | [`## [0.45.0]`](CHANGELOG.md) |
 | 45 — Python facade for `discover_with_extra_root` | v0.46.0 | done (2026-05-02) | [plans/PLAN_PHASE45.md](plans/PLAN_PHASE45.md) | [`## [0.46.0]`](CHANGELOG.md) |
 | 46 — Phase-1 placeholder sweep | v0.47.0 | done (2026-05-02) | [plans/PLAN_PHASE46.md](plans/PLAN_PHASE46.md) | [`## [0.47.0]`](CHANGELOG.md) |
-| 47 — OTel real-collector e2e test | v0.48.0 | in progress | [plans/PLAN_PHASE47.md](plans/PLAN_PHASE47.md) | [`## [0.48.0]`](CHANGELOG.md) |
+| 47 — OTel real-collector e2e test | v0.48.0 | done (2026-05-02) | [plans/PLAN_PHASE47.md](plans/PLAN_PHASE47.md) | [`## [0.48.0]`](CHANGELOG.md) |
+| 48 — Stable Vertex tool-call IDs in streaming | v0.49.0 | in progress | [plans/PLAN_PHASE48.md](plans/PLAN_PHASE48.md) | [`## [0.49.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
@@ -279,14 +280,16 @@ where the fix would land.
   lifecycle / facade contract; span content is now asserted on the
   Rust side where the wire path runs.
 - [x] **Vertex deterministic-per-call placeholder logic.** Closed in
-  Phase 46.C (v0.47.0). Replaced position-derived `vertex_call_<n>`
-  IDs with stable `SipHash13((name, args))` digests in
-  [`from_vertex_response`](crates/tako-providers/vertex/src/convert.rs).
-  Fixes tool-call correlation across re-fetches and serialisation
-  round-trips. The streaming path
-  ([`stream.rs`](crates/tako-providers/vertex/src/stream.rs)) still
-  uses per-stream `tool_call_index` (within-stream chunk reassembly,
-  different concern; defer until ask).
+  Phase 46.C (v0.47.0) for the non-streaming response path, and
+  Phase 48 (v0.49.0) for the streaming SSE path. Both
+  [`from_vertex_response`](crates/tako-providers/vertex/src/convert.rs)
+  and
+  [`into_chat_stream`](crates/tako-providers/vertex/src/stream.rs)
+  now share the
+  `vertex_tool_call_id(name, args) -> SipHash13((name, args))`
+  helper, so the same logical call gets the same id whether
+  streamed or not. `ToolCallDelta::index` continues to serve as
+  the per-stream chunk-reassembly key.
 
 #### Documentation maintenance
 
