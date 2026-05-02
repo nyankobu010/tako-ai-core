@@ -1,0 +1,75 @@
+[build-system]
+requires      = ["maturin>=1.13.1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "tako"
+version = "0.51.0"
+description = "Rust-core, Python-facade framework for enterprise agentic systems."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "The tako contributors" }]
+requires-python = ">=3.10"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+dependencies = [
+  "pydantic>=2.11",
+  "typing-extensions>=4.13",
+]
+
+[project.optional-dependencies]
+otel    = ["opentelemetry-api>=1.34", "opentelemetry-sdk>=1.34"]
+server  = ["uvicorn>=0.46"]
+training = ["numpy>=2.2", "onnx>=1.21"]
+eval    = ["datasets>=4.0", "huggingface_hub>=0.27"]
+dev     = ["pytest>=8.4", "pytest-asyncio>=0.25", "ruff>=0.13", "mypy>=1.20", "hypothesis>=6.130", "cryptography>=47"]
+docs    = ["mkdocs-material>=9.7.6", "mkdocstrings[python]>=0.30"]
+
+[project.urls]
+Homepage      = "https://github.com/nyankobu010/tako-ai-core"
+Documentation = "https://nyankobu010.github.io/tako-ai-core"
+Repository    = "https://github.com/nyankobu010/tako-ai-core"
+Issues        = "https://github.com/nyankobu010/tako-ai-core/issues"
+
+[tool.maturin]
+manifest-path  = "crates/tako-py/Cargo.toml"
+module-name    = "tako._native"
+python-source  = "python"
+features       = ["pyo3/extension-module"]
+strip          = true
+include        = [
+    { path = "python/tako/eval/datasets/synthetic.jsonl", format = "wheel" },
+]
+
+[tool.ruff]
+line-length    = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# numpy SGD code uses conventional matrix names (W1, W2, X) — uppercase is intentional.
+"python/tako/training/trinity.py" = ["N806"]
+
+[tool.pytest.ini_options]
+asyncio_mode    = "auto"
+addopts         = "-ra --strict-markers"
+testpaths       = ["tests/python"]
+
+[tool.mypy]
+python_version = "3.10"
+strict         = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+files          = ["python/tako"]

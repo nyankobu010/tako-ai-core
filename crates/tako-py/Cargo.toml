@@ -1,0 +1,73 @@
+[package]
+name         = "tako-py"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "PyO3 bindings for tako; built as the `tako._native` extension module."
+
+[lints]
+workspace = true
+
+[lib]
+name       = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3                = { workspace = true }
+pyo3-async-runtimes = { workspace = true }
+tokio               = { workspace = true }
+futures             = { workspace = true }
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+async-trait         = { workspace = true }
+async-stream        = "0.3"
+tracing             = { workspace = true }
+anyhow              = { workspace = true }
+
+tako-core                   = { workspace = true }
+tako-runtime                = { workspace = true }
+tako-mcp                    = { workspace = true }
+tako-orchestrator           = { workspace = true }
+tako-governance             = { workspace = true }
+tako-providers-anthropic    = { workspace = true }
+tako-providers-openai       = { workspace = true }
+tako-providers-azure-openai = { workspace = true }
+tako-providers-http-generic = { workspace = true }
+tako-providers-bedrock      = { workspace = true }
+tako-providers-ollama       = { workspace = true }
+tako-providers-vertex       = { workspace = true }
+tako-compat                 = { workspace = true }
+regex                       = { workspace = true }
+
+[features]
+default = []
+# Forwards the `onnx` Cargo feature through to tako-orchestrator so the
+# OnnxRouter pyclass becomes available. Off by default to keep wheels
+# slim; turn on with `maturin build --features onnx`.
+onnx     = ["tako-orchestrator/onnx"]
+# Phase-4 transport / governance / runtime feature forwarders. Each
+# adds the underlying crate's optional dep to the wheel only when
+# explicitly enabled, e.g. `maturin develop --features "ws grpc sigstore redis"`.
+ws                = ["tako-mcp/ws"]
+grpc              = ["tako-mcp/grpc"]
+sigstore          = ["tako-governance/sigstore"]
+sigstore-protobuf = ["sigstore", "tako-governance/sigstore-protobuf"]
+redis             = ["sigstore", "tako-runtime/redis", "tako-governance/redis"]
+# Phase 14.B — wheel-side feature gates for the new tako-compat
+# AuthResolver impls. Each adds one optional dep tree (jsonwebtoken,
+# reqwest, vaultrs); off by default so default wheels stay slim.
+auth-jwt          = ["tako-compat/jwt"]
+auth-oidc         = ["tako-compat/oidc"]
+auth-vault        = ["tako-compat/vault"]
+# Phase 35 — wheel-side feature gate for the OIDC mTLS filesystem
+# watcher. Adds the `notify` dep tree; off by default. Implies
+# `auth-oidc` (the watcher only makes sense if mTLS introspection
+# is wired up).
+auth-mtls-fs-watch = ["auth-oidc", "tako-compat/mtls-fs-watch"]
+# Phase 38 — wheel-side feature gate for the trait-based mTLS
+# identity provider (Phase 37 Rust API). Adds the
+# `x509-parser` dep for cert NotAfter parsing. Implies
+# `auth-oidc` (only useful with mTLS introspection wired up).
+auth-mtls-identity-provider = ["auth-oidc", "tako-compat/mtls-identity-provider"]

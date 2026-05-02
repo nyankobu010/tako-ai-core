@@ -1,0 +1,87 @@
+[package]
+name         = "tako-governance"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Enterprise plumbing for tako: OTel tracing, PII redaction, secret resolvers."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry      = { workspace = true }
+opentelemetry_sdk  = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-semantic-conventions = { workspace = true }
+thiserror          = { workspace = true }
+anyhow             = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+regex              = { workspace = true }
+regorus            = { workspace = true }
+sha2               = "0.10"
+hex                = "0.4"
+chrono             = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+
+# Phase 2.5 cloud secret resolvers
+reqwest                = { workspace = true }
+base64                 = { workspace = true }
+aws-config             = { workspace = true }
+aws-sdk-secretsmanager = { workspace = true }
+
+# Phase 4 Sigstore tool-catalogue verification (optional, behind `sigstore`).
+sigstore               = { workspace = true, optional = true }
+# X.509 cert parsing for the Phase 5 keyless verifier; pulled in
+# transitively by `sigstore` already, so this only widens the visible
+# surface.
+x509-cert              = { version = "0.2", default-features = false, features = ["pem"], optional = true }
+const-oid              = { version = "0.9", optional = true }
+pem                    = { version = "3", optional = true }
+
+# Phase 7.C cosign protobuf-bundle adapter (optional, behind
+# `sigstore-protobuf`, which itself implies `sigstore`).
+prost                  = { workspace = true, optional = true }
+
+# Phase 13.A `RedisStateStore` (optional, behind `redis`, which itself
+# implies `sigstore` because the only consumer is `KeylessVerifier`'s
+# Rekor freshness anchor).
+redis                  = { workspace = true, optional = true }
+
+# Phase 11.A M1 — `JsonStateStore::save` writes via
+# `NamedTempFile::new_in(parent).persist()` for race-free atomic
+# replace. Promoted from dev-dep (where it has lived since v0.11.0
+# tests) to production.
+tempfile               = "3"
+
+[features]
+default           = []
+sigstore          = ["dep:sigstore", "dep:x509-cert", "dep:const-oid", "dep:pem"]
+sigstore-protobuf = ["sigstore", "dep:prost"]
+# Phase 13.A — `RedisStateStore` for the Rekor freshness anchor.
+# Implies `sigstore` because the only consumer (`KeylessVerifier`) lives
+# behind that feature.
+redis             = ["sigstore", "dep:redis"]
+
+[dev-dependencies]
+tokio    = { workspace = true, features = ["full"] }
+wiremock = { workspace = true }
+sigstore = { workspace = true }
+rcgen    = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+time     = "0.3"
+
+# Phase 47 — OTel real-collector e2e test. Implements the
+# `TraceService::Export` server trait via `tonic` and asserts
+# spans land in the mock. Already a transitive dep via
+# `opentelemetry-otlp` so this just widens visibility.
+opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic", "gen-tonic-messages", "trace"] }
+tonic               = { workspace = true }
+tokio-stream        = { workspace = true, features = ["net"] }

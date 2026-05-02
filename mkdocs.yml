@@ -1,0 +1,102 @@
+site_name: tako
+site_description: Rust-core, Python-facade framework for enterprise agentic systems.
+site_url: https://nyankobu010.github.io/tako-ai-core
+repo_url: https://github.com/nyankobu010/tako-ai-core
+repo_name: nyankobu010/tako-ai-core
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Architecture: architecture.md
+  - Feature matrix: feature_matrix.md
+  - Concepts:
+      - Providers: concepts/providers.md
+      - Orchestrators: concepts/orchestrators.md
+      - Streaming: concepts/streaming.md
+      - Routing: concepts/routing.md
+      - SelfCaller: concepts/self_caller.md
+      - Vision content: concepts/vision.md
+      - URL pre-fetch & SSRF: concepts/url_prefetch.md
+      - OpenAI-compat server: concepts/compat.md
+      - Sigstore: concepts/sigstore.md
+      - Policy: concepts/policy.md
+      - Secrets: concepts/secrets.md
+      - Budgets: concepts/budgets.md
+      - Tracing: concepts/tracing.md
+      - MCP: concepts/mcp.md
+  - Recipes:
+      - Azure OpenAI: recipes/azure_openai.md
+      - Vertex AI: recipes/vertex.md
+      - Bedrock: recipes/bedrock.md
+      - Mistral: recipes/mistral.md
+      - Ollama: recipes/ollama.md
+      - Vision: recipes/vision.md
+      - URL pre-fetch: recipes/url_prefetch.md
+      - OpenAI-compat server: recipes/openai_compat_server.md
+      - OIDC introspection: recipes/oidc_introspection.md
+      - Chained auth: recipes/chained_auth.md
+      - mTLS rotation: recipes/mtls_rotation.md
+      - Sigstore keyless: recipes/sigstore_keyless.md
+      - Conductor: recipes/conductor.md
+      - Trinity: recipes/trinity.md
+      - SelfCaller: recipes/self_caller.md
+      - Eval harness: recipes/eval_harness.md
+      - OPA / Rego policy: recipes/opa_policy.md
+      - Secret resolvers: recipes/secret_resolvers.md
+  - API reference:
+      - Python: api/python.md
+      - Rust: api/rust.md
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.indexes
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [python]
+          options:
+            show_source: false
+            show_root_heading: false
+            members_order: source
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true

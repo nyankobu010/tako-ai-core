@@ -1,0 +1,63 @@
+[package]
+name         = "tako-mcp"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "MCP (Model Context Protocol) client transports and tool registry for tako."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+url                = { workspace = true }
+async-stream       = "0.3"
+eventsource-stream = { workspace = true }
+reqwest            = { workspace = true }
+# Optional WebSocket MCP transport (Phase 4). Enable via `--features ws`.
+tokio-tungstenite  = { workspace = true, optional = true }
+# Optional gRPC MCP transport (Phase 4). Enable via `--features grpc`.
+tonic              = { workspace = true, optional = true }
+tonic-prost        = { workspace = true, optional = true }
+prost              = { workspace = true, optional = true }
+tokio-stream       = { workspace = true, optional = true }
+
+[features]
+default = []
+ws      = ["dep:tokio-tungstenite"]
+grpc    = ["dep:tonic", "dep:tonic-prost", "dep:prost", "dep:tokio-stream"]
+
+[build-dependencies]
+# Always present so `build.rs` can reference them; the `build.rs` itself
+# no-ops unless `CARGO_FEATURE_GRPC` is set, so non-`grpc` builds incur
+# only a tiny dependency-graph cost (no `protoc` invocation).
+tonic-prost-build  = { workspace = true }
+# Bundles a `protoc` binary so contributors don't need to install one to
+# build with `--features grpc`.
+protoc-bin-vendored = "3"
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["full"] }
+tokio-tungstenite  = { workspace = true }
+tonic              = { workspace = true }
+tonic-prost        = { workspace = true }
+prost              = { workspace = true }
+tokio-stream       = { workspace = true, features = ["net"] }
+# Phase 12.A — wiremock-driven Streamable HTTP SSE integration tests.
+wiremock           = { workspace = true }
+# Generate self-signed CA + leaf certs at test time for the mTLS gRPC
+# coverage; matches the test-only cert generation in tako-governance.
+rcgen              = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+time               = "0.3"
+# Explicit rustls crypto provider so the mTLS tests can pin one when
+# both `aws-lc-rs` (via rcgen) and `ring` (via tonic) end up linked in.
+rustls             = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }

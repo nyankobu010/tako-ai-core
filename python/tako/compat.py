@@ -1,0 +1,223 @@
+"""OpenAI-compatible HTTP server."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from tako import _native
+
+
+def serve_openai(
+    orch: Any,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    tokens: dict[str, tuple[str, str]] | None = None,
+    auth: Any = None,
+    models: list[str] | None = None,
+) -> str:
+    """Boot the OpenAI-compatible HTTP server.
+
+    Returns the bound URL (e.g. ``"http://127.0.0.1:8080"``). The server
+    runs in a background Tokio task; call :func:`shutdown_openai` to stop
+    it. ``orch`` must be a ``tako.SingleAgent`` or ``tako.Conductor``.
+
+    Auth: every request must carry ``Authorization: Bearer <token>``.
+
+    Two auth modes:
+
+    1. **Static map** (dev / CI): ``tokens={"my-token": ("acme", "alice")}``.
+       Each token maps to ``(tenant_id, user_id)``. If neither ``tokens``
+       nor ``auth`` is set, a single ``"dev-token"`` mapping to anonymous
+       is installed for local testing.
+    2. **Real auth** (production, Phase 14.B): pass ``auth=`` with one of
+       ``tako.compat.JwtAuth.hs256(secret)``,
+       ``tako.compat.JwtAuth.rs256_from_pem(pem)``,
+       ``tako.compat.OidcAuth.discover(issuer, audience)`` (async), or
+       ``tako.compat.VaultAuth(addr, vault_token)``. These resolvers
+       require the wheel to be built with the matching ``auth-*`` feature
+       (e.g. ``maturin build --features auth-jwt``).
+
+       Phase 15.B.1 / 15.B.2 — ``VaultAuth`` gains ``with_approle``,
+       ``with_kubernetes`` and ``with_kubernetes_in_pod`` static
+       constructors for AppRole / Kubernetes auth-method rotation.
+       ``OidcAuth`` gains ``with_introspection`` /
+       ``with_introspection_uri`` builder methods for RFC 7662 token
+       introspection (revocation-aware checks).
+
+       Phase 16.B.3 — ``VaultAuth.with_namespace(ns)`` sets the
+       Vault Enterprise namespace used on every KV lookup
+       (``X-Vault-Namespace`` header). ``OidcAuth.with_introspection_auth_method(m)``
+       selects between ``"basic"`` (default; HTTP Basic header) and
+       ``"post"`` (credentials in form body) per RFC 7662 §2.1.
+
+       Phase 17.C — ``OidcAuth.with_introspection_auth_method`` now
+       accepts ``"jwt"`` / ``"client_secret_jwt"`` for the RFC 7521 /
+       7523 HS256-signed client-assertion auth method.
+       ``OidcAuth.with_introspection_auth_method_from_discovery()``
+       auto-selects the strongest auth method advertised by the
+       issuer's RFC 8414 discovery doc (preference order: JWT > Basic
+       > Post).
+
+       Phase 18.C — ``OidcAuth`` gains
+       ``with_introspection_jwt_rs256_pem(pem)`` /
+       ``with_introspection_jwt_es256_pem(pem)`` /
+       ``with_introspection_jwt_ed25519_pem(pem)`` builders for the
+       asymmetric ``private_key_jwt`` auth method (Phase 18.A; RFC
+       7521 / 7523 with an RSA / EC / Ed25519 key). The auto-selector
+       prefers ``private_key_jwt`` when an asymmetric key is loaded.
+       ``OidcAuth.end_session_endpoint()`` and
+       ``OidcAuth.build_logout_uri(id_token_hint, post_logout_redirect_uri, state)``
+       expose the OIDC Session Management 1.0 logout-URL helper
+       (Phase 18.B).
+
+       Phase 24.B — ``OidcAuth`` gains
+       ``with_introspection_mtls(cert_pem, key_pem)`` /
+       ``with_introspection_mtls_combined(combined_pem)`` builders
+       for the RFC 8705 mTLS introspection auth method
+       (``tls_client_auth``). The auto-selector prefers
+       ``tls_client_auth`` over JWT methods when an mTLS identity is
+       loaded. ``with_introspection_auth_method`` accepts new
+       case-insensitive aliases ``"tls_client_auth"`` /
+       ``"tls-client-auth"`` / ``"mtls"``.
+
+       Phase 25.B — ``OidcAuth`` gains
+       ``with_introspection_self_signed_mtls(cert_pem, key_pem)`` /
+       ``with_introspection_self_signed_mtls_combined(combined_pem)``
+       builders for the RFC 8705 §2.2 self-signed mTLS variant.
+       ``with_introspection_auth_method`` accepts new aliases
+       ``"self_signed_tls_client_auth"`` / ``"self-signed-mtls"``
+       (and kebab variants). The auto-selector prefers CA-backed
+       ``tls_client_auth`` over self-signed when both are listed.
+       After Phase 25 the OIDC introspection auth-method surface
+       covers all six RFC 7662 §2.1 / RFC 8414 / RFC 8705 methods.
+
+       Phase 33.B — ``OidcAuth.reload_mtls_identity(cert_pem, key_pem)``
+       and ``OidcAuth.reload_mtls_identity_combined(combined_pem)``
+       atomically replace the mTLS identity used for OIDC
+       introspection POSTs without rebuilding the resolver.
+       Useful for cert rotation in long-running deployments
+       (cert-manager webhook, Vault PKI rotation, filesystem
+       watcher, periodic poll). Mutates state in place via
+       internal mutability — the swap is atomic from the request
+       handler's perspective; concurrent introspection POSTs
+       either see the old Client or the new one, never a torn
+       state. Raises ``ValueError`` when no prior
+       ``with_introspection_mtls`` call has been made, and
+       preserves the previously installed Client on PEM parse
+       failure.
+
+       Phase 42 — ``OidcAuth.with_introspection_mtls_extra_root(cert_pem, key_pem, ca_pem)``
+       and ``with_introspection_self_signed_mtls_extra_root(...)``
+       are the operator-supplied-CA siblings of the Phase 24 / 25
+       mTLS introspection builders. The CA bundle (single root or
+       concatenated multi-cert PEM) is added to the underlying
+       HTTP client's trust store and is persisted across the
+       Phase 33 / 35 / 37 / 39 rotation surfaces. For enterprise
+       self-hosted OIDC issuers (Keycloak / Auth0 self-hosted /
+       Authentik) presenting a server cert signed by a private
+       internal CA. Raises ``ValueError`` on PEM parse failure
+       (empty bundle, garbage bytes) at builder time — fail-closed.
+
+       Phase 44 — ``OidcAuth.discover_with_extra_root(issuer, audience, ca_pem)``
+       is a parallel async constructor that builds the
+       resolver-wide HTTP client with an operator-supplied
+       PEM-encoded root CA bundle added to its trust store. The
+       same trust anchor covers BOTH the OIDC discovery doc fetch
+       (during construction) AND every subsequent JWKS refresh,
+       because the resolver holds a single HTTP client for
+       non-introspection HTTP. Pair with the Phase 42
+       ``_extra_root`` builders when one PKI fronts the whole
+       OIDC stack. Without it, the discovery GET against a
+       private-CA issuer fails TLS verification before the
+       resolver is even returned. Raises ``ValueError`` at
+       construction time on PEM parse failure (empty bundle,
+       garbage bytes).
+
+       Phase 21.B — ``tako.compat.ChainedAuth`` (always-on; no
+       cargo feature gate) is a composite resolver that wraps N
+       child resolvers and tries them in append order. The first
+       child to return a Principal short-circuits; any error falls
+       through to the next. Common pattern: ``auth=ChainedAuth().then(oidc).then(jwt)``
+       to accept either an OIDC bearer or a static-key-signed JWT.
+       Children may themselves be ``ChainedAuth`` instances
+       (recursive composition).
+
+       Phase 26.B — ``ChainedAuth.with_short_circuit_on_transport_error()``
+       opts in to fail-fast semantics for transport errors. When
+       enabled, a transport error from any child (e.g. OIDC
+       issuer unreachable) halts the chain immediately instead of
+       falling through to the next child. Other error variants
+       (auth-decision errors like `"bad token"`) continue to fall
+       through. Default behaviour preserves Phase 21
+       fall-through-on-any-Err semantics.
+
+       Phase 27.B — ``ChainedAuth.with_short_circuit_on_infrastructure_errors()``
+       extends fail-fast to four "definitely infrastructure /
+       operator-set-guard" variants: ``Transport`` (network
+       failure), ``RateLimited`` (upstream rate limit),
+       ``CircuitOpen`` (failsafe circuit), ``BudgetExhausted``
+       (operator-set spend cap). Auth-decision errors and vendor
+       errors still fall through. Last-write-wins between the
+       two builders.
+
+    Passing both ``tokens`` and ``auth`` is an error.
+    """
+    if not hasattr(orch, "_inner"):
+        raise TypeError("orch must be a tako.SingleAgent or tako.Conductor instance")
+    return _native.serve_openai_py(
+        orch._inner,
+        host=host,
+        port=port,
+        tokens=tokens,
+        auth=auth,
+        models=models,
+    )
+
+
+def shutdown_openai() -> None:
+    """Stop the running compat server. Idempotent."""
+    _native.shutdown_compat_py()
+
+
+# Phase 14.B — re-export the new auth resolver pyclasses when the
+# wheel was built with the matching feature. Importing names that
+# don't exist in `_native` yields `AttributeError`, so guard each
+# `getattr` so users can `import tako.compat` even from a slim wheel.
+JwtAuth = getattr(_native, "JwtAuth", None)
+OidcAuth = getattr(_native, "OidcAuth", None)
+VaultAuth = getattr(_native, "VaultAuth", None)
+# Phase 21.B — composite resolver. Always-on; children themselves
+# carry whatever `auth-*` gates they were built under.
+ChainedAuth = getattr(_native, "ChainedAuth", None)
+# Phase 35 — handle returned by ``OidcAuth.watch_mtls_files``.
+# Only present when the wheel was built with the
+# ``auth-mtls-fs-watch`` feature.
+MtlsFsWatcher = getattr(_native, "MtlsFsWatcher", None)
+# Phase 38 — Python facade for the Phase 37 trait-based mTLS
+# identity provider. Operator wraps an
+# ``async def fetch() -> tuple[bytes, bytes] | dict``. Only
+# present when the wheel was built with the
+# ``auth-mtls-identity-provider`` feature.
+MtlsIdentityProvider = getattr(_native, "MtlsIdentityProvider", None)
+MtlsProviderWatcher = getattr(_native, "MtlsProviderWatcher", None)
+# Phase 40 — Python facade for the Phase 39 refresh hook.
+# Returned by ``MtlsFsWatcher.refresh_hook()`` (Phase 35) and
+# ``MtlsProviderWatcher.refresh_hook()`` (Phase 38). Pair with
+# ``OidcAuth.with_mtls_refresh_hook(hook)`` to enable the
+# auto-retry-on-Transport-error layer.
+MtlsRefreshHook = getattr(_native, "MtlsRefreshHook", None)
+
+
+__all__ = [
+    "ChainedAuth",
+    "JwtAuth",
+    "MtlsFsWatcher",
+    "MtlsIdentityProvider",
+    "MtlsProviderWatcher",
+    "MtlsRefreshHook",
+    "OidcAuth",
+    "VaultAuth",
+    "serve_openai",
+    "shutdown_openai",
+]

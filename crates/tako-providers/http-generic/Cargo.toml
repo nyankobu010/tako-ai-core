@@ -1,0 +1,35 @@
+[package]
+name         = "tako-providers-http-generic"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Template-driven generic HTTP provider for tako (foundation for community-contributed adapters)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+reqwest            = { workspace = true }
+url                = { workspace = true }
+
+# Phase 11.B — streaming. `OpenAiSse` variant uses the same SSE parser
+# the OpenAI provider relies on (`eventsource-stream`); `NdJson`
+# variant uses `LinesCodec` from `tokio-util`.
+async-stream       = "0.3"
+bytes              = { workspace = true }
+eventsource-stream = { workspace = true }
+tokio-util         = { workspace = true, features = ["codec"] }
+
+[dev-dependencies]
+wiremock           = { workspace = true }
+tokio              = { workspace = true, features = ["full"] }

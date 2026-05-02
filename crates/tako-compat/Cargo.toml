@@ -1,0 +1,97 @@
+[package]
+name         = "tako-compat"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "OpenAI-compatible HTTP server for tako (Phase 2)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+tako-orchestrator  = { workspace = true }
+async-trait        = { workspace = true }
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+anyhow             = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+axum               = { workspace = true }
+tower              = { workspace = true }
+tower-http         = { workspace = true }
+hyper              = { workspace = true }
+# Phase 14.B — optional auth providers. Defaults stay off so existing
+# `StaticTokens`-only deployments see no new transitive deps.
+# Phase 41: bumped 9.3 -> 10.3 to clear GHSA-vfgw-wj55-mp36 (Type
+# Confusion → potential authorization bypass). 10.x retains the PEM
+# helper functions (`from_rsa_pem` / `from_ec_pem` / `from_ed_pem`)
+# but moves them behind the `use_pem` feature, and requires explicit
+# selection of a `CryptoProvider` (`rust_crypto` keeps the pure-Rust
+# crypto stack — no OpenSSL / aws-lc-rs system dep). With both
+# features pinned, call sites remain identical to the 9.x API.
+jsonwebtoken       = { version = "10.3", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
+reqwest            = { workspace = true, optional = true }
+vaultrs            = { version = "0.7", optional = true }
+# Phase 15.B.2 — `url::form_urlencoded` for manual RFC 7662 body
+# construction (workspace `reqwest` is built without `urlencoded`).
+url                = { workspace = true, optional = true }
+# Phase 35 — cross-platform filesystem watcher behind the
+# `mtls-fs-watch` feature. Off by default; only operators wiring
+# `OidcAuthResolver::watch_mtls_files` pay for the dep.
+notify             = { workspace = true, optional = true }
+# Phase 37 — X.509 cert parsing behind the
+# `mtls-identity-provider` feature. Off by default; only
+# operators wiring `OidcAuthResolver::watch_mtls_provider` pay
+# for the dep.
+x509-parser        = { workspace = true, optional = true }
+
+[features]
+# Phase 14.B feature gates. Each enables one `AuthResolver` impl.
+jwt   = ["dep:jsonwebtoken"]
+# OIDC = JWT + JWKS rotation + discovery doc; reuses the JWT decoder.
+oidc  = ["jwt", "dep:reqwest", "dep:url"]
+# Phase 15.B.1 — Vault providers (AppRole / Kubernetes) post directly
+# to Vault auth endpoints via reqwest, so the `vault` feature now also
+# pulls in reqwest.
+vault = ["dep:vaultrs", "dep:reqwest"]
+# Phase 35 — opt-in filesystem-watcher integration for OIDC mTLS
+# cert/key auto-reload. Requires `oidc` (the watcher only makes sense
+# if mTLS introspection is wired up). Default `tako-compat` build is
+# unchanged.
+mtls-fs-watch = ["oidc", "dep:notify"]
+# Phase 37 — opt-in trait-based identity provider for proactive
+# expiry-driven mTLS cert refresh. Requires `oidc` (the provider
+# only makes sense if mTLS introspection is wired up). Adds
+# `x509-parser` for cert NotAfter parsing.
+mtls-identity-provider = ["oidc", "dep:x509-parser"]
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["full"] }
+reqwest            = { workspace = true }
+wiremock           = { workspace = true }
+tempfile           = "3"
+# Phase 42 — OIDC mTLS end-to-end integration test
+# (`tests/oidc_mtls_e2e.rs`, gated to `feature = "oidc"`).
+# Generates a per-test CA + server cert + client cert via
+# `rcgen`, spins up an `axum-server` with `rustls` configured
+# in `RequireAndVerifyClientCert` mode, and runs a real mTLS
+# handshake against the resolver's introspection client.
+# Pinning matches `tako-mcp` Phase 5.B mTLS coverage so both
+# crates share crypto-provider install logic.
+rcgen              = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+axum-server        = { version = "0.8", default-features = false, features = ["tls-rustls"] }
+rustls             = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+# Sign per-test JWTs with a fresh RS256 keypair; matches the
+# Phase 41 jsonwebtoken 10.3 main-dep pin so the dev-dep does
+# not pull a second copy.
+jsonwebtoken       = { version = "10.3", default-features = false, features = ["rust_crypto", "use_pem"] }
+# Sign the JWKS-published RSA key. `rsa` 0.9 emits PKCS#8 PEM
+# that `jsonwebtoken::EncodingKey::from_rsa_pem` accepts; the
+# JWK side reuses the same `n`/`e` modulus.
+rsa                = { version = "0.9", features = ["pem"] }
+base64             = "0.22"

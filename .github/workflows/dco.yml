@@ -1,0 +1,30 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco:
+    name: Developer Certificate of Origin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # tim-actions/dco@v1.1.0 needs the PR's commit list fed to it
+      # explicitly via tim-actions/get-pr-commits; otherwise it crashes
+      # with "Unexpected end of JSON input".
+      - name: Get PR commits
+        id: pr-commits
+        uses: tim-actions/get-pr-commits@v1.3.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify DCO sign-off on every commit
+        uses: tim-actions/dco@v1.1.0
+        with:
+          commits: ${{ steps.pr-commits.outputs.commits }}

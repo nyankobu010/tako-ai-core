@@ -1,0 +1,38 @@
+[package]
+name         = "tako-orchestrator"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Orchestrators for tako: SingleAgent (Phase 1), Conductor/Trinity/AbMcts/SelfCaller (later phases)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core          = { workspace = true }
+tako-runtime       = { workspace = true }
+tako-mcp          = { workspace = true }
+async-trait        = { workspace = true }
+async-stream       = "0.3"
+futures            = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+sha2               = "0.10"
+regex              = { workspace = true }
+rand               = { workspace = true }
+# Optional ONNX dependency for `OnnxRouter`. Enable via `--features onnx`.
+ort                = { workspace = true, optional = true }
+ndarray            = { workspace = true, optional = true }
+
+[features]
+default = []
+onnx    = ["dep:ort", "dep:ndarray"]
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["full"] }
+tako-governance    = { workspace = true }

@@ -1,0 +1,33 @@
+[package]
+name         = "tako-providers-bedrock"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Amazon Bedrock provider for tako (Converse API)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tako-core              = { workspace = true }
+async-trait            = { workspace = true }
+futures                = { workspace = true }
+tokio                  = { workspace = true }
+tracing                = { workspace = true }
+thiserror              = { workspace = true }
+serde                  = { workspace = true }
+serde_json             = { workspace = true }
+aws-config             = { workspace = true }
+aws-sdk-bedrockruntime = { workspace = true }
+aws-smithy-types       = "1"
+async-stream           = "0.3"
+# Phase 28.A — opt-in tako-side URL-source image pre-fetch.
+reqwest                = { workspace = true }
+# Phase 32.A — CIDR allowlist for URL pre-fetch.
+ipnet                  = { workspace = true }
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["full"] }
+wiremock           = { workspace = true }
