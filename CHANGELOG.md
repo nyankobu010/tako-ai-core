@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.38.0] - 2026-05-02
+
+Phase 37 — trait-based `MtlsIdentityProvider` for proactive
+expiry-driven cert refresh. Carry-forward strategy (1-of-2-
+remaining) from [plans/PLAN_PHASE33.md](plans/PLAN_PHASE33.md):
+operators with non-filesystem mTLS rotation (HSM-backed keys,
+in-memory secret stores, SPIFFE Workload API, AWS IAM Roles
+Anywhere) now opt in to the new `mtls-identity-provider` cargo
+feature, implement the `MtlsIdentityProvider` async trait, and
+call `OidcAuthResolver::watch_mtls_provider(provider)` once at
+startup. The returned `MtlsProviderWatcher` handle holds a
+background tokio task that fetches a fresh identity, parses the
+cert's `NotAfter`, and re-fetches at 80% of the validity window.
+Plan: [plans/PLAN_PHASE37.md](plans/PLAN_PHASE37.md).
+
+### Added
+
+- **`tako-compat`: `MtlsIdentityProvider` async trait + proactive
+  expiry-driven refresh.** New optional cargo feature
+  `mtls-identity-provider` ships:
+  - Public `MtlsIdentityProvider` async trait whose `fetch()`
+    method yields a `MtlsIdentity { cert_pem, key_pem }`
+    PEM-pair.
+  - `OidcAuthResolver::watch_mtls_provider(provider)` builder
+    spawning a background task that re-fetches at 80% of the
+    cert's parsed validity window (clamped to `[60s, 24h]`).
+  - `MtlsProviderWatcher` handle whose `Drop` impl /
+    `shutdown().await` stops the task cleanly.
+  - `x509-parser` dep (behind the new feature) for cert
+    `NotAfter` parsing. Default `tako-compat` build is
+    unchanged.
+- **`MtlsClient::current()` widening from Phase 35** is reused
+  by the Phase 37 tests for `Arc::as_ptr` snapshot comparison.
+
+### Notes
+
+- Python facade for `MtlsIdentityProvider` is **deferred** to
+  Phase 38+ because of async-trait-from-Python ergonomics.
+  Python-wheel operators continue to use the Phase 35
+  filesystem watcher (`OidcAuth.watch_mtls_files`).
+- Fetch errors retry on a 60s backoff; the previously installed
+  Client stays in place per Phase 33 semantics. No bootstrap
+  reload — the resolver requires a synchronous
+  `with_introspection_mtls(...)` call before
+  `watch_mtls_provider`, so the running server always has a
+  valid identity before the first background fetch lands.
+
 ## [0.37.0] - 2026-05-02
 
 Phase 36 — per-child `ChainedAuthResolver` short-circuit policy
@@ -4223,7 +4270,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.34.0...v0.35.0

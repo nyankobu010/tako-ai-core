@@ -75,6 +75,69 @@ with oidc.watch_mtls_files(cert_path, key_path) as watcher:
 
 `watcher.shutdown()` is also available for explicit teardown.
 
+## Trait-based identity provider (HSM, in-memory stores)
+
+The Phase 35 filesystem watcher works for cert-manager /
+kubernetes-secret-mount / Vault PKI patterns where the
+cert+key live on disk. For deployments where they don't,
+Phase 37 ships a `MtlsIdentityProvider` async trait. Operators
+implement `fetch()` to return fresh PEM bytes from wherever
+the cert lives — HSM, in-memory secret store, SPIFFE Workload
+API, AWS IAM Roles Anywhere, etc.
+
+This is currently a **Rust-only** API; Python facade is
+deferred to Phase 38+.
+
+```rust
+use std::sync::Arc;
+use tako_compat::{MtlsIdentity, MtlsIdentityProvider, OidcAuthResolver};
+use tako_core::TakoError;
+
+#[derive(Debug)]
+struct SpiffeWorkloadProvider { /* ... */ }
+
+#[async_trait::async_trait]
+impl MtlsIdentityProvider for SpiffeWorkloadProvider {
+    async fn fetch(&self) -> Result<MtlsIdentity, TakoError> {
+        // Call out to spiffe-workload-api / HSM / vault.
+        let (cert_pem, key_pem) = self.fetch_svid().await?;
+        Ok(MtlsIdentity { cert_pem, key_pem })
+    }
+}
+
+let oidc = Arc::new(
+    OidcAuthResolver::discover("https://issuer.example.com", "my-api")
+        .await?
+        .with_introspection("my-api", None)?
+        .with_introspection_mtls(initial_cert, initial_key)?,
+);
+let provider: Arc<dyn MtlsIdentityProvider> = Arc::new(SpiffeWorkloadProvider::new());
+let _watcher = oidc.clone().watch_mtls_provider(provider)?;
+```
+
+Build the crate with the `mtls-identity-provider` feature:
+
+```toml
+[dependencies]
+tako-compat = { version = "0.38", features = ["mtls-identity-provider"] }
+```
+
+Behaviour:
+
+- **Refresh schedule** is driven by the returned cert's parsed
+  `NotAfter`: tako sleeps `(NotAfter - now) * 0.8` (clamped to
+  `[60s, 24h]`), then re-calls `fetch()`. Matches industry
+  convention (cert-manager, SPIRE workload SVIDs).
+- **Fetch errors** retry on a 60s backoff. The previously
+  installed Client stays in place per Phase 33 semantics.
+- **Unparseable cert** falls back to a 1-hour refresh
+  interval; the reload itself can still succeed (rustls and
+  `x509-parser` may disagree on edge cases).
+- **No bootstrap reload.** The resolver was already configured
+  with `with_introspection_mtls(initial_cert, initial_key)`,
+  so the running server has a valid identity until the first
+  background `fetch()` lands.
+
 ## Hand-rolled (no `auth-mtls-fs-watch`)
 
 If you need to rotate without pulling in the `notify` dep —
