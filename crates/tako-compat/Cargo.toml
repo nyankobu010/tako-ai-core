@@ -37,6 +37,11 @@ url                = { workspace = true, optional = true }
 # `mtls-fs-watch` feature. Off by default; only operators wiring
 # `OidcAuthResolver::watch_mtls_files` pay for the dep.
 notify             = { workspace = true, optional = true }
+# Phase 37 — X.509 cert parsing behind the
+# `mtls-identity-provider` feature. Off by default; only
+# operators wiring `OidcAuthResolver::watch_mtls_provider` pay
+# for the dep.
+x509-parser        = { workspace = true, optional = true }
 
 [features]
 # Phase 14.B feature gates. Each enables one `AuthResolver` impl.
@@ -52,6 +57,11 @@ vault = ["dep:vaultrs", "dep:reqwest"]
 # if mTLS introspection is wired up). Default `tako-compat` build is
 # unchanged.
 mtls-fs-watch = ["oidc", "dep:notify"]
+# Phase 37 — opt-in trait-based identity provider for proactive
+# expiry-driven mTLS cert refresh. Requires `oidc` (the provider
+# only makes sense if mTLS introspection is wired up). Adds
+# `x509-parser` for cert NotAfter parsing.
+mtls-identity-provider = ["oidc", "dep:x509-parser"]
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }
