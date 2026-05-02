@@ -60,13 +60,14 @@ synopsis and quickstart.
 | 39 — Auto refresh-on-handshake-failure for OIDC mTLS | v0.40.0 | done (2026-05-02) | [plans/PLAN_PHASE39.md](plans/PLAN_PHASE39.md) | [`## [0.40.0]`](CHANGELOG.md) |
 | 40 — Python facade for MtlsRefreshHook | v0.41.0 | done (2026-05-02) | [plans/PLAN_PHASE40.md](plans/PLAN_PHASE40.md) | [`## [0.41.0]`](CHANGELOG.md) |
 | 41 — Security: jsonwebtoken 9.3 → 10.3 bump | v0.42.0 | done (2026-05-02) | [plans/PLAN_PHASE41.md](plans/PLAN_PHASE41.md) | [`## [0.42.0]`](CHANGELOG.md) |
+| 42 — OIDC mTLS end-to-end integration test | v0.43.0 | done (2026-05-02) | [plans/PLAN_PHASE42.md](plans/PLAN_PHASE42.md) | [`## [0.43.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 42 candidates (indicative, not yet committed)
+### Phase 43 candidates (indicative, not yet committed)
 
 After Phase 41 the dependabot security backlog is empty (the
 jsonwebtoken Type-Confusion advisory is closed; the three
@@ -75,8 +76,11 @@ documented in [`.cargo/audit.toml`](.cargo/audit.toml) and
 dismissed on the dependabot side). After Phase 40 the entire
 Phase 33 mTLS rotation surface — Rust core (Phases
 33/35/37/39) plus Python facade (Phases 35.B / 38 / 40) —
-is feature-complete. The remaining items are broader-
-roadmap work:
+is feature-complete. After Phase 42 the OIDC mTLS surface
+also has end-to-end test coverage (real `rcgen` per-test CA
++ `axum-server` rustls + `RequireAndVerifyClientCert`
+handshake + full `resolve()` round-trip). The remaining
+items are broader-roadmap work:
 - **Wildcard at non-leftmost positions** — patterns like
   `registry.*.corp` (wildcard in middle). Phase 31 ships only
   the leftmost-`*.` convention. Probably never worth shipping
@@ -85,10 +89,15 @@ roadmap work:
   per-rule BYPASSes of the blocklist. A strict mode would
   REQUIRE every URL host to match an allowlist entry. No
   operator ask yet.
-- **OIDC mTLS end-to-end integration test** — Phases 24 + 25
-  ship builder-level tests; a real TLS server requiring client
-  auth (axum-server + rustls + per-test CA) would close the
-  loop. ~300 lines of test infra.
+- **Custom CA support for non-introspection endpoints
+  (JWKS, discovery)**. Phase 42 ships custom CA injection
+  for the introspection mTLS client (`with_introspection_mtls_extra_root`);
+  the resolver-wide HTTP client used for discovery + JWKS is
+  built inside `discover()` with no public injection point.
+  Adding a `with_extra_root_ca` builder for the resolver-wide
+  client is a larger ask (touches discovery boot path,
+  `discover()` signature, `Client` lifecycle). Defer until an
+  operator with a fully-private OIDC issuer asks.
 - **Vertex File API upload flow** — separate API surface; the
   Phase 23 `VxFileData` already accepts uploaded URIs.
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —

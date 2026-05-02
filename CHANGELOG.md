@@ -9,6 +9,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.43.0] - 2026-05-02
+
+Phase 42 — closes the "OIDC mTLS end-to-end integration test"
+backlog item from [PLAN.md](PLAN.md). Six prior phases shipped
+the mTLS introspection surface (Phases 24, 25, 33, 35, 37, 39),
+but every existing test was builder-level: PEM parsing,
+auth-method enum routing, `Arc<MtlsClient>` construction. None
+exercised an actual mTLS handshake against a server requiring
+client cert auth. Phase 42 lifts the `tako-mcp` Phase 5.B mTLS
+test pattern (`rcgen` + per-test CA + `rustls`-backed
+`axum-server`) into `tako-compat` and runs the full
+`OidcAuthResolver::resolve(token)` path on the wire.
+Plan: [plans/PLAN_PHASE42.md](plans/PLAN_PHASE42.md).
+
+### Added
+
+- **`OidcAuthResolver::with_introspection_mtls_extra_root`** —
+  identical to the existing
+  [`with_introspection_mtls`](crates/tako-compat/src/auth/oidc.rs)
+  builder but accepts an operator-supplied PEM-encoded root CA
+  bundle that's added to the underlying `reqwest::Client`'s
+  trust store. For enterprise self-hosted OIDC issuers
+  (Keycloak / Auth0 self-hosted / Authentik) presenting a
+  server cert signed by a private internal CA. Concatenated
+  multi-cert PEM bundles (root + intermediates) work via
+  `reqwest::Certificate::from_pem_bundle`. PEM parse failures
+  surface as `TakoError::Invalid` at builder time — no runtime
+  surprises. The CA bundle is persisted on
+  `IntrospectionConfig::extra_root_ca_pem` so subsequent
+  `reload_mtls_identity` calls (and the rotation surfaces in
+  Phases 35 / 37 / 39 that route through it) re-apply the same
+  trust roots when rebuilding the mTLS client after a cert/key
+  swap.
+- **`OidcAuthResolver::with_introspection_self_signed_mtls_extra_root`**
+  — RFC 8705 §2.2 sibling of the above. Same wire shape, same
+  CA-persistence, only the `auth_method` enum variant differs
+  (`SelfSignedTlsClientAuth`).
+- **`IntrospectionConfig::extra_root_ca_pem`** — public field
+  (`Option<Arc<Vec<u8>>>`) holding the operator-supplied trust
+  bundle. Visible to the rotation surfaces; `None` for the
+  default (public-CA) case.
+
+### Tests
+
+- **`crates/tako-compat/tests/oidc_mtls_e2e.rs`** — five new
+  integration tests exercising the full OIDC mTLS introspection
+  flow on the wire:
+    - `mtls_round_trip_succeeds_with_extra_root` — full
+      happy-path: discovery → JWKS → JWT validation → mTLS POST
+      `/introspect` → `active=true` → `Principal` returned.
+    - `mtls_handshake_fails_when_extra_root_not_configured` —
+      mTLS client built without the extra CA → server cert is
+      not trusted → handshake aborts → `TakoError::Transport`.
+    - `mtls_handshake_fails_when_client_cert_missing` —
+      resolver wired through the **non-mTLS** path → server's
+      `RequireAndVerifyClientCert` policy aborts the handshake
+      → resolve fails before introspection succeeds.
+    - `self_signed_mtls_extra_root_round_trip_succeeds` — same
+      happy-path using the `_self_signed_` builder.
+    - `extra_root_unparseable_pem_errors_at_builder_time` —
+      garbage CA bytes fail-closed synchronously at builder
+      time, not at first-request time.
+- **6 new lib tests** in `crates/tako-compat/src/auth/oidc.rs`
+  cover the `_extra_root` builder happy/error paths AND the
+  rotation-preserves-extra-root invariant.
+
+### Internal
+
+- New private helper `build_mtls_reqwest_client(cert, key,
+  extra_root)` in `oidc.rs` — extracted from the per-builder
+  bodies so the four mTLS Client-construction code paths
+  (`with_introspection_mtls`,
+  `with_introspection_self_signed_mtls`, the two new
+  `_extra_root` siblings, plus `reload_mtls_identity`) share
+  one implementation. No behavior change for the default
+  (public-CA) case.
+
+### Dev-deps
+
+- `rcgen` 0.14, `axum-server` 0.8 (`tls-rustls`), `rustls`
+  0.23 (`aws_lc_rs`), `jsonwebtoken` 10.3 (matching the Phase
+  41 main-dep pin), `rsa` 0.9, `base64` 0.22 — all under
+  `tako-compat` `[dev-dependencies]`, gated to the `oidc`
+  feature flag. No runtime dep changes. PEM parsing in the
+  test uses `rustls::pki_types::pem::PemObject` (already a
+  transitive dep via `rustls`) to avoid the unmaintained
+  `rustls-pemfile` (RUSTSEC-2025-0134).
+
 ## [0.42.0] - 2026-05-02
 
 Phase 41 — security fix: bump `jsonwebtoken` from 9.3 to 10.3
