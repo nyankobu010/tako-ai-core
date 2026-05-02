@@ -54,13 +54,14 @@ synopsis and quickstart.
 | 33 — OIDC mTLS cert/key rotation | v0.34.0 | done (2026-05-02) | [plans/PLAN_PHASE33.md](plans/PLAN_PHASE33.md) | [`## [0.34.0]`](CHANGELOG.md) |
 | 34 — Public-release prep, tech-debt + docs sweep | v0.35.0 | done (2026-05-02) | [plans/PLAN_PHASE34.md](plans/PLAN_PHASE34.md) | [`## [0.35.0]`](CHANGELOG.md) |
 | 35 — OIDC mTLS filesystem-watcher auto-reload | v0.36.0 | done (2026-05-02) | [plans/PLAN_PHASE35.md](plans/PLAN_PHASE35.md) | [`## [0.36.0]`](CHANGELOG.md) |
+| 36 — Per-child ChainedAuthResolver short-circuit policy | v0.37.0 | done (2026-05-02) | [plans/PLAN_PHASE36.md](plans/PLAN_PHASE36.md) | [`## [0.37.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 36 candidates (indicative, not yet committed)
+### Phase 37 candidates (indicative, not yet committed)
 
 Carry-forward items. The two remaining Phase 33 mTLS-rotation
 strategies (1) and (2) still stand; (3) shipped in Phase 35.
@@ -96,8 +97,9 @@ strategies (1) and (2) still stand; (3) shipped in Phase 35.
   token *consumer* rather than validator.
 - **`TakoError::Provider` short-circuit** — vendor-error
   short-circuit warrants finer discrimination on the embedded
-  error.
-- **Per-child `ChainedAuthResolver` policy override.**
+  error. The Phase 36 per-child override surface is the natural
+  place to land a `ChildShortCircuitPolicy::ProviderClassify(_)`
+  variant once the discrimination is designed.
 
 ### Beyond (speculative)
 

@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.37.0] - 2026-05-02
+
+Phase 36 — per-child `ChainedAuthResolver` short-circuit policy
+override. Operators wiring composite auth chains can now mark
+individual children as Inherit / AlwaysFallThrough /
+TransportOnly / AllInfrastructure independent of the chain-wide
+Phase 26 / 27 flag. Common pattern: chain-wide
+`with_short_circuit_on_infrastructure_errors` plus a final
+in-process static-tokens child marked `AlwaysFallThrough` so a
+spurious infra error from the tail doesn't strand the chain.
+Plan: [plans/PLAN_PHASE36.md](plans/PLAN_PHASE36.md).
+
+### Added
+
+- **`tako-compat`: per-child `ChainedAuthResolver` short-circuit
+  policy override.** New public
+  `tako_compat::ChildShortCircuitPolicy` enum
+  (`Inherit` / `AlwaysFallThrough` / `TransportOnly` /
+  `AllInfrastructure`) plus
+  `ChainedAuthResolver::then_with_short_circuit(child, policy)`
+  builder. Override priority: when a child's policy is anything
+  other than `Inherit`, that policy alone determines whether the
+  child's error halts the chain — the chain-wide flag is ignored
+  for this child. Existing `then(child)` keeps Phase 21 cadence
+  byte-for-byte (defaults to `Inherit`). Python facade:
+  `ChainedAuth.then_with_short_circuit(child, policy)` accepts
+  `"inherit"` / `"always_fall_through"` / `"transport_only"` /
+  `"all_infrastructure"` (case-insensitive; kebab-case variants
+  also accepted). Unknown policy strings raise `ValueError`
+  listing the accepted aliases.
+
+### Changed
+
+- `docs/recipes/chained_auth.md` — adds a "Per-child policy
+  override" section with the OIDC + JWT + static-tail mixed
+  policy example.
+
 ## [0.36.0] - 2026-05-02
 
 Phase 35 — OIDC mTLS filesystem-watcher auto-reload. Carry-forward
@@ -4186,7 +4223,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.33.0...v0.34.0
