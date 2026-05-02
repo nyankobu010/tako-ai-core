@@ -23,6 +23,8 @@ mod sse;
 
 #[cfg(feature = "jwt")]
 pub use auth::JwtAuthResolver;
+#[cfg(feature = "mtls-fs-watch")]
+pub use auth::MtlsFsWatcher;
 #[cfg(feature = "vault")]
 pub use auth::VaultAuthResolver;
 #[cfg(feature = "vault")]
@@ -32,5 +34,5 @@ pub use auth::{
 };
 pub use auth::{AuthResolver, ChainedAuthResolver, StaticTokens};
 #[cfg(feature = "oidc")]
-pub use auth::{IntrospectionAuthMethod, IntrospectionConfig, OidcAuthResolver};
+pub use auth::{IntrospectionAuthMethod, IntrospectionConfig, MtlsClient, OidcAuthResolver};
 pub use server::{ServeConfig, serve_openai};

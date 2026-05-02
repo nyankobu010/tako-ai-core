@@ -32,7 +32,12 @@ pub use jwt::JwtAuthResolver;
 #[cfg(feature = "oidc")]
 mod oidc;
 #[cfg(feature = "oidc")]
-pub use oidc::{IntrospectionAuthMethod, IntrospectionConfig, OidcAuthResolver};
+pub use oidc::{IntrospectionAuthMethod, IntrospectionConfig, MtlsClient, OidcAuthResolver};
+
+#[cfg(feature = "mtls-fs-watch")]
+mod oidc_mtls_watcher;
+#[cfg(feature = "mtls-fs-watch")]
+pub use oidc_mtls_watcher::MtlsFsWatcher;
 
 #[cfg(feature = "vault")]
 mod vault;
