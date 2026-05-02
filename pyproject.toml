@@ -10,7 +10,7 @@ build-backend = "maturin"
 # publish under `tako-ai-core` to match the GitHub repo and the PyPI
 # Trusted Publisher configuration.
 name = "tako-ai-core"
-version = "0.51.0"
+version = "0.51.1"
 description = "Rust-core, Python-facade framework for enterprise agentic systems."
 readme = "README.md"
 license = { text = "Apache-2.0" }

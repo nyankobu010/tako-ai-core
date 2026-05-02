@@ -33,12 +33,12 @@ agree** at release time:
 
    ```bash
    # Update workspace + internal pins
-   sed -i '' 's/version = "0\.50\.0"/version = "0.51.0"/g' Cargo.toml
-   sed -i '' 's/version      = "0\.50\.0"/version      = "0.51.0"/g' Cargo.toml
-   sed -i '' 's/version = "0\.50\.0"/version = "0.51.0"/g' pyproject.toml
+   sed -i '' 's/version = "0\.51\.0"/version = "0.51.1"/g' Cargo.toml
+   sed -i '' 's/version      = "0\.51\.0"/version      = "0.51.1"/g' Cargo.toml
+   sed -i '' 's/version = "0\.51\.0"/version = "0.51.1"/g' pyproject.toml
    # Update python facade
-   sed -i '' 's/__version__ = "0\.50\.0"/__version__ = "0.51.0"/' python/tako/__init__.py
-   sed -i '' 's/"0\.50\.0"/"0.51.0"/g' tests/python/test_smoke.py
+   sed -i '' 's/__version__ = "0\.51\.0"/__version__ = "0.51.1"/' python/tako/__init__.py
+   sed -i '' 's/"0\.51\.0"/"0.51.1"/g' tests/python/test_smoke.py
 
    cargo check --workspace   # regenerates Cargo.lock
    ```
@@ -61,8 +61,8 @@ agree** at release time:
    ```bash
    git checkout main
    git pull origin main
-   git tag -a v0.51.0 -m "v0.51.0"
-   git push origin v0.51.0
+   git tag -a v0.51.1 -m "v0.51.1"
+   git push origin v0.51.1
    ```
 
 6. **CI takes over**. The
@@ -82,7 +82,7 @@ agree** at release time:
 
    ```bash
    # Wait ~1-5 min for PyPI to index, then:
-   pip install --upgrade tako-ai-core==0.51.0
+   pip install --upgrade tako-ai-core==0.51.1
    python -c "import tako; print(tako.__version__)"
    ```
 
