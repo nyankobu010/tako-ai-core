@@ -74,6 +74,7 @@ use tako_core::{Principal, TakoError};
 use tokio::sync::RwLock;
 
 use super::AuthResolver;
+use super::oidc_mtls_hook::MtlsRefreshHook;
 
 const DEFAULT_TENANT_CLAIM: &str = "tenant_id";
 const DEFAULT_USER_CLAIM: &str = "sub";
@@ -407,6 +408,12 @@ pub struct OidcAuthResolver {
     /// Phase 15.B.2 — when `Some`, every signature-validated token is
     /// additionally POSTed for an `active=true` check.
     introspection: Option<IntrospectionConfig>,
+    /// Phase 39 — wired by [`Self::with_mtls_refresh_hook`].
+    /// When set AND mTLS is configured AND the introspection
+    /// POST fails with `TakoError::Transport`, the retry layer
+    /// triggers an out-of-band reload via the hook and re-sends
+    /// the POST exactly once.
+    mtls_refresh_hook: Option<super::oidc_mtls_hook::MtlsRefreshHook>,
 }
 
 impl std::fmt::Debug for OidcAuthResolver {
@@ -465,6 +472,7 @@ impl OidcAuthResolver {
                 .introspection_endpoint_auth_methods_supported,
             discovered_end_session_uri: doc.end_session_endpoint,
             introspection: None,
+            mtls_refresh_hook: None,
         })
     }
 
@@ -852,6 +860,7 @@ impl OidcAuthResolver {
             discovered_introspection_auth_methods: None,
             discovered_end_session_uri: None,
             introspection: None,
+            mtls_refresh_hook: None,
         }
     }
 
@@ -879,6 +888,34 @@ impl OidcAuthResolver {
         self.introspection
             .as_ref()
             .and_then(|cfg| cfg.mtls_client.clone())
+    }
+
+    /// Phase 39 — wire a refresh hook from a Phase 35
+    /// [`MtlsFsWatcher`](super::oidc_mtls_watcher::MtlsFsWatcher)
+    /// or Phase 37
+    /// [`MtlsProviderWatcher`](super::oidc_mtls_provider::MtlsProviderWatcher)
+    /// so the introspection POST can trigger an out-of-band
+    /// reload on a transport-error retry.
+    ///
+    /// When wired AND mTLS introspection is configured, the
+    /// retry layer:
+    ///
+    /// 1. Sees a [`TakoError::Transport`] from the
+    ///    introspection POST.
+    /// 2. Calls [`MtlsRefreshHook::force_refresh`] (capped
+    ///    at 2s).
+    /// 3. Re-sends the POST exactly once.
+    ///
+    /// Cycle-detection is structural: at most one retry per
+    /// introspection call.
+    ///
+    /// Idempotent. Last-write-wins. `None` (the default) keeps
+    /// the Phase 24 / 25 / 33 / 34 byte-for-byte cadence —
+    /// transport errors propagate to the caller without
+    /// retry.
+    pub fn with_mtls_refresh_hook(mut self, hook: MtlsRefreshHook) -> Self {
+        self.mtls_refresh_hook = Some(hook);
+        self
     }
 
     /// Phase 18.B — return the OIDC Session Management 1.0
@@ -1055,6 +1092,67 @@ impl OidcAuthResolver {
             }
             form.finish()
         };
+        // Phase 39 — refactor the request build + send into a
+        // helper so the retry layer can rebuild the request
+        // (reqwest::RequestBuilder is consumed by `.send`)
+        // with a fresh `MtlsClient::current()` snapshot after a
+        // forced reload.
+        let resp = match self.introspect_send_once(cfg, &body).await {
+            Ok(r) => r,
+            Err(e) if should_retry_with_refresh(&e, cfg, &self.mtls_refresh_hook) => {
+                tracing::warn!(
+                    error = %e,
+                    "oidc.introspect: transport error on mTLS POST; triggering refresh + retry"
+                );
+                if let Some(hook) = &self.mtls_refresh_hook
+                    && let Err(refresh_err) = hook.force_refresh().await
+                {
+                    // Refresh failed (timeout / source dropped /
+                    // reload error). Log and continue — the
+                    // retry will see whatever Client is
+                    // currently installed; if it's still bad
+                    // the retry's own Transport error
+                    // propagates.
+                    tracing::warn!(
+                        error = %refresh_err,
+                        "oidc.introspect: force_refresh failed; retrying with current client anyway"
+                    );
+                }
+                self.introspect_send_once(cfg, &body).await?
+            }
+            Err(e) => return Err(e),
+        };
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(TakoError::Invalid(format!(
+                "oidc: introspect endpoint returned {status}: {body}"
+            )));
+        }
+        let parsed: IntrospectionResponse = resp
+            .json()
+            .await
+            .map_err(|e| TakoError::Invalid(format!("oidc: introspect response parse: {e}")))?;
+        if !parsed.active {
+            return Err(TakoError::Invalid(
+                "oidc: token revoked (introspection `active=false`)".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Phase 39 — single attempt at the introspection POST.
+    /// Snapshots the current `MtlsClient` (Phase 24/25/33) so a
+    /// concurrent reload via
+    /// [`Self::reload_mtls_identity`] doesn't tear an in-flight
+    /// request. Re-callable by the retry layer in
+    /// [`Self::introspect`] to issue a second attempt with a
+    /// freshly-snapshotted Client after a forced refresh.
+    async fn introspect_send_once(
+        &self,
+        cfg: &IntrospectionConfig,
+        body: &str,
+    ) -> Result<reqwest::Response, TakoError> {
         // Phase 24 / 25 / 33 — for either mTLS variant, snapshot
         // the current mTLS-enabled `reqwest::Client` from the
         // swap-able [`MtlsClient`] holder. Snapshot lives for
@@ -1076,7 +1174,7 @@ impl OidcAuthResolver {
                 reqwest::header::CONTENT_TYPE,
                 "application/x-www-form-urlencoded",
             )
-            .body(body);
+            .body(body.to_string());
         let req = match cfg.auth_method {
             IntrospectionAuthMethod::ClientSecretBasic => {
                 if let Some(secret) = &cfg.client_secret {
@@ -1094,26 +1192,9 @@ impl OidcAuthResolver {
             | IntrospectionAuthMethod::TlsClientAuth
             | IntrospectionAuthMethod::SelfSignedTlsClientAuth => req,
         };
-        let resp = req.send().await.map_err(|e| {
+        req.send().await.map_err(|e| {
             TakoError::Transport(format!("oidc: introspect POST {}: {e}", cfg.introspect_uri))
-        })?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(TakoError::Invalid(format!(
-                "oidc: introspect endpoint returned {status}: {body}"
-            )));
-        }
-        let parsed: IntrospectionResponse = resp
-            .json()
-            .await
-            .map_err(|e| TakoError::Invalid(format!("oidc: introspect response parse: {e}")))?;
-        if !parsed.active {
-            return Err(TakoError::Invalid(
-                "oidc: token revoked (introspection `active=false`)".into(),
-            ));
-        }
-        Ok(())
+        })
     }
 
     /// Returns a JWKS guaranteed to be no older than `refresh_interval`.
@@ -1276,6 +1357,31 @@ fn make_jti() -> String {
 /// `client_secret` (Phase 17.B `client_secret_jwt`) or RS256 / ES256
 /// / EdDSA over an asymmetric private key (Phase 18.A
 /// `private_key_jwt`).
+/// Phase 39 — predicate for whether a failed
+/// [`OidcAuthResolver::introspect_send_once`] should trigger a
+/// forced refresh + retry.
+///
+/// Three conditions must all hold:
+/// 1. The error is [`TakoError::Transport`] — TLS handshake
+///    failures, DNS resolution failures, connection resets all
+///    surface here per the helper's `map_err`.
+/// 2. A `MtlsRefreshHook` is configured (operator paired the
+///    resolver with a Phase 35 watcher or Phase 37 provider).
+/// 3. The active introspection auth method actually uses an
+///    `MtlsClient` — otherwise the refresh has nothing to fix.
+///
+/// All three reduce to a quick guard at the call site so the
+/// retry path stays self-contained and the byte-for-byte Phase
+/// 24 / 25 / 33 / 34 cadence is preserved when any condition
+/// is unmet.
+fn should_retry_with_refresh(
+    e: &TakoError,
+    cfg: &IntrospectionConfig,
+    hook: &Option<MtlsRefreshHook>,
+) -> bool {
+    matches!(e, TakoError::Transport(_)) && hook.is_some() && cfg.mtls_client.is_some()
+}
+
 fn build_client_assertion(
     client_id: &str,
     audience: &str,
@@ -1378,6 +1484,7 @@ mod tests {
             discovered_introspection_auth_methods: None,
             discovered_end_session_uri: None,
             introspection: None,
+            mtls_refresh_hook: None,
         }
     }
 
@@ -2728,5 +2835,209 @@ h7ACptP3tF94pcBzOgJ3bhM=\n\
 
         let post = holder.current();
         assert!(!Arc::ptr_eq(&pre, &post));
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 39 — auto refresh-on-handshake-failure: predicate +
+    // retry-layer tests.
+    //
+    // The end-to-end "first POST fails with TLS error, force_refresh
+    // fires, second POST succeeds" path is hard to drive against
+    // wiremock (which serves plain HTTP — `reqwest::Identity` mismatch
+    // doesn't surface as a clean Transport error in a way we can race
+    // a refresh hook against). Instead we test the retry layer by
+    // pointing the introspection URI at an unbound port (every POST
+    // returns Transport) and verifying:
+    //
+    // - The hook IS invoked when retry conditions are met (mTLS +
+    //   refresh hook).
+    // - The hook is NOT invoked when conditions are unmet (no hook,
+    //   no mTLS).
+    // - The retry's second Transport propagates after the hook runs.
+    //
+    // Combined with the predicate unit tests in
+    // `should_retry_with_refresh_*` and the watcher
+    // force_refresh-trigger integration tests in `oidc_mtls_watcher`
+    // / `oidc_mtls_provider`, this exercises every link in the
+    // retry chain.
+    // -----------------------------------------------------------------
+
+    use crate::auth::oidc_mtls_hook::{self, refresh_channel};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Mock refresh trigger that increments a counter on every
+    /// `force_refresh()` call. The hook side is exposed so tests
+    /// can pair it with `with_mtls_refresh_hook`; the receiving
+    /// side runs in a spawned task that always replies `Ok(())`.
+    struct CountingHook {
+        calls: Arc<AtomicUsize>,
+        _task: tokio::task::JoinHandle<()>,
+    }
+
+    impl CountingHook {
+        fn new() -> (oidc_mtls_hook::MtlsRefreshHook, Arc<AtomicUsize>) {
+            let (hook, mut trigger) = refresh_channel();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let calls_task = calls.clone();
+            let task = tokio::spawn(async move {
+                while let Some(resp_tx) = trigger.trigger_rx.recv().await {
+                    calls_task.fetch_add(1, Ordering::Relaxed);
+                    let _ = resp_tx.send(Ok(()));
+                }
+            });
+            // Dropping `_task` (when CountingHook is dropped)
+            // doesn't actually shut down the spawned task; we
+            // rely on the test scope keeping the hook alive
+            // long enough to observe calls. Returning the
+            // Arc<AtomicUsize> separately lets tests inspect
+            // the counter even after the hook is dropped.
+            std::mem::forget(task);
+            (hook, calls)
+        }
+    }
+
+    #[test]
+    fn should_retry_predicate_requires_transport_error() {
+        let cfg = IntrospectionConfig {
+            introspect_uri: "https://x".into(),
+            client_id: "id".into(),
+            client_secret: None,
+            auth_method: IntrospectionAuthMethod::TlsClientAuth,
+            client_assertion_key: None,
+            mtls_client: Some(Arc::new(MtlsClient::new(reqwest::Client::new()))),
+        };
+        let (hook, _trigger) = refresh_channel();
+        let some_hook = Some(hook);
+        // Transport → retry
+        assert!(should_retry_with_refresh(
+            &TakoError::Transport("x".into()),
+            &cfg,
+            &some_hook
+        ));
+        // Invalid → no retry (auth-decision error)
+        assert!(!should_retry_with_refresh(
+            &TakoError::Invalid("bad token".into()),
+            &cfg,
+            &some_hook
+        ));
+        // RateLimited → no retry (Phase 27 chain-wide policy
+        // handles this; refresh wouldn't help)
+        assert!(!should_retry_with_refresh(
+            &TakoError::RateLimited(std::time::Duration::from_secs(60)),
+            &cfg,
+            &some_hook
+        ));
+    }
+
+    #[test]
+    fn should_retry_predicate_requires_hook_configured() {
+        let cfg = IntrospectionConfig {
+            introspect_uri: "https://x".into(),
+            client_id: "id".into(),
+            client_secret: None,
+            auth_method: IntrospectionAuthMethod::TlsClientAuth,
+            client_assertion_key: None,
+            mtls_client: Some(Arc::new(MtlsClient::new(reqwest::Client::new()))),
+        };
+        let no_hook = None;
+        assert!(!should_retry_with_refresh(
+            &TakoError::Transport("x".into()),
+            &cfg,
+            &no_hook
+        ));
+    }
+
+    #[test]
+    fn should_retry_predicate_requires_mtls_configured() {
+        // No mtls_client set — non-mTLS auth methods
+        // (Basic / Post / JWT) shouldn't retry; they have no
+        // per-request identity to refresh.
+        let cfg = IntrospectionConfig {
+            introspect_uri: "https://x".into(),
+            client_id: "id".into(),
+            client_secret: Some("secret".into()),
+            auth_method: IntrospectionAuthMethod::ClientSecretBasic,
+            client_assertion_key: None,
+            mtls_client: None,
+        };
+        let (hook, _trigger) = refresh_channel();
+        let some_hook = Some(hook);
+        assert!(!should_retry_with_refresh(
+            &TakoError::Transport("x".into()),
+            &cfg,
+            &some_hook
+        ));
+    }
+
+    /// Build a resolver wired for mTLS introspection, pointing
+    /// at an unbound port so every POST returns Transport.
+    fn unreachable_mtls_resolver() -> OidcAuthResolver {
+        // Port 1 is privileged on every platform — connecting
+        // to it from a test harness reliably returns
+        // ECONNREFUSED. The Phase 24 `with_introspection_self_signed_mtls`
+        // builder builds a real reqwest::Client + Identity from
+        // the test PEM; we then point the URI at port 1.
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("https://127.0.0.1:1/introspect".into());
+        r.with_introspection("client-id", None)
+            .unwrap()
+            .with_introspection_self_signed_mtls(TEST_MTLS_CERT_PEM, TEST_MTLS_KEY_PEM)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn introspect_invokes_hook_once_when_retry_conditions_met() {
+        let (hook, calls) = CountingHook::new();
+        let r = unreachable_mtls_resolver().with_mtls_refresh_hook(hook);
+
+        // Both POSTs fail with Transport (port 1 is unreachable).
+        let err = r.introspect("any-token").await.unwrap_err();
+        assert!(matches!(err, TakoError::Transport(_)), "got: {err:?}");
+
+        // Hook was invoked exactly once between the two attempts.
+        // Loose timing — give the spawned hook task a chance to
+        // increment.
+        for _ in 0..20 {
+            if calls.load(Ordering::Relaxed) >= 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "expected exactly one force_refresh call between the two attempts"
+        );
+    }
+
+    #[tokio::test]
+    async fn introspect_does_not_invoke_hook_without_retry_config() {
+        // No hook wired — single attempt, no retry, no hook
+        // invocation.
+        let r = unreachable_mtls_resolver();
+        let err = r.introspect("any-token").await.unwrap_err();
+        assert!(matches!(err, TakoError::Transport(_)), "got: {err:?}");
+    }
+
+    #[tokio::test]
+    async fn introspect_does_not_invoke_hook_for_non_mtls_method() {
+        // Hook configured but auth method is Basic — predicate
+        // says "no retry" because mtls_client is None.
+        let (hook, calls) = CountingHook::new();
+        let mut r = test_resolver(Client::new(), "https://issuer.example");
+        r.discovered_introspection_uri = Some("http://127.0.0.1:1/introspect".into());
+        let r = r
+            .with_introspection("client-id", Some("secret".into()))
+            .unwrap()
+            .with_mtls_refresh_hook(hook);
+        let err = r.introspect("any-token").await.unwrap_err();
+        assert!(matches!(err, TakoError::Transport(_)), "got: {err:?}");
+        // Brief wait for any in-flight hook task; should remain 0.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            0,
+            "non-mTLS method must not trigger refresh"
+        );
     }
 }

@@ -25,6 +25,8 @@ mod sse;
 pub use auth::JwtAuthResolver;
 #[cfg(feature = "mtls-fs-watch")]
 pub use auth::MtlsFsWatcher;
+#[cfg(feature = "oidc")]
+pub use auth::MtlsRefreshHook;
 #[cfg(feature = "vault")]
 pub use auth::VaultAuthResolver;
 #[cfg(feature = "vault")]

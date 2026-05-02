@@ -51,6 +51,7 @@ use tokio::{
 };
 
 use crate::auth::oidc::OidcAuthResolver;
+use crate::auth::oidc_mtls_hook::{MtlsRefreshHook, MtlsRefreshTrigger, refresh_channel};
 
 /// How long to wait after the most recent change event before
 /// firing a reload. Cert-manager writes cert and key in quick
@@ -76,6 +77,11 @@ pub struct MtlsFsWatcher {
     _watcher: RecommendedWatcher,
     shutdown: Arc<Notify>,
     join: Option<JoinHandle<()>>,
+    /// Phase 39 — handle the operator passes to
+    /// [`OidcAuthResolver::with_mtls_refresh_hook`] to enable
+    /// auto-retry of failed introspection POSTs against this
+    /// watcher's reload primitive.
+    refresh_hook: MtlsRefreshHook,
 }
 
 impl std::fmt::Debug for MtlsFsWatcher {
@@ -90,6 +96,16 @@ impl std::fmt::Debug for MtlsFsWatcher {
 }
 
 impl MtlsFsWatcher {
+    /// Phase 39 — return a `MtlsRefreshHook` wired to this
+    /// watcher's background task. Pair with
+    /// [`OidcAuthResolver::with_mtls_refresh_hook`](crate::auth::oidc::OidcAuthResolver::with_mtls_refresh_hook)
+    /// to enable auto-retry of failed introspection POSTs.
+    /// The hook is `Clone`-able; multiple resolvers can share
+    /// the same refresh source.
+    pub fn refresh_hook(&self) -> MtlsRefreshHook {
+        self.refresh_hook.clone()
+    }
+
     /// Stop the watcher and await the background task's
     /// teardown. Idempotent — calling twice is a no-op the
     /// second time.
@@ -202,6 +218,12 @@ impl OidcAuthResolver {
         let cert_path_owned = cert_path.clone();
         let key_path_owned = key_path.clone();
 
+        // Phase 39 — refresh-hook channel. The hook is
+        // returned to the operator via
+        // `MtlsFsWatcher::refresh_hook`; the trigger's
+        // receiver is consumed by the watch loop's select arm.
+        let (refresh_hook, mut refresh_trigger) = refresh_channel();
+
         let join = tokio::spawn(async move {
             run_watch_loop(
                 resolver,
@@ -209,6 +231,7 @@ impl OidcAuthResolver {
                 key_path_owned,
                 &mut rx,
                 task_shutdown,
+                &mut refresh_trigger,
             )
             .await;
         });
@@ -217,17 +240,22 @@ impl OidcAuthResolver {
             _watcher: watcher,
             shutdown,
             join: Some(join),
+            refresh_hook,
         })
     }
 }
 
-/// Background task: receive events, debounce, reload.
+/// Background task: receive events, debounce, reload. Phase 39
+/// adds a refresh-trigger arm so the introspection-POST retry
+/// layer can request an out-of-band reload via
+/// `MtlsRefreshHook::force_refresh`.
 async fn run_watch_loop(
     resolver: Arc<OidcAuthResolver>,
     cert_path: PathBuf,
     key_path: PathBuf,
     rx: &mut mpsc::Receiver<Event>,
     shutdown: Arc<Notify>,
+    refresh_trigger: &mut MtlsRefreshTrigger,
 ) {
     let cert_name = leaf_filename(&cert_path);
     let key_name = leaf_filename(&key_path);
@@ -256,6 +284,18 @@ async fn run_watch_loop(
                 tracing::debug!("oidc.mtls_fs_watcher: shutdown received");
                 return;
             }
+            // Phase 39 — refresh-hook trigger. Cancel any
+            // pending debounce and reload immediately, since
+            // the trigger means the introspection POST hit
+            // a transport error and is waiting on us.
+            Some(resp_tx) = refresh_trigger.trigger_rx.recv() => {
+                tracing::info!(
+                    "oidc.mtls_fs_watcher: refresh hook triggered; reloading on demand"
+                );
+                pending_deadline = None;
+                let result = do_reload(&resolver, &cert_path, &key_path);
+                let _ = resp_tx.send(result);
+            }
             outcome = recv => match outcome {
                 RecvOutcome::Event(ev) => {
                     if event_touches(&ev, &cert_name, &key_name) {
@@ -264,7 +304,7 @@ async fn run_watch_loop(
                 }
                 RecvOutcome::DebounceExpired => {
                     pending_deadline = None;
-                    do_reload(&resolver, &cert_path, &key_path);
+                    let _ = do_reload(&resolver, &cert_path, &key_path);
                 }
                 RecvOutcome::Closed => {
                     tracing::debug!("oidc.mtls_fs_watcher: event channel closed");
@@ -284,29 +324,32 @@ enum RecvOutcome {
 /// Read both files and call `reload_mtls_identity`. Errors are
 /// logged but do not propagate — the previously installed
 /// Client stays in place per Phase 33 semantics.
-fn do_reload(resolver: &Arc<OidcAuthResolver>, cert_path: &Path, key_path: &Path) {
-    let cert = match std::fs::read(cert_path) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!(
-                cert_path = %cert_path.display(),
-                error = %e,
-                "oidc.mtls_fs_watcher: failed to read cert file; skipping reload"
-            );
-            return;
-        }
-    };
-    let key = match std::fs::read(key_path) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!(
-                key_path = %key_path.display(),
-                error = %e,
-                "oidc.mtls_fs_watcher: failed to read key file; skipping reload"
-            );
-            return;
-        }
-    };
+///
+/// Phase 39 widens the return from `()` to
+/// `Result<(), TakoError>` so the refresh-hook arm can signal
+/// success / failure back to the caller via the `oneshot`
+/// reply.
+fn do_reload(
+    resolver: &Arc<OidcAuthResolver>,
+    cert_path: &Path,
+    key_path: &Path,
+) -> Result<(), TakoError> {
+    let cert = std::fs::read(cert_path).map_err(|e| {
+        let msg = format!(
+            "oidc.mtls_fs_watcher: failed to read cert {}: {e}",
+            cert_path.display()
+        );
+        tracing::warn!("{msg}; skipping reload");
+        TakoError::Invalid(msg)
+    })?;
+    let key = std::fs::read(key_path).map_err(|e| {
+        let msg = format!(
+            "oidc.mtls_fs_watcher: failed to read key {}: {e}",
+            key_path.display()
+        );
+        tracing::warn!("{msg}; skipping reload");
+        TakoError::Invalid(msg)
+    })?;
     match resolver.reload_mtls_identity(&cert, &key) {
         Ok(()) => {
             tracing::info!(
@@ -314,6 +357,7 @@ fn do_reload(resolver: &Arc<OidcAuthResolver>, cert_path: &Path, key_path: &Path
                 key_path = %key_path.display(),
                 "oidc.mtls_fs_watcher: reloaded mTLS identity from disk"
             );
+            Ok(())
         }
         Err(e) => {
             tracing::warn!(
@@ -322,6 +366,7 @@ fn do_reload(resolver: &Arc<OidcAuthResolver>, cert_path: &Path, key_path: &Path
                 error = %e,
                 "oidc.mtls_fs_watcher: reload_mtls_identity failed; previous client preserved"
             );
+            Err(e)
         }
     }
 }

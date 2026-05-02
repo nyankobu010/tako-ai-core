@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.40.0] - 2026-05-02
+
+Phase 39 — auto refresh-on-handshake-failure for OIDC mTLS.
+Closes the last Phase 33 mTLS-rotation carry-forward (strategy
+2-of-3 was deferred Phase 33; strategy 3 shipped Phase 35;
+strategy 1 shipped Phase 37/38; this phase ships strategy 2).
+After Phase 39 the Phase 33 rotation backlog is fully retired.
+Plan: [plans/PLAN_PHASE39.md](plans/PLAN_PHASE39.md).
+
+### Added
+
+- **`tako-compat`: `MtlsRefreshHook`** — handle that triggers
+  an out-of-band mTLS reload from a Phase 35 filesystem watcher
+  or Phase 37 trait-based provider. Internally a one-shot RPC
+  channel between the introspection POST retry layer and the
+  watcher / provider's background task. Capped at 2s per
+  trigger.
+- **`tako-compat`: `OidcAuthResolver::with_mtls_refresh_hook(hook)`**
+  builder. When wired AND mTLS introspection is configured AND
+  the introspection POST hits a `TakoError::Transport`, the
+  retry layer triggers the hook, awaits the reload, and
+  re-sends the POST exactly once. Cycle-detection is
+  structural: at most one retry per `introspect()` call.
+- **`tako-compat`: `MtlsFsWatcher::refresh_hook()`** /
+  **`MtlsProviderWatcher::refresh_hook()`** — return a
+  `Clone`-able `MtlsRefreshHook` wired to the watcher's
+  background task. The same hook can be wired into multiple
+  resolvers if several mTLS-introspecting endpoints share one
+  cert source.
+
+### Changed
+
+- `tako-compat`: the introspection-POST send path is factored
+  into `OidcAuthResolver::introspect_send_once` so the retry
+  layer can rebuild the request (reqwest `RequestBuilder` is
+  consumed by `.send`) with a fresh `MtlsClient::current()`
+  snapshot after a forced reload. Pure refactor — Phase
+  24/25/33/34/35/37/38 byte-for-byte cadence preserved when no
+  retry hook is wired.
+- `tako-compat`: `oidc_mtls_watcher::do_reload` widened from
+  `()` to `Result<(), TakoError>` so the refresh-hook arm can
+  signal success / failure back to the caller via the
+  `oneshot` reply.
+
+### Fixed
+
+- `jsonwebtoken` reverted from 10.3 (dependabot PR #32) back
+  to 9.3. The 10.x bump dropped PEM-helper functions
+  (`from_rsa_pem` / `from_ec_pem` / `from_ed_pem`) entirely;
+  PR #32 landed without doing the API migration, leaving
+  main's tests broken. Phase 39 restores green tests as a
+  side effect; proper 10.x migration is a Phase 40+ candidate.
+
 ## [0.39.0] - 2026-05-02
 
 Phase 38 — Python facade for the Phase 37 trait-based mTLS
@@ -4302,7 +4355,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.36.0...v0.37.0

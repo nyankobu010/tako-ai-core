@@ -24,6 +24,7 @@ use tako_core::TakoError;
 use tokio::{sync::Notify, task::JoinHandle, time::Instant};
 
 use crate::auth::oidc::OidcAuthResolver;
+use crate::auth::oidc_mtls_hook::{MtlsRefreshHook, MtlsRefreshTrigger, refresh_channel};
 
 /// Phase 37 — fraction of the cert's validity window after
 /// which to refresh. 0.8 leaves a 20% buffer; matches industry
@@ -86,6 +87,11 @@ pub trait MtlsIdentityProvider: Send + Sync + 'static + std::fmt::Debug {
 pub struct MtlsProviderWatcher {
     shutdown: Arc<Notify>,
     join: Option<JoinHandle<()>>,
+    /// Phase 39 — handle the operator passes to
+    /// [`OidcAuthResolver::with_mtls_refresh_hook`] to enable
+    /// auto-retry of failed introspection POSTs against this
+    /// provider's reload primitive.
+    refresh_hook: MtlsRefreshHook,
 }
 
 impl std::fmt::Debug for MtlsProviderWatcher {
@@ -100,6 +106,16 @@ impl std::fmt::Debug for MtlsProviderWatcher {
 }
 
 impl MtlsProviderWatcher {
+    /// Phase 39 — return a `MtlsRefreshHook` wired to this
+    /// provider's background task. Pair with
+    /// [`OidcAuthResolver::with_mtls_refresh_hook`](crate::auth::oidc::OidcAuthResolver::with_mtls_refresh_hook)
+    /// to enable auto-retry of failed introspection POSTs.
+    /// The hook is `Clone`-able; multiple resolvers can share
+    /// the same refresh source.
+    pub fn refresh_hook(&self) -> MtlsRefreshHook {
+        self.refresh_hook.clone()
+    }
+
     /// Stop the watcher and await the background task's
     /// teardown. Idempotent — calling twice is a no-op the
     /// second time.
@@ -157,13 +173,20 @@ impl OidcAuthResolver {
         let task_shutdown = shutdown.clone();
         let resolver = self.clone();
 
+        // Phase 39 — refresh-hook channel. The hook is
+        // returned to the operator via
+        // `MtlsProviderWatcher::refresh_hook`; the trigger's
+        // receiver is consumed by the provider loop's select arm.
+        let (refresh_hook, refresh_trigger) = refresh_channel();
+
         let join = tokio::spawn(async move {
-            run_provider_loop(resolver, provider, task_shutdown).await;
+            run_provider_loop(resolver, provider, task_shutdown, refresh_trigger).await;
         });
 
         Ok(MtlsProviderWatcher {
             shutdown,
             join: Some(join),
+            refresh_hook,
         })
     }
 }
@@ -172,37 +195,10 @@ async fn run_provider_loop(
     resolver: Arc<OidcAuthResolver>,
     provider: Arc<dyn MtlsIdentityProvider>,
     shutdown: Arc<Notify>,
+    mut refresh_trigger: MtlsRefreshTrigger,
 ) {
     loop {
-        let next_sleep = match provider.fetch().await {
-            Ok(identity) => {
-                match resolver.reload_mtls_identity(&identity.cert_pem, &identity.key_pem) {
-                    Ok(()) => {
-                        let interval = next_refresh_interval(&identity.cert_pem);
-                        tracing::info!(
-                            next_refresh_secs = interval.as_secs(),
-                            "oidc.mtls_provider: refreshed identity from provider"
-                        );
-                        interval
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "oidc.mtls_provider: reload_mtls_identity failed; previous client preserved"
-                        );
-                        ERROR_BACKOFF
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "oidc.mtls_provider: provider.fetch() failed; will retry"
-                );
-                ERROR_BACKOFF
-            }
-        };
-
+        let (next_sleep, _initial_result) = fetch_and_reload(&provider, &resolver).await;
         let deadline = Instant::now() + next_sleep;
         tokio::select! {
             biased;
@@ -210,7 +206,59 @@ async fn run_provider_loop(
                 tracing::debug!("oidc.mtls_provider: shutdown received");
                 return;
             }
+            // Phase 39 — refresh-hook trigger. Skip the
+            // remaining sleep, refresh on demand, and signal
+            // the result back to the introspection-POST retry
+            // layer that's waiting on us.
+            Some(resp_tx) = refresh_trigger.trigger_rx.recv() => {
+                tracing::info!(
+                    "oidc.mtls_provider: refresh hook triggered; fetching on demand"
+                );
+                let (_, result) = fetch_and_reload(&provider, &resolver).await;
+                let _ = resp_tx.send(result);
+            }
             _ = tokio::time::sleep_until(deadline) => {}
+        }
+    }
+}
+
+/// Phase 39 — single fetch-and-reload step, factored out so the
+/// scheduled tick (proactive refresh, Phase 37 cadence) and the
+/// refresh-hook trigger (reactive on TLS handshake failure,
+/// Phase 39) share the same body. Returns the next sleep
+/// interval AND the reload result the hook signals back to its
+/// caller.
+async fn fetch_and_reload(
+    provider: &Arc<dyn MtlsIdentityProvider>,
+    resolver: &Arc<OidcAuthResolver>,
+) -> (Duration, Result<(), TakoError>) {
+    match provider.fetch().await {
+        Ok(identity) => {
+            match resolver.reload_mtls_identity(&identity.cert_pem, &identity.key_pem) {
+                Ok(()) => {
+                    let interval = next_refresh_interval(&identity.cert_pem);
+                    tracing::info!(
+                        next_refresh_secs = interval.as_secs(),
+                        "oidc.mtls_provider: refreshed identity from provider"
+                    );
+                    (interval, Ok(()))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "oidc.mtls_provider: reload_mtls_identity failed; previous client preserved"
+                    );
+                    (ERROR_BACKOFF, Err(e))
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "oidc.mtls_provider: provider.fetch() failed; will retry"
+            );
+            let cloned = TakoError::Invalid(format!("{e}"));
+            (ERROR_BACKOFF, Err(cloned))
         }
     }
 }

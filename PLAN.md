@@ -57,24 +57,33 @@ synopsis and quickstart.
 | 36 — Per-child ChainedAuthResolver short-circuit policy | v0.37.0 | done (2026-05-02) | [plans/PLAN_PHASE36.md](plans/PLAN_PHASE36.md) | [`## [0.37.0]`](CHANGELOG.md) |
 | 37 — Trait-based MtlsIdentityProvider | v0.38.0 | done (2026-05-02) | [plans/PLAN_PHASE37.md](plans/PLAN_PHASE37.md) | [`## [0.38.0]`](CHANGELOG.md) |
 | 38 — Python facade for MtlsIdentityProvider | v0.39.0 | done (2026-05-02) | [plans/PLAN_PHASE38.md](plans/PLAN_PHASE38.md) | [`## [0.39.0]`](CHANGELOG.md) |
+| 39 — Auto refresh-on-handshake-failure for OIDC mTLS | v0.40.0 | done (2026-05-02) | [plans/PLAN_PHASE39.md](plans/PLAN_PHASE39.md) | [`## [0.40.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 39 candidates (indicative, not yet committed)
+### Phase 40 candidates (indicative, not yet committed)
 
-Carry-forward items. After Phase 38 the only Phase 33 mTLS
-carry-forward left is (2) auto-refresh-on-handshake-failure;
-all other backlog items are unchanged.
+After Phase 39 the Phase 33 mTLS rotation backlog is fully
+retired (all three rotation strategies + the reactive retry
+layer ship). Carry-forward items remaining:
 
-- **Automatic refresh-on-handshake-failure** — catch TLS
-  handshake errors at request time and trigger reload. Needs
-  retry logic + cycle-detection. Phase 33 carry-forward. Sits
-  on top of either the Phase 35 filesystem watcher or the
-  Phase 37 trait-based provider via a future
-  `MtlsRefreshHook` trait.
+- **`jsonwebtoken` 10.x migration.** PR #32 bumped the dep
+  but jsonwebtoken 10.x dropped PEM-helper functions
+  (`from_rsa_pem` / `from_ec_pem` / `from_ed_pem`) entirely
+  in favour of DER-only constructors. Phase 39 reverts the
+  bump on its branch to unblock; a proper migration would
+  layer a PEM-decode step (e.g. via the `pem` crate) over
+  the new DER-only API. ~6 call sites across `oidc.rs` /
+  `jwt.rs`.
+- **Python facade for `MtlsRefreshHook`.** Phase 39 wires
+  the Rust-side primitive; Python operators using
+  `OidcAuth.watch_mtls_files` / `watch_mtls_provider` get
+  no auto-retry today. Small follow-on: expose
+  `watcher.refresh_hook()` and
+  `oidc.with_mtls_refresh_hook(...)` through PyO3.
 - **Wildcard at non-leftmost positions** — patterns like
   `registry.*.corp` (wildcard in middle). Phase 31 ships only
   the leftmost-`*.` convention. Probably never worth shipping
