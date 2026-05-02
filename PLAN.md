@@ -61,6 +61,7 @@ synopsis and quickstart.
 | 40 — Python facade for MtlsRefreshHook | v0.41.0 | done (2026-05-02) | [plans/PLAN_PHASE40.md](plans/PLAN_PHASE40.md) | [`## [0.41.0]`](CHANGELOG.md) |
 | 41 — Security: jsonwebtoken 9.3 → 10.3 bump | v0.42.0 | done (2026-05-02) | [plans/PLAN_PHASE41.md](plans/PLAN_PHASE41.md) | [`## [0.42.0]`](CHANGELOG.md) |
 | 42 — OIDC mTLS end-to-end integration test | v0.43.0 | done (2026-05-02) | [plans/PLAN_PHASE42.md](plans/PLAN_PHASE42.md) | [`## [0.43.0]`](CHANGELOG.md) |
+| 43 — Python facade for `_extra_root` mTLS introspection builders | v0.44.0 | in progress | [plans/PLAN_PHASE43.md](plans/PLAN_PHASE43.md) | [`## [0.44.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.

@@ -514,6 +514,54 @@ impl PyOidcAuth {
         Ok(PyOidcAuth { inner: Arc::new(r) })
     }
 
+    /// Phase 42 — load a client cert + private key AND add an
+    /// operator-supplied PEM-encoded root CA bundle to the
+    /// underlying HTTP client's trust store. Same behaviour as
+    /// [`Self::with_introspection_mtls`] otherwise (silent no-op
+    /// when no introspection config has been attached, PEM parse
+    /// failures map to `ValueError`). Use this for enterprise
+    /// self-hosted OIDC issuers (Keycloak / Auth0 self-hosted /
+    /// Authentik) presenting a server cert signed by a private
+    /// internal CA.
+    ///
+    /// `extra_root_ca_pem` accepts a single root cert or a
+    /// concatenated multi-cert PEM bundle. The CA bundle is
+    /// persisted on the introspection config so subsequent
+    /// `reload_mtls_identity` calls (and the rotation surfaces
+    /// in Phases 35 / 37 / 39 that route through them) re-apply
+    /// the same trust anchors when rebuilding the mTLS client
+    /// after a cert/key swap. Returns a NEW `OidcAuth`.
+    fn with_introspection_mtls_extra_root(
+        &self,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        extra_root_ca_pem: &[u8],
+    ) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_mtls_extra_root(cert_pem, key_pem, extra_root_ca_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 42 — same as
+    /// [`Self::with_introspection_mtls_extra_root`] but with the
+    /// RFC 8705 §2.2 `self_signed_tls_client_auth` auth method.
+    /// Identical wire shape; the only difference is the
+    /// auth-method enum variant. Returns a NEW `OidcAuth`.
+    fn with_introspection_self_signed_mtls_extra_root(
+        &self,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        extra_root_ca_pem: &[u8],
+    ) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_self_signed_mtls_extra_root(cert_pem, key_pem, extra_root_ca_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
     /// Phase 33 — atomically replace the mTLS identity used for
     /// OIDC introspection POSTs without rebuilding the resolver.
     /// Useful for cert rotation in long-running deployments
