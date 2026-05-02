@@ -174,6 +174,12 @@ MtlsFsWatcher = getattr(_native, "MtlsFsWatcher", None)
 # ``auth-mtls-identity-provider`` feature.
 MtlsIdentityProvider = getattr(_native, "MtlsIdentityProvider", None)
 MtlsProviderWatcher = getattr(_native, "MtlsProviderWatcher", None)
+# Phase 40 — Python facade for the Phase 39 refresh hook.
+# Returned by ``MtlsFsWatcher.refresh_hook()`` (Phase 35) and
+# ``MtlsProviderWatcher.refresh_hook()`` (Phase 38). Pair with
+# ``OidcAuth.with_mtls_refresh_hook(hook)`` to enable the
+# auto-retry-on-Transport-error layer.
+MtlsRefreshHook = getattr(_native, "MtlsRefreshHook", None)
 
 
 __all__ = [
@@ -182,6 +188,7 @@ __all__ = [
     "MtlsFsWatcher",
     "MtlsIdentityProvider",
     "MtlsProviderWatcher",
+    "MtlsRefreshHook",
     "OidcAuth",
     "VaultAuth",
     "serve_openai",
