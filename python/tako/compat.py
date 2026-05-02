@@ -119,6 +119,21 @@ def serve_openai(
        internal CA. Raises ``ValueError`` on PEM parse failure
        (empty bundle, garbage bytes) at builder time — fail-closed.
 
+       Phase 44 — ``OidcAuth.discover_with_extra_root(issuer, audience, ca_pem)``
+       is a parallel async constructor that builds the
+       resolver-wide HTTP client with an operator-supplied
+       PEM-encoded root CA bundle added to its trust store. The
+       same trust anchor covers BOTH the OIDC discovery doc fetch
+       (during construction) AND every subsequent JWKS refresh,
+       because the resolver holds a single HTTP client for
+       non-introspection HTTP. Pair with the Phase 42
+       ``_extra_root`` builders when one PKI fronts the whole
+       OIDC stack. Without it, the discovery GET against a
+       private-CA issuer fails TLS verification before the
+       resolver is even returned. Raises ``ValueError`` at
+       construction time on PEM parse failure (empty bundle,
+       garbage bytes).
+
        Phase 21.B — ``tako.compat.ChainedAuth`` (always-on; no
        cargo feature gate) is a composite resolver that wraps N
        child resolvers and tries them in append order. The first

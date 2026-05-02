@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.46.0] - 2026-05-02
+
+Phase 45 — closes the Python facade gap on the Phase 44
+operator-supplied-CA discovery constructor. Phase 44 shipped
+the Rust API + 6 wire-level tests; Python wheel operators
+behind a private internal CA now reach the same surface
+without a custom `reqwest::Client` route. Closes the Phase 44
+follow-up identified in
+[plans/PLAN_PHASE44.md](plans/PLAN_PHASE44.md).
+Plan: [plans/PLAN_PHASE45.md](plans/PLAN_PHASE45.md).
+
+### Added
+
+- **`OidcAuth.discover_with_extra_root(issuer, audience, extra_root_ca_pem)`**
+  — Python staticmethod sibling of the Phase 44
+  [`OidcAuthResolver::discover_with_extra_root`](crates/tako-compat/src/auth/oidc.rs)
+  Rust constructor. Async — returns a coroutine. Builds the
+  resolver-wide HTTP client with the operator-supplied
+  PEM-encoded root CA bundle (single cert or concatenated
+  multi-cert PEM) added to its trust store. The same trust
+  anchor covers BOTH the OIDC discovery doc fetch (during
+  construction) AND every subsequent JWKS refresh, because the
+  resolver holds a single HTTP client for non-introspection
+  HTTP. PEM parse failures (empty bundle, garbage bytes) raise
+  `ValueError` at construction time — fail-closed. Pair with
+  the Phase 43 `with_introspection_mtls_extra_root` Python
+  builder when one PKI fronts the whole OIDC stack. Gated on
+  the `auth-oidc` cargo feature (same as the parent
+  `OidcAuth` pyclass).
+
+### Tests
+
+- **`tests/python/test_phase45_discover_extra_root_python.py`** —
+  three new smoke tests pin the Python-side surface (binding
+  name + staticmethod nature + awaitable return) so a
+  regression in the PyO3 wrapping lands here before user code.
+  The wire-level / PEM-parse / persistence semantics are
+  covered by the Rust unit + integration tests in
+  [`crates/tako-compat/src/auth/oidc.rs`](crates/tako-compat/src/auth/oidc.rs)
+  and
+  [`crates/tako-compat/tests/oidc_mtls_e2e.rs`](crates/tako-compat/tests/oidc_mtls_e2e.rs).
+
+### Docs
+
+- `python/tako/compat.py` — appended a Phase 44 paragraph to
+  the `serve_openai` running docstring documenting the new
+  constructor alongside the Phase 42 introspection-mTLS prose.
+
 ## [0.45.0] - 2026-05-02
 
 Phase 44 — closes the "Custom CA support for non-introspection

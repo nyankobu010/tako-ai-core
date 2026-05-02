@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "tako"
-version = "0.45.0"
+version = "0.46.0"
 description = "Rust-core, Python-facade framework for enterprise agentic systems."
 readme = "README.md"
 license = { text = "Apache-2.0" }
