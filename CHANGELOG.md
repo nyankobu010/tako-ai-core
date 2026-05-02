@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.49.0] - 2026-05-02
+
+Phase 48 — extends the Phase 46.C stable tool-call ID
+contract from non-streaming Vertex responses to the
+streaming SSE path. After this release, the same logical
+tool call produces the **same** id whether returned by
+`chat()` or `stream()`, so operators correlating a
+streamed call with a later non-streamed retry can dedupe
+on `id`. Plan: [plans/PLAN_PHASE48.md](plans/PLAN_PHASE48.md).
+
+### Fixed
+
+- **Vertex streaming tool-call IDs are now stable** across
+  re-streams AND consistent with the non-streaming path
+  ([crates/tako-providers/vertex/src/stream.rs](crates/tako-providers/vertex/src/stream.rs)).
+  Previously emitted `vertex_call_<tool_call_index>` —
+  position-derived per-stream identifier that doesn't
+  match the `vertex_call_<hash>` digest the non-streaming
+  [`from_vertex_response`](crates/tako-providers/vertex/src/convert.rs)
+  has emitted since Phase 46.C. The streaming path now
+  uses the same shared `vertex_tool_call_id(name, args)`
+  helper. `ToolCallDelta::index` keeps its per-stream
+  chunk-reassembly role unchanged.
+
+### Tests
+
+- **2 new integration tests** in
+  [crates/tako-providers/vertex/tests/chat.rs](crates/tako-providers/vertex/tests/chat.rs):
+    - `stream_tool_call_id_matches_non_streaming` — same
+      `(name, args)` payload through both `stream()` and
+      `chat()` produces identical ids.
+    - `stream_distinct_tool_calls_get_distinct_ids` — two
+      function-call deltas in one stream with distinct
+      `(name, args)` produce distinct ids; `index` still
+      increments per delta for chunk reassembly.
+
+### Internal
+
+- New `pub(crate) vertex_tool_call_id(name, args) -> String`
+  helper in
+  [`convert.rs`](crates/tako-providers/vertex/src/convert.rs)
+  — extracted from the inline non-streaming code path so
+  both the streaming and non-streaming sites share one
+  implementation. Helper format unchanged
+  (`vertex_call_<16-hex-chars>` `SipHash13` digest), so
+  callers reading the id format are unaffected.
+
 ## [0.48.0] - 2026-05-02
 
 Phase 47 — closes the **"OTel end-to-end test against a real

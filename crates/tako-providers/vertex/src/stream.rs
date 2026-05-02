@@ -9,7 +9,7 @@ use eventsource_stream::Eventsource;
 use futures::stream::{BoxStream, StreamExt};
 use tako_core::{ChatChunk, FinishReason, TakoError, ToolCallDelta, Usage};
 
-use crate::convert::{VxResponse, finish_reason_from_vx};
+use crate::convert::{VxResponse, finish_reason_from_vx, vertex_tool_call_id};
 
 pub fn into_chat_stream(
     resp: reqwest::Response,
@@ -65,9 +65,16 @@ pub fn into_chat_stream(
                                         text_buf.push_str(&t);
                                     }
                                 if let Some(fc) = part.function_call {
+                                    // Phase 48 — stable id via the shared
+                                    // `vertex_tool_call_id` helper. `index`
+                                    // remains the per-stream chunk-reassembly
+                                    // key; `id` now matches what the
+                                    // non-streaming `from_vertex_response`
+                                    // emits for the same (name, args).
+                                    let id = vertex_tool_call_id(&fc.name, &fc.args);
                                     tool_calls.push(ToolCallDelta {
                                         index: tool_call_index,
-                                        id: Some(format!("vertex_call_{tool_call_index}")),
+                                        id: Some(id),
                                         name: Some(fc.name),
                                         arguments_fragment: Some(fc.args.to_string()),
                                     });

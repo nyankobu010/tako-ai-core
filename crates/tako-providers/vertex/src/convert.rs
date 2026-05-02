@@ -9,6 +9,27 @@ use tako_core::{
     Usage,
 };
 
+/// Phase 46.C / 48 — stable tool-call ID for Vertex
+/// responses. Hashes `(name, args-as-JSON)` so the same
+/// logical call gets the same ID across:
+///   - re-fetches of the same non-streaming response,
+///   - re-streams of the same streaming response,
+///   - non-streaming vs streaming of the same response.
+///
+/// `DefaultHasher` is `SipHash13` — non-cryptographic but
+/// deterministic per process for a given input. Suffix is
+/// the lowercase 16-hex-char digest. Format keeps the
+/// `vertex_call_` prefix so log-grep patterns continue to
+/// work.
+pub(crate) fn vertex_tool_call_id(name: &str, args: &Value) -> String {
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    serde_json::to_string(args)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    format!("vertex_call_{:016x}", hasher.finish())
+}
+
 // ---------- Request ----------
 
 #[derive(Serialize, Debug)]
@@ -374,22 +395,11 @@ pub fn from_vertex_response(resp: VxResponse) -> Result<ChatResponse, TakoError>
             }
             if let Some(fc) = part.function_call {
                 had_tool_call = true;
-                // Vertex tool calls have no stable id (Phase 46.C).
-                // Hash `(name, args-as-canonical-JSON)` so the same
-                // logical call gets the same id across:
-                //   - streaming chunk boundaries (re-assembly),
-                //   - re-fetches of the same response (retries),
-                //   - serialisation round-trips.
-                // The previous `vertex_call_<position>` scheme broke
-                // under all three. `DefaultHasher` is SipHash13 —
-                // non-cryptographic but deterministic per process for
-                // a given (name, args) pair.
-                let mut hasher = DefaultHasher::new();
-                fc.name.hash(&mut hasher);
-                serde_json::to_string(&fc.args)
-                    .unwrap_or_default()
-                    .hash(&mut hasher);
-                let id = format!("vertex_call_{:016x}", hasher.finish());
+                // Phase 46.C / 48 — stable id via the shared
+                // `vertex_tool_call_id` helper so streaming
+                // and non-streaming paths produce the same id
+                // for the same (name, args) pair.
+                let id = vertex_tool_call_id(&fc.name, &fc.args);
                 content.push(ContentPart::ToolCall {
                     id,
                     name: fc.name,
