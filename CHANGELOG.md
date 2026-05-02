@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.36.0] - 2026-05-02
+
+Phase 35 — OIDC mTLS filesystem-watcher auto-reload. Carry-forward
+strategy (3) from [plans/PLAN_PHASE33.md](plans/PLAN_PHASE33.md):
+operators using cert-manager / Vault PKI / SPIRE /
+kubernetes-secret-mount rotation now opt in to the
+`mtls-fs-watch` cargo feature (Python wheel feature
+`auth-mtls-fs-watch`) and call
+`OidcAuthResolver::watch_mtls_files(cert_path, key_path)` once at
+startup. The returned `MtlsFsWatcher` handle holds a background
+tokio task that re-reads + reloads the mTLS identity whenever
+either file changes on disk, replacing the hand-rolled polling
+loop the Phase 33 recipe suggested. Plan:
+[plans/PLAN_PHASE35.md](plans/PLAN_PHASE35.md).
+
+### Added
+
+- **`tako-compat`: OIDC mTLS filesystem-watcher auto-reload** —
+  new optional cargo feature `mtls-fs-watch` (Python wheel
+  feature `auth-mtls-fs-watch`) ships an
+  `OidcAuthResolver::watch_mtls_files(cert_path, key_path)`
+  helper that wraps the [`notify`](https://docs.rs/notify) crate
+  to auto-call `reload_mtls_identity` whenever the watched cert
+  or key files change on disk. Behaviour: watches the *parent
+  directories* (atomic-rename safe per cert-manager /
+  kubernetes-secret-mount conventions), 500 ms debounce
+  coalesces bursty writes, reload failures logged at `warn!`
+  without killing the watcher (Phase 33's "previously installed
+  Client preserved on parse error" guarantee covers transient
+  mid-rotation invalid-PEM reads). Returns an `MtlsFsWatcher`
+  handle whose `Drop` impl shuts the background task down
+  cleanly. Python facade: `OidcAuth.watch_mtls_files(...)`
+  returns a context-manager-friendly `MtlsFsWatcher`. Default
+  `tako-compat` build is unchanged — feature is opt-in.
+- **`MtlsClient::current()` is now `pub`** (was `pub(crate)`)
+  so operator observability tooling and the new watcher
+  integration tests can compare snapshots before/after a
+  rotation via `Arc::as_ptr`. The inner Client is read-only;
+  swap remains pub(crate).
+- **`OidcAuthResolver::introspection_mtls_configured()` /
+  `::introspection_mtls_client_arc()`** — `#[doc(hidden)]`
+  accessors used by the watcher to fail-closed at construction
+  time and by tests to verify rotation. Operator code should
+  not need to call these directly.
+
+### Changed
+
+- `docs/recipes/mtls_rotation.md` — promotes the new
+  filesystem-watcher path to "recommended" with an end-to-end
+  Python snippet; the Phase 33 hand-rolled polling loop is kept
+  as a fallback for slim wheels / restricted containers.
+
 ## [0.35.0] - 2026-05-02
 
 Phase 34 — Public-release prep, tech-debt + docs sweep. Closes the
@@ -4134,7 +4186,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.32.0...v0.33.0

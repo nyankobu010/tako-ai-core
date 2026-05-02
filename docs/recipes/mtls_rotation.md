@@ -12,10 +12,74 @@ require a process restart. The
 `OidcAuthResolver::reload_mtls_identity` primitive lets operators
 swap the client identity in place.
 
-## Wire it up
+## Filesystem watcher (recommended)
 
-Install the initial identity at startup and call `reload_mtls_identity`
-from your refresh source. Example with a filesystem-watcher pattern:
+If you build the wheel with the `auth-mtls-fs-watch` feature
+(`maturin develop --features auth-mtls-fs-watch`), or the Rust
+crate with `tako-compat = { ..., features = ["mtls-fs-watch"] }`,
+tako wires a cross-platform filesystem watcher to
+`reload_mtls_identity` for you. Operators call
+`OidcAuth.watch_mtls_files(cert_path, key_path)` once at startup
+and rotation Just Works.
+
+```python
+import tako.compat
+
+oidc = (
+    await tako.compat.OidcAuth.discover(
+        issuer="https://issuer.example.com",
+        audience="my-api",
+    )
+)
+oidc = oidc.with_introspection(
+    client_id="my-api", client_secret=None,
+).with_introspection_mtls(
+    cert_pem=open("/var/run/secrets/oidc-mtls.crt", "rb").read(),
+    key_pem=open("/var/run/secrets/oidc-mtls.key", "rb").read(),
+)
+
+# Hold `_watcher` for the lifetime of the resolver. Drop /
+# shutdown stops the background task cleanly.
+_watcher = oidc.watch_mtls_files(
+    "/var/run/secrets/oidc-mtls.crt",
+    "/var/run/secrets/oidc-mtls.key",
+)
+
+await tako.compat.serve_openai(
+    orchestrator=orch,
+    bind="0.0.0.0:8080",
+    auth=oidc,
+)
+```
+
+Behaviour:
+
+- Watches the **parent directories** (cert-manager and
+  kubernetes-secret-mount use atomic-rename rotation; watching
+  the file path directly goes stale because the inner inode
+  flips).
+- **500 ms debounce** coalesces bursty writes (cert-manager
+  often writes cert and key in quick succession).
+- **Reload errors do not kill the watcher.** A `tracing::warn!`
+  records the failure; the next change event retries. Combined
+  with the Phase 33 "previously installed Client preserved on
+  parse error" guarantee, a transient mid-rotation invalid-PEM
+  read does not break the running server.
+
+The handle is a context manager:
+
+```python
+with oidc.watch_mtls_files(cert_path, key_path) as watcher:
+    await serve_until_shutdown(...)
+```
+
+`watcher.shutdown()` is also available for explicit teardown.
+
+## Hand-rolled (no `auth-mtls-fs-watch`)
+
+If you need to rotate without pulling in the `notify` dep —
+or you have an existing webhook source like a cert-manager
+notifier — call `reload_mtls_identity` directly:
 
 ```python
 import asyncio
@@ -31,7 +95,7 @@ oidc = (
 )
 
 async def watch_certs(oidc):
-    # Replace with your real watcher (notify / inotify / cert-manager events).
+    # Replace with your real signal source (webhook event, periodic poll, etc).
     while True:
         await asyncio.sleep(60)
         cert = open("/var/run/secrets/oidc-mtls.crt").read()

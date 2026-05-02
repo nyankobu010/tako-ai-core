@@ -33,6 +33,10 @@ vaultrs            = { version = "0.7", optional = true }
 # Phase 15.B.2 — `url::form_urlencoded` for manual RFC 7662 body
 # construction (workspace `reqwest` is built without `urlencoded`).
 url                = { workspace = true, optional = true }
+# Phase 35 — cross-platform filesystem watcher behind the
+# `mtls-fs-watch` feature. Off by default; only operators wiring
+# `OidcAuthResolver::watch_mtls_files` pay for the dep.
+notify             = { workspace = true, optional = true }
 
 [features]
 # Phase 14.B feature gates. Each enables one `AuthResolver` impl.
@@ -43,6 +47,11 @@ oidc  = ["jwt", "dep:reqwest", "dep:url"]
 # to Vault auth endpoints via reqwest, so the `vault` feature now also
 # pulls in reqwest.
 vault = ["dep:vaultrs", "dep:reqwest"]
+# Phase 35 — opt-in filesystem-watcher integration for OIDC mTLS
+# cert/key auto-reload. Requires `oidc` (the watcher only makes sense
+# if mTLS introspection is wired up). Default `tako-compat` build is
+# unchanged.
+mtls-fs-watch = ["oidc", "dep:notify"]
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }

@@ -333,7 +333,13 @@ impl MtlsClient {
 
     /// Snapshot the current Client for one request. Cheap: an
     /// `Arc::clone` plus a brief `RwLock::read` acquisition.
-    pub(crate) fn current(&self) -> Arc<reqwest::Client> {
+    ///
+    /// Phase 35 widened from `pub(crate)` to `pub` so the
+    /// filesystem-watcher integration tests (and any operator
+    /// observability tooling that wants to log the current client
+    /// identity) can compare snapshots before/after a rotation
+    /// via `Arc::as_ptr`.
+    pub fn current(&self) -> Arc<reqwest::Client> {
         match self.inner.read() {
             Ok(guard) => guard.clone(),
             // Poisoned: another thread panicked while holding
@@ -814,6 +820,65 @@ impl OidcAuthResolver {
     /// Phase 24 [`Self::with_introspection_mtls_combined`] cadence).
     pub fn reload_mtls_identity_combined(&self, combined_pem: &[u8]) -> Result<(), TakoError> {
         self.reload_mtls_identity(combined_pem, combined_pem)
+    }
+
+    /// Phase 35 — minimal in-process constructor used by the
+    /// filesystem-watcher tests. Bypasses discovery entirely;
+    /// the resulting resolver is unsuitable for real auth but
+    /// has just enough state to exercise the
+    /// `with_introspection_*_mtls` builders + the
+    /// `reload_mtls_identity` swap path that the watcher
+    /// invokes.
+    #[cfg(test)]
+    pub(crate) fn new_for_internal_testing(
+        issuer: &str,
+        audience: &str,
+        introspection_uri: Option<&str>,
+    ) -> Self {
+        Self {
+            issuer: issuer.into(),
+            audience: audience.into(),
+            jwks_uri: format!("{issuer}/jwks"),
+            http: reqwest::Client::new(),
+            cache: Arc::new(RwLock::new(Some(CachedJwks {
+                jwks: JwkSet { keys: vec![] },
+                fetched_at: Instant::now(),
+            }))),
+            refresh_interval: DEFAULT_REFRESH_INTERVAL,
+            tenant_claim: DEFAULT_TENANT_CLAIM.into(),
+            user_claim: DEFAULT_USER_CLAIM.into(),
+            roles_claim: DEFAULT_ROLES_CLAIM.into(),
+            discovered_introspection_uri: introspection_uri.map(|s| s.to_string()),
+            discovered_introspection_auth_methods: None,
+            discovered_end_session_uri: None,
+            introspection: None,
+        }
+    }
+
+    /// Phase 35 — `true` when an mTLS identity has been
+    /// configured via [`Self::with_introspection_mtls`] /
+    /// [`Self::with_introspection_self_signed_mtls`]. Used by the
+    /// filesystem-watcher helper to fail-closed early at
+    /// construction time rather than discovering the missing
+    /// configuration on first reload.
+    #[doc(hidden)]
+    pub fn introspection_mtls_configured(&self) -> bool {
+        self.introspection
+            .as_ref()
+            .and_then(|cfg| cfg.mtls_client.as_ref())
+            .is_some()
+    }
+
+    /// Phase 35 — snapshot the current mTLS [`MtlsClient`] holder.
+    /// Returns `None` when no mTLS identity has been configured.
+    /// Mostly useful in tests (`Arc::as_ptr` comparison detects
+    /// rotation) and for observability tooling that wants to log
+    /// the current client identity.
+    #[doc(hidden)]
+    pub fn introspection_mtls_client_arc(&self) -> Option<Arc<MtlsClient>> {
+        self.introspection
+            .as_ref()
+            .and_then(|cfg| cfg.mtls_client.clone())
     }
 
     /// Phase 18.B — return the OIDC Session Management 1.0
