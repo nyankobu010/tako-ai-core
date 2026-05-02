@@ -9,6 +9,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.45.0] - 2026-05-02
+
+Phase 44 — closes the "Custom CA support for non-introspection
+endpoints (JWKS, discovery)" carry-forward from Phase 42's
+out-of-scope section. Phases 42 + 43 covered the operator-
+supplied-CA story for OIDC introspection (the mTLS POST), but
+the resolver-wide HTTP client used by `discover()` for the
+discovery doc fetch + by the JWKS refresh path had no CA
+injection point. Operators behind a private internal CA
+couldn't even **boot** `OidcAuthResolver::discover` against
+their issuer — the discovery GET failed TLS verification
+before the resolver was returned. Phase 44 adds a parallel
+constructor; the rest of the discovery surface is unchanged.
+Plan: [plans/PLAN_PHASE44.md](plans/PLAN_PHASE44.md).
+
+### Added
+
+- **`OidcAuthResolver::discover_with_extra_root(issuer, audience, extra_root_ca_pem)`**
+  — parallel async constructor that builds the resolver-wide
+  [`reqwest::Client`](crates/tako-compat/src/auth/oidc.rs)
+  with an operator-supplied PEM-encoded root CA bundle added
+  to its trust store. Same trust anchor covers BOTH the
+  OIDC discovery doc fetch (during construction) AND every
+  subsequent JWKS refresh, because the resolver holds a single
+  `http` field for non-introspection HTTP. For enterprise
+  self-hosted OIDC issuers (Keycloak / Auth0 self-hosted /
+  Authentik) presenting a server cert signed by a private
+  internal CA. Concatenated multi-cert PEM bundles (root +
+  intermediates) work via `reqwest::Certificate::from_pem_bundle`.
+  PEM parse failures (empty bundle, garbage bytes) raise
+  `TakoError::Invalid` synchronously at construction time —
+  fail-closed at the operator boundary, no runtime
+  surprises. Independent from
+  [`with_introspection_mtls_extra_root`](crates/tako-compat/src/auth/oidc.rs):
+  the introspection mTLS client carries its own CA store;
+  operators with one PKI for the whole stack pass the same
+  PEM bundle to both.
+
+### Tests
+
+- **3 new lib tests** in
+  [`crates/tako-compat/src/auth/oidc.rs`](crates/tako-compat/src/auth/oidc.rs)
+  covering the constructor's fail-closed PEM-parse contract:
+  garbage CA, empty bundle, and the
+  PEM-passes-then-network-error path that proves a valid
+  bundle clears construction and reaches the actual GET.
+- **2 new e2e tests** in
+  [`crates/tako-compat/tests/oidc_mtls_e2e.rs`](crates/tako-compat/tests/oidc_mtls_e2e.rs)
+  exercising HTTPS discovery + JWKS against a per-test
+  `axum-server` rooted at a private `rcgen` CA:
+    - `discover_over_https_with_private_ca_succeeds` — full
+      happy-path: `discover_with_extra_root` →
+      [`resolve(token)`](crates/tako-compat/src/auth/oidc.rs)
+      against the same private-CA issuer (proves the trust
+      anchor flows through to the JWKS path too).
+    - `discover_over_https_without_extra_root_fails` —
+      default `discover()` against the same server →
+      `TakoError::Transport` from the discovery GET (proves
+      the gap this phase closes).
+  Plus `discover_with_extra_root_unparseable_pem_errors_at_constructor_time`
+  in the e2e file pins the fail-closed contract on the
+  full-deps test binary.
+
+### Internal
+
+- New private helper `build_resolver_http_client(extra_root_ca_pem)`
+  in [`crates/tako-compat/src/auth/oidc.rs`](crates/tako-compat/src/auth/oidc.rs)
+  — extracted from the original `discover()` body so both
+  constructors share one Client-construction code path.
+  Mirrors the Phase 42 `build_mtls_reqwest_client` shape
+  (without the client cert / `Identity`, since this client is
+  plain TLS not mTLS).
+- `OidcAuthResolver::discover()` is now a one-line wrapper
+  over a private `discover_inner(...)` async function. No
+  behavior change for the default (public-CA) case.
+
+### Deferred
+
+- **Python facade for `discover_with_extra_root`** — same
+  Rust→Python cadence as Phases 42→43, 39→40, 37→38. Lands
+  in Phase 45.
+
 ## [0.44.0] - 2026-05-02
 
 Phase 43 — closes the Python facade gap on the Phase 42
