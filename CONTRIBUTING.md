@@ -71,8 +71,14 @@ Docs are built with `mkdocs-material`:
 
 ```bash
 uv pip install -e ".[docs]"
-mkdocs serve -f docs/mkdocs.yml
+mkdocs serve
 ```
+
+`mkdocs.yml` lives at the repo root; `mkdocs serve` (no `-f`)
+finds it automatically. The
+[`Build & deploy docs`](.github/workflows/docs.yml)
+workflow publishes the site to GitHub Pages on every push
+to `main`.
 
 ## Good first issues
 
@@ -81,5 +87,10 @@ label.
 
 ## Releasing
 
-Releases are tag-driven. Tag `v0.X.Y` on `main`, push the tag, and the
-`wheels.yml` workflow builds and publishes signed artefacts to PyPI.
+Maintainers cutting a release follow [`RELEASING.md`](RELEASING.md)
+for the full tag → wheels → PyPI flow, including PyPI
+Trusted Publisher configuration and GitHub environment
+setup. The TL;DR is "bump version, stamp `CHANGELOG.md`,
+push tag" — the
+[`Build wheels`](.github/workflows/wheels.yml) workflow
+does the rest.

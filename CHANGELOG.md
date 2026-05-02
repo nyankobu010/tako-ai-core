@@ -9,6 +9,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.51.0] - 2026-05-02
+
+Phase 50 — repo housekeeping for the open-source release.
+After Phase 49 closed the last open backlog item, a
+post-readiness review surfaced five OSS-readiness gaps. This
+phase closes them. **No load-bearing code changes** —
+metadata, CI, and docs only. Plan: [plans/PLAN_PHASE50.md](plans/PLAN_PHASE50.md).
+
+### Removed
+
+- **`prompt.md`** — internal Claude Code planning prompt /
+  full project specification that lived in the repo root.
+  Useful as an internal record during early development;
+  not appropriate for the public repo. The implementation
+  is documented in [`README.md`](README.md) /
+  [`ARCHITECTURE.md`](ARCHITECTURE.md) /
+  [`PLAN.md`](PLAN.md). Was untracked in `git`; removed
+  from the working tree.
+
+### Changed
+
+- **Released wheels are now "fat".**
+  [`.github/workflows/wheels.yml`](.github/workflows/wheels.yml)
+  passes the full pure-Rust feature set
+  (`auth-jwt auth-oidc auth-vault auth-mtls-fs-watch
+  auth-mtls-identity-provider sigstore sigstore-protobuf ws
+  grpc redis`) to `maturin build`. Previously released
+  wheels were slim (no features) so `pip install tako` from
+  PyPI gave a wheel where `JwtAuth` / `OidcAuth` /
+  `VaultAuth` / mTLS rotation / sigstore verification /
+  Redis budget backend were all `None`. Now everything
+  except `OnnxRouter` (which has system-level
+  `libonnxruntime` deps) is functional out of the box.
+  Operators who need ONNX still build from source.
+- **PLAN.md preamble + roadmap refreshed** for the
+  post-backlog era. The backlog list is unchanged in
+  content (every item already closed) but the section
+  intro now flags it as historical-record-only; new work
+  proposals belong as GitHub issues / discussions. The
+  roadmap section drops the "Phase 43 candidates" framing
+  in favour of "operator-driven changes + stability
+  commitment + periodic dependency / security sweeps".
+
+### Added
+
+- **GitHub Pages deploy step** in
+  [`.github/workflows/docs.yml`](.github/workflows/docs.yml).
+  The previous workflow built the mkdocs site under
+  `--strict` but never published it. The new `deploy` job
+  uploads the build as a Pages artefact and publishes via
+  `actions/deploy-pages@v4` on every push to `main`. PR
+  builds run only the `build` job (validates that the docs
+  compile without publishing). Operators must enable
+  GitHub Pages with source = "GitHub Actions" once;
+  documented in [`RELEASING.md`](RELEASING.md).
+- **[`RELEASING.md`](RELEASING.md)** — new top-level doc
+  covering the full release flow: version bump, changelog
+  stamp, tag, what `wheels.yml` does on tag push, and
+  one-time PyPI Trusted Publisher setup (both first-time
+  via "Pending Publisher" and post-API-token migration).
+  Plus a release checklist and a hot-fix process.
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md) "Releasing"
+  section** now points at `RELEASING.md`. Stops repeating
+  the one-line summary that's no longer the whole story.
+  Also fixes the stale `mkdocs serve -f docs/mkdocs.yml`
+  invocation — `mkdocs.yml` lives at the repo root.
+
+### Notes for operators
+
+For the next release to publish to PyPI via Trusted
+Publishing, the project owner needs to (one-time):
+
+1. Configure a Trusted Publisher on PyPI under
+   <https://pypi.org/manage/account/publishing/> with
+   Owner=`nyankobu010`, Repository=`tako-ai-core`,
+   Workflow=`wheels.yml`, Environment=`pypi`. PyPI's
+   "Pending Publisher" feature works before the project
+   exists on PyPI.
+2. Create the GitHub `pypi` environment under repo
+   settings → Environments → New environment.
+3. Enable GitHub Pages with source = "GitHub Actions"
+   under repo settings → Pages.
+
+[`RELEASING.md`](RELEASING.md) walks through each.
+
 ## [0.50.0] - 2026-05-02
 
 Phase 49 — closes the **last open backlog item** in

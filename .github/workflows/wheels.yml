@@ -29,11 +29,21 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      # Phase 50.B — released wheels bake in every pure-Rust feature
+      # (auth-*, sigstore*, ws, grpc, redis) so `pip install tako`
+      # gives a wheel where `JwtAuth` / `OidcAuth` / `VaultAuth` /
+      # mTLS rotation / sigstore verification / Redis budget backend
+      # are all functional out of the box. The only feature kept
+      # opt-in is `onnx`, because ONNX Runtime has system-level
+      # dynamic-library deps that would require per-platform
+      # bundling. Operators who need `OnnxRouter` build from source.
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || '' }}
-          args: --release --locked --compatibility pypi
+          args: >-
+            --release --locked --compatibility pypi
+            --features "auth-jwt auth-oidc auth-vault auth-mtls-fs-watch auth-mtls-identity-provider sigstore sigstore-protobuf ws grpc redis"
       - uses: actions/upload-artifact@v5
         with:
           name: wheels-${{ matrix.target }}

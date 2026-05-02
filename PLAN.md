@@ -67,55 +67,70 @@ synopsis and quickstart.
 | 46 — Phase-1 placeholder sweep | v0.47.0 | done (2026-05-02) | [plans/PLAN_PHASE46.md](plans/PLAN_PHASE46.md) | [`## [0.47.0]`](CHANGELOG.md) |
 | 47 — OTel real-collector e2e test | v0.48.0 | done (2026-05-02) | [plans/PLAN_PHASE47.md](plans/PLAN_PHASE47.md) | [`## [0.48.0]`](CHANGELOG.md) |
 | 48 — Stable Vertex tool-call IDs in streaming | v0.49.0 | done (2026-05-02) | [plans/PLAN_PHASE48.md](plans/PLAN_PHASE48.md) | [`## [0.49.0]`](CHANGELOG.md) |
-| 49 — Eval harness patch grader | v0.50.0 | in progress | [plans/PLAN_PHASE49.md](plans/PLAN_PHASE49.md) | [`## [0.50.0]`](CHANGELOG.md) |
+| 49 — Eval harness patch grader | v0.50.0 | done (2026-05-02) | [plans/PLAN_PHASE49.md](plans/PLAN_PHASE49.md) | [`## [0.50.0]`](CHANGELOG.md) |
+| 50 — Open-source release prep + PyPI Trusted Publisher | v0.51.0 | in progress | [plans/PLAN_PHASE50.md](plans/PLAN_PHASE50.md) | [`## [0.51.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 43 candidates (indicative, not yet committed)
+After **Phase 49** (v0.50.0) the
+["Backlog (uncommitted)"](#backlog-uncommitted) list below
+has **zero open items** — every line is a closed-by-Phase-N
+checkmark.
+After **Phase 50** (v0.51.0) the repo is OSS-release-ready
+(fat wheels, GitHub Pages docs deploy,
+[`RELEASING.md`](RELEASING.md), PyPI Trusted Publisher
+documentation). The project's posture shifts from
+"backlog-driven phases" to:
 
-After Phase 41 the dependabot security backlog is empty (the
-jsonwebtoken Type-Confusion advisory is closed; the three
-rustls-webpki advisories are accepted-risk transitive pins
-documented in [`.cargo/audit.toml`](.cargo/audit.toml) and
-dismissed on the dependabot side). After Phase 40 the entire
-Phase 33 mTLS rotation surface — Rust core (Phases
-33/35/37/39) plus Python facade (Phases 35.B / 38 / 40) —
-is feature-complete. After Phase 42 the OIDC mTLS surface
-also has end-to-end test coverage (real `rcgen` per-test CA
-+ `axum-server` rustls + `RequireAndVerifyClientCert`
-handshake + full `resolve()` round-trip). The remaining
-items are broader-roadmap work:
+1. **Operator-driven changes** — respond to issues / PRs /
+   feature requests. Each lands in its own phase plan.
+2. **Stability commitment** — public APIs from earlier
+   phases never regress. Every minor bump that touches a
+   public surface goes through the deprecation cycle in
+   [`RELEASING.md`](RELEASING.md).
+3. **Periodic dependency / security sweeps** —
+   [`Security`](.github/workflows/security.yml) runs daily;
+   advisories that need a code change get phase-tracked
+   (cf. Phase 41 jsonwebtoken bump).
+
+### Pre-committed-but-deferred items (no current operator ask)
+
+These are flagged for traceability — the design space is
+clear but no one has asked, so they sit:
+
 - **Wildcard at non-leftmost positions** — patterns like
-  `registry.*.corp` (wildcard in middle). Phase 31 ships only
-  the leftmost-`*.` convention. Probably never worth shipping
-  unless a real operator asks.
+  `registry.*.corp` (wildcard in middle). Phase 31 ships
+  only the leftmost-`*.` convention. Probably never worth
+  shipping unless a real operator asks.
 - **Strict-allowlist mode** — currently all allowlists are
   per-rule BYPASSes of the blocklist. A strict mode would
-  REQUIRE every URL host to match an allowlist entry. No
-  operator ask yet.
-- **Custom CA support for non-introspection endpoints
-  (JWKS, discovery)**. Phase 42 ships custom CA injection
-  for the introspection mTLS client (`with_introspection_mtls_extra_root`);
-  the resolver-wide HTTP client used for discovery + JWKS is
-  built inside `discover()` with no public injection point.
-  Adding a `with_extra_root_ca` builder for the resolver-wide
-  client is a larger ask (touches discovery boot path,
-  `discover()` signature, `Client` lifecycle). Defer until an
-  operator with a fully-private OIDC issuer asks.
-- **Vertex File API upload flow** — separate API surface; the
-  Phase 23 `VxFileData` already accepts uploaded URIs.
-- **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
-  needs a sandboxed runner.
-- **OIDC refresh-token / revocation-endpoint flows** — tako as
-  token *consumer* rather than validator.
+  REQUIRE every URL host to match an allowlist entry.
+- **Vertex File API upload flow** — separate API surface;
+  the Phase 23 `VxFileData` already accepts uploaded URIs.
+- **OIDC refresh-token / revocation-endpoint flows** —
+  `tako` as token *consumer* rather than validator.
 - **`TakoError::Provider` short-circuit** — vendor-error
-  short-circuit warrants finer discrimination on the embedded
-  error. The Phase 36 per-child override surface is the natural
-  place to land a `ChildShortCircuitPolicy::ProviderClassify(_)`
-  variant once the discrimination is designed.
+  short-circuit warrants finer discrimination on the
+  embedded error. The Phase 36 per-child override surface
+  is the natural place to land a
+  `ChildShortCircuitPolicy::ProviderClassify(_)` variant
+  once the discrimination is designed.
+- **OTel HTTP/protobuf exporter** — `tako-governance` only
+  exposes the gRPC path today.
+- **OTel metrics + logs exports** — only traces are
+  exported.
+- **Real SWE-Bench grading: `PASS_TO_PASS`** — Phase 49
+  checks `FAIL_TO_PASS` only.
+- **Real SWE-Bench grading: non-pytest test runners** —
+  Phase 49 hard-codes pytest in the SWE-Bench adapter.
+- **Sandboxed (Docker) runner for the patch grader** —
+  Phase 49 uses `subprocess` directly; operators wrap in
+  a container themselves.
+- **`PASS_TO_PASS` verification + per-`(repo, sha)` clone
+  cache** for the Phase 49 patch grader.
 
 ### Beyond (speculative)
 
@@ -128,10 +143,13 @@ items are broader-roadmap work:
 
 ### Backlog (uncommitted)
 
-Items surfaced from a 2026-04-30 audit of phase markers across the codebase.
-Not yet slotted into a phase; recorded here so they don't get lost between
-phase transitions. File/line references point at the stale marker, not at
-where the fix would land.
+Historical record of items surfaced from a 2026-04-30 audit of
+phase markers across the codebase. **All items below are now
+closed** — every entry is a closed-by-Phase-N checkmark with a
+pointer to the closing phase. Kept for traceability rather
+than for active tracking. New work proposals belong as GitHub
+issues / discussions; closed items + the [Roadmap](#roadmap)
+above describe the project's lineage.
 
 #### Stale phase markers — promised but not delivered
 

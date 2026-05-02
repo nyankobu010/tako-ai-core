@@ -1,19 +1,27 @@
-name: Build docs
+name: Build & deploy docs
 
 on:
   push:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'mkdocs.yml'
       - 'python/tako/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
+
+# Cancel in-progress deploys when a newer commit lands on main —
+# the GitHub Pages deploy job is single-flight per environment.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build mkdocs site
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -32,3 +40,27 @@ jobs:
 
       - name: Build site
         run: mkdocs build --strict
+
+      # Phase 50.C — upload the built `./site` directory as a
+      # GitHub Pages artefact so the `deploy` job can publish it.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+  # Phase 50.C — deploy to GitHub Pages on main only. Pull-request
+  # builds run only the `build` job above (validates that the docs
+  # compile under `--strict` without publishing).
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write       # to deploy
+      id-token: write    # OIDC for actions/deploy-pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
