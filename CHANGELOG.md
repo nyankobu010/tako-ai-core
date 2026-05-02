@@ -9,6 +9,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.50.0] - 2026-05-02
+
+Phase 49 — closes the **last open backlog item** in
+[PLAN.md](PLAN.md): "Eval harness real graders". Until now,
+SWE-Bench-style "fix this issue" tasks were graded by
+substring-matching a filename in the model's prose output —
+functional but not real grading. Phase 49 adds a real patch
+grader that clones the target repo, applies the model's diff,
+and runs the test suite. Plan: [plans/PLAN_PHASE49.md](plans/PLAN_PHASE49.md).
+
+### Added
+
+- **`tako.eval.PatchSpec`** ([python/tako/eval/grader.py](python/tako/eval/grader.py))
+  — Pydantic model holding the repo URL, base commit SHA,
+  ``argv``-style test command, and per-step timeouts for a
+  real-grader task. Independent of any specific dataset; works
+  with any task whose model output is a unified diff.
+- **`tako.eval.grade_patch(spec, model_output) -> (bool, log)`**
+  — async runner. Creates a per-call `tempfile.TemporaryDirectory`,
+  ``git clone``s ``spec.repo``, checks out ``spec.base_commit``,
+  applies ``model_output`` as a unified diff via ``git apply``
+  (with a ``--check`` pass first to surface malformed patches),
+  runs ``spec.test_command`` with a wall-clock timeout, and
+  returns ``(True, log_excerpt)`` iff the test exits 0. All
+  failure modes (clone error, malformed patch, test failure,
+  timeout) surface as ``(False, <reason>)`` — never raise.
+- **`Task.verify_patch: PatchSpec | None`** ([python/tako/eval/harness.py](python/tako/eval/harness.py))
+  — new optional field. Coexists with the Phase-1
+  ``expected_substring`` / ``expected_regex`` fields; tasks pick
+  exactly one verifier mode.
+- **`Task.verify_async(output) -> bool`** — async dispatcher that
+  routes to ``grade_patch`` for patch tasks and to the existing
+  sync ``passes()`` for substring/regex tasks. The harness uses
+  this; ``passes()`` remains for callers that haven't migrated.
+- **`Eval.allow_unsafe_grader: bool = False`** — security gate.
+  When the dataset contains any patch task and this flag is
+  ``False`` (the default), ``Eval.run()`` raises ``ValueError``
+  rather than silently shelling out. Surfaces the threat model
+  explicitly: subprocess-based graders run model-generated
+  code, which is unsafe with untrusted models. Operators
+  wanting isolation wrap the eval in their own container; tako
+  is the substrate, not the runtime.
+- **`load_swe_bench_lite(grader="patch")`** ([python/tako/eval/datasets/external.py](python/tako/eval/datasets/external.py))
+  — opt-in real-grader mode for SWE-Bench. Builds a ``PatchSpec``
+  per row pointing at ``https://github.com/{repo}.git`` at
+  ``base_commit``, with ``test_command = ["pytest", "-x", *FAIL_TO_PASS[:5]]``.
+  The default ``grader="filename"`` keeps the Phase 4 lightweight
+  substring-match behaviour for back-compat.
+
+### Tests
+
+- **`tests/python/test_phase49_patch_grader.py`** — 16 new tests:
+    - PatchSpec validation (required fields, defaults, type errors).
+    - End-to-end happy path: a fresh ``git`` repo with a failing
+      pytest is checked into ``tmp_path``; the fixture generates a
+      real ``git diff`` (not hand-crafted PEM-style — would fail
+      ``git apply --check`` on hunk header counts) that fixes the
+      bug; the grader applies it and pytest exits 0.
+    - Negative paths: non-applying patch, applying patch that
+      doesn't fix the test, apply timeout, empty test command.
+    - ``Task.verify_async`` dispatch via monkeypatched grader.
+    - ``Eval`` security gate raises without
+      ``allow_unsafe_grader=True`` and runs end-to-end with it.
+    - SWE-Bench adapter: builds correct ``PatchSpec``, caps
+      ``FAIL_TO_PASS`` at 5, tolerates missing ``FAIL_TO_PASS``,
+      ``grader="patch"`` vs ``grader="filename"`` route to
+      different adapters.
+  All tests are self-contained — they use ``file://`` URIs to a
+  per-test ``tmp_path`` repo so no network is required.
+
+### Docs
+
+- Module docstrings on
+  [`harness.py`](python/tako/eval/harness.py) and
+  [`external.py`](python/tako/eval/datasets/external.py) updated
+  to remove "deferred to a later phase" caveats and document
+  the patch verifier mode + security model.
+
+### Backlog status
+
+- [PLAN.md](PLAN.md)'s open backlog list is now **empty**.
+  Forty-nine numbered phases from Phase 1's Rust foundation
+  through Phase 49's real grader. No carry-forward items.
+
 ## [0.49.0] - 2026-05-02
 
 Phase 48 — extends the Phase 46.C stable tool-call ID
