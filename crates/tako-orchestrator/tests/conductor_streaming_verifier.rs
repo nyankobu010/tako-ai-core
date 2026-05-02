@@ -531,10 +531,10 @@ async fn conductor_stream_bounded_backpressure_high_delta_count() {
         .await;
     let mut partial_scores = 0_usize;
     while let Some(ev) = stream.next().await {
-        if let OrchEvent::VerifierScore { score, .. } = ev.unwrap() {
-            if (score - 0.5).abs() < 1e-6 {
-                partial_scores += 1;
-            }
+        if let OrchEvent::VerifierScore { score, .. } = ev.unwrap()
+            && (score - 0.5).abs() < 1e-6
+        {
+            partial_scores += 1;
         }
     }
 

@@ -60,11 +60,10 @@ pub fn into_chat_stream(
                         let mut tool_calls: Vec<ToolCallDelta> = Vec::new();
                         if let Some(c) = cand.content {
                             for part in c.parts {
-                                if let Some(t) = part.text {
-                                    if !t.is_empty() {
+                                if let Some(t) = part.text
+                                    && !t.is_empty() {
                                         text_buf.push_str(&t);
                                     }
-                                }
                                 if let Some(fc) = part.function_call {
                                     tool_calls.push(ToolCallDelta {
                                         index: tool_call_index,

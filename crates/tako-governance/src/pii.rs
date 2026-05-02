@@ -122,7 +122,7 @@ fn luhn_check(s: &str) -> bool {
         }
         sum += x;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Found PII span.
@@ -138,10 +138,10 @@ pub fn detect(input: &str) -> Vec<PiiHit> {
     let mut hits: Vec<PiiHit> = Vec::new();
     for rule in compiled_rules() {
         for m in rule.re.find_iter(input) {
-            if let Some(v) = rule.validate {
-                if !v(m.as_str()) {
-                    continue;
-                }
+            if let Some(v) = rule.validate
+                && !v(m.as_str())
+            {
+                continue;
             }
             hits.push(PiiHit {
                 kind: rule.kind,

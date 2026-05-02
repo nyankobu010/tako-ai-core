@@ -365,10 +365,10 @@ pub fn from_vertex_response(resp: VxResponse) -> Result<ChatResponse, TakoError>
 
     if let Some(c) = candidate.content {
         for part in c.parts {
-            if let Some(text) = part.text {
-                if !text.is_empty() {
-                    content.push(ContentPart::Text { text });
-                }
+            if let Some(text) = part.text
+                && !text.is_empty()
+            {
+                content.push(ContentPart::Text { text });
             }
             if let Some(fc) = part.function_call {
                 had_tool_call = true;

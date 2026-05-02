@@ -1,0 +1,61 @@
+# cargo-audit configuration for tako-ai-core.
+#
+# Each entry below ignores a specific RUSTSEC advisory with a documented
+# rationale and a re-evaluation trigger. NEVER add an entry here without
+# the rationale + trigger fields filled in. NEVER ignore an advisory
+# whose vulnerable crate is in our direct dependency graph (i.e. we own
+# the upgrade); only transitives where the upstream patch path is
+# blocked.
+#
+# Re-evaluate this file every time:
+#   - aws-config / aws-sdk-* gets bumped (rustls 0.21 → 0.23 unblocks
+#     three rustls-webpki advisories in one go).
+#   - sigstore gets bumped past 0.13 (the rsa Marvin Attack advisory
+#     should clear when sigstore moves off rsa 0.9.x).
+#   - regorus gets bumped past 0.9 (bincode 2.0.1 unmaintained warning
+#     should clear when regorus picks an alternative encoder).
+
+[advisories]
+ignore = [
+    # ────────────────────────────────────────────────────────────────
+    # Critical / high severity — KEEP THIS LIST AT ZERO ENTRIES.
+    # ────────────────────────────────────────────────────────────────
+    # If a CVE lands here, treat it as a P0: file the issue, ping the
+    # transitive owner, and consider a vendored patch. Don't ignore
+    # without an active mitigation plan.
+
+    # ────────────────────────────────────────────────────────────────
+    # Sidechannel / theoretical — accept the risk where our threat
+    # model doesn't include attacker-observable timing.
+    # ────────────────────────────────────────────────────────────────
+    "RUSTSEC-2023-0071", # rsa@0.9.x — Marvin Attack timing sidechannel.
+                          # Reachable via sigstore 0.13.0. No upstream
+                          # patch (RustCrypto/RSA#19 is the tracking
+                          # issue; constant-time rewrite is in progress).
+                          # Tako only uses rsa via sigstore for offline
+                          # tool-catalogue verification — there's no
+                          # network-observable timing surface in our
+                          # code path. Re-evaluate when sigstore cuts a
+                          # release pinning rsa >= patched-version.
+
+    # ────────────────────────────────────────────────────────────────
+    # rustls 0.21 chain — pinned by the AWS SDK
+    # ────────────────────────────────────────────────────────────────
+    # All three rustls-webpki advisories are in 0.101.x, patched in
+    # 0.103.13+. Reachable via rustls 0.21.12 ← aws-smithy-http-client
+    # ← aws-config / aws-sdk-bedrockruntime / aws-sdk-secretsmanager.
+    # We can't bump rustls without AWS bumping; awslabs/aws-sdk-rust
+    # tracks the rustls 0.23 migration in awslabs/aws-sdk-rust#1295.
+    # Mitigation: tako never parses CRLs or uses URI-based name
+    # constraints — none of these code paths are exercised.
+    "RUSTSEC-2026-0104", # rustls-webpki: panic in CRL parsing.
+    "RUSTSEC-2026-0098", # rustls-webpki: URI name constraints accepted.
+    "RUSTSEC-2026-0099", # rustls-webpki: wildcard cert name constraints.
+
+    # ────────────────────────────────────────────────────────────────
+    # Unmaintained warnings (informational, transitive only)
+    # ────────────────────────────────────────────────────────────────
+    "RUSTSEC-2025-0141", # bincode@2.0.1 — unmaintained. Reachable via
+                          # regorus 0.9 (OPA/Rego policy engine). Wait
+                          # for regorus to switch encoders.
+]
