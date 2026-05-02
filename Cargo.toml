@@ -106,7 +106,13 @@ prost              = "0.14"
 tokio-stream       = "0.1"
 
 # PyO3 (Phase 1 wheel target)
-pyo3               = { version = "0.28", features = ["extension-module", "abi3-py310"] }
+# `generate-import-lib` lets PyO3 emit the Windows import library at
+# build time without needing a target-arch Python install — required
+# for the wheels CI's `aarch64-pc-windows-msvc` cross-compile, where
+# the x64 host Python is rejected by maturin for arch mismatch. The
+# underlying `python3-dll-a` dep is gated on `cfg(target_family =
+# "windows")` so this is a no-op on Linux / macOS.
+pyo3               = { version = "0.28", features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 
 # AWS (Phase 2 Bedrock provider, Phase 2.5 Secrets Manager resolver)
