@@ -22,7 +22,13 @@ class Role(str, Enum):
 
 
 class ContentPart(BaseModel):
-    """A typed content block: text, image, tool_call, or tool_result."""
+    """A typed content block: text, image, image_url, tool_call, or tool_result.
+
+    Phase 22 added the ``image_url`` variant — a URL the provider's API
+    server fetches (Anthropic, OpenAI, Mistral). Use ``url=...`` (HTTPS
+    only) and optionally ``mime=...`` as a hint; ``data_b64`` stays
+    ``None`` for URL-source images.
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -30,6 +36,10 @@ class ContentPart(BaseModel):
     text: str | None = None
     mime: str | None = None
     data_b64: str | None = None
+    # Phase 22 — URL-source images. `url` carries an `https://...`
+    # string for `type="image_url"`; the vendor's API server fetches
+    # it. Mutually exclusive with `data_b64` in practice.
+    url: str | None = None
     id: str | None = None
     name: str | None = None
     args: dict[str, Any] | None = None

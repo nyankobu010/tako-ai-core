@@ -19,11 +19,11 @@ members = [
 ]
 
 [workspace.package]
-version      = "0.17.0"
+version      = "0.35.0"
 edition      = "2024"
 rust-version = "1.85"
 license      = "Apache-2.0"
-repository   = "https://github.com/TODO(<org>)/tako-ai-core"
+repository   = "https://github.com/nyankobu010/tako-ai-core"
 authors      = ["The tako contributors"]
 
 [workspace.lints.rust]
@@ -107,6 +107,11 @@ aws-sdk-secretsmanager  = { version = "1.83", default-features = false, features
 # encoding (Phase 2.5 cloud resolvers + Bedrock binary blobs)
 base64                  = "0.22"
 
+# Phase 32 — IPv4 / IPv6 CIDR networks for the URL pre-fetch
+# allowlist on Bedrock + Ollama. Small (~7 KB), zero
+# transitive deps.
+ipnet                   = "2"
+
 # ML inference (Phase 3 Trinity router; OnnxRouter behind `onnx` feature)
 ort                     = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "ndarray"] }
 ndarray                 = "0.16"
@@ -129,20 +134,20 @@ wiremock           = "0.6"
 proptest           = "1"
 
 # crates internal
-tako-core          = { path = "crates/tako-core",                   version = "0.17.0" }
-tako-runtime       = { path = "crates/tako-runtime",                version = "0.17.0" }
-tako-mcp          = { path = "crates/tako-mcp",                    version = "0.17.0" }
-tako-orchestrator = { path = "crates/tako-orchestrator",           version = "0.17.0" }
-tako-governance   = { path = "crates/tako-governance",             version = "0.17.0" }
-tako-providers-anthropic    = { path = "crates/tako-providers/anthropic",    version = "0.17.0" }
-tako-providers-openai       = { path = "crates/tako-providers/openai",       version = "0.17.0" }
-tako-providers-azure-openai = { path = "crates/tako-providers/azure-openai", version = "0.17.0" }
-tako-providers-http-generic = { path = "crates/tako-providers/http-generic", version = "0.17.0" }
-tako-providers-bedrock      = { path = "crates/tako-providers/bedrock",      version = "0.17.0" }
-tako-providers-vertex       = { path = "crates/tako-providers/vertex",       version = "0.17.0" }
-tako-providers-mistral      = { path = "crates/tako-providers/mistral",      version = "0.17.0" }
-tako-providers-ollama       = { path = "crates/tako-providers/ollama",       version = "0.17.0" }
-tako-compat                 = { path = "crates/tako-compat",                 version = "0.17.0" }
+tako-core          = { path = "crates/tako-core",                   version = "0.35.0" }
+tako-runtime       = { path = "crates/tako-runtime",                version = "0.35.0" }
+tako-mcp          = { path = "crates/tako-mcp",                    version = "0.35.0" }
+tako-orchestrator = { path = "crates/tako-orchestrator",           version = "0.35.0" }
+tako-governance   = { path = "crates/tako-governance",             version = "0.35.0" }
+tako-providers-anthropic    = { path = "crates/tako-providers/anthropic",    version = "0.35.0" }
+tako-providers-openai       = { path = "crates/tako-providers/openai",       version = "0.35.0" }
+tako-providers-azure-openai = { path = "crates/tako-providers/azure-openai", version = "0.35.0" }
+tako-providers-http-generic = { path = "crates/tako-providers/http-generic", version = "0.35.0" }
+tako-providers-bedrock      = { path = "crates/tako-providers/bedrock",      version = "0.35.0" }
+tako-providers-vertex       = { path = "crates/tako-providers/vertex",       version = "0.35.0" }
+tako-providers-mistral      = { path = "crates/tako-providers/mistral",      version = "0.35.0" }
+tako-providers-ollama       = { path = "crates/tako-providers/ollama",       version = "0.35.0" }
+tako-compat                 = { path = "crates/tako-compat",                 version = "0.35.0" }
 
 [profile.release]
 lto           = "thin"

@@ -13,14 +13,12 @@ only — full LocalStack-backed coverage is out of scope.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import pytest
-
 import tako
 
 
@@ -31,7 +29,7 @@ def _serve_once(
     given path -> body map. Returns (base_url, server, thread)."""
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802 — stdlib API
+        def do_GET(self):
             for path, payload in routes.items():
                 if self.path.startswith(path):
                     self.send_response(200)
@@ -44,7 +42,7 @@ def _serve_once(
             self.send_response(404)
             self.end_headers()
 
-        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        def log_message(self, format: str, *args: Any) -> None:
             return  # silence default access log
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

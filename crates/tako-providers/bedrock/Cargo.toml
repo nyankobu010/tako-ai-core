@@ -23,6 +23,11 @@ aws-config             = { workspace = true }
 aws-sdk-bedrockruntime = { workspace = true }
 aws-smithy-types       = "1"
 async-stream           = "0.3"
+# Phase 28.A — opt-in tako-side URL-source image pre-fetch.
+reqwest                = { workspace = true }
+# Phase 32.A — CIDR allowlist for URL pre-fetch.
+ipnet                  = { workspace = true }
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full"] }
+wiremock           = { workspace = true }

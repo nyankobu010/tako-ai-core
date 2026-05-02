@@ -113,9 +113,10 @@ fn extract_orchestrator(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn Orc
     ))
 }
 
-/// Phase 14.B — downcast `auth` to one of the supported resolver
-/// pyclasses. Each variant is gated on its `auth-*` cargo feature so
-/// default wheels still build without the optional dep trees.
+/// Phase 14.B / 21.B — downcast `auth` to one of the supported
+/// resolver pyclasses. JWT / OIDC / Vault are gated on their
+/// `auth-*` cargo features so default wheels still build without
+/// the optional dep trees; `ChainedAuth` (Phase 21.B) is always-on.
 fn extract_auth_resolver(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn AuthResolver>> {
     let bound = obj.bind(py);
     #[cfg(feature = "auth-jwt")]
@@ -132,9 +133,16 @@ fn extract_auth_resolver(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn Au
         let vault = a.borrow();
         return Ok(Arc::clone(&vault.inner) as Arc<dyn AuthResolver>);
     }
+    // Phase 21.B — composite resolver. Recursive: a `ChainedAuth`
+    // can contain another `ChainedAuth` (the chained.rs
+    // `chained_can_nest` test pins this on the Rust side).
+    if let Ok(a) = bound.cast::<PyChainedAuth>() {
+        let chained = a.borrow();
+        return Ok(Arc::clone(&chained.inner) as Arc<dyn AuthResolver>);
+    }
     let _ = bound;
     Err(PyValueError::new_err(
-        "auth must be one of: tako._native.JwtAuth, OidcAuth, VaultAuth (build the wheel with the matching auth-* feature)",
+        "auth must be one of: tako._native.JwtAuth, OidcAuth, VaultAuth, ChainedAuth (build the wheel with the matching auth-* feature for JWT / OIDC / Vault)",
     ))
 }
 
@@ -317,9 +325,16 @@ impl PyOidcAuth {
         PyOidcAuth { inner: Arc::new(r) }
     }
 
-    /// Phase 16.B.2 — set the RFC 7662 §2.1 introspection-endpoint
-    /// auth method. Accepts case-insensitive `"basic"` (default,
-    /// HTTP Basic header) or `"post"` (credentials in form body).
+    /// Phase 16.B.2 / 17.B / 18.A — set the RFC 7662 §2.1
+    /// introspection-endpoint auth method. Accepts case-insensitive
+    /// aliases: `"basic"` / `"client_secret_basic"` (default; HTTP
+    /// Basic header), `"post"` / `"client_secret_post"` (credentials
+    /// in form body), `"jwt"` / `"client_secret_jwt"` (Phase 17.B;
+    /// HS256-signed JWT client assertion per RFC 7521 / 7523), or
+    /// `"private_key_jwt"` / `"private-key-jwt"` (Phase 18.A;
+    /// asymmetric RS256 / ES256 / EdDSA JWT — requires a key
+    /// loaded via one of the
+    /// `with_introspection_jwt_*_pem` builders below).
     /// Any other value raises `ValueError`. Silent no-op when no
     /// introspection config has been attached yet.
     fn with_introspection_auth_method(&self, auth_method: &str) -> PyResult<Self> {
@@ -328,15 +343,209 @@ impl PyOidcAuth {
                 tako_compat::IntrospectionAuthMethod::ClientSecretBasic
             }
             "post" | "client_secret_post" => tako_compat::IntrospectionAuthMethod::ClientSecretPost,
+            "jwt" | "client_secret_jwt" => tako_compat::IntrospectionAuthMethod::ClientSecretJwt,
+            "private_key_jwt" | "private-key-jwt" => {
+                tako_compat::IntrospectionAuthMethod::PrivateKeyJwt
+            }
+            // Phase 24.B — RFC 8705 §2.1 CA-backed mTLS. Three
+            // case-insensitive aliases: spec name, kebab variant,
+            // operator-friendly shorthand.
+            "tls_client_auth" | "tls-client-auth" | "mtls" => {
+                tako_compat::IntrospectionAuthMethod::TlsClientAuth
+            }
+            // Phase 25.B — RFC 8705 §2.2 self-signed mTLS.
+            // Issuer matches the cert against a pre-registered
+            // thumbprint or fingerprint instead of a CA chain.
+            // Four case-insensitive aliases: spec name, kebab
+            // variant, two operator-friendly shorthands.
+            "self_signed_tls_client_auth"
+            | "self-signed-tls-client-auth"
+            | "self_signed_mtls"
+            | "self-signed-mtls" => tako_compat::IntrospectionAuthMethod::SelfSignedTlsClientAuth,
             other => {
                 return Err(PyValueError::new_err(format!(
-                    "auth_method must be one of: 'basic' / 'client_secret_basic' / 'post' / 'client_secret_post' (got {other:?})",
+                    "auth_method must be one of: 'basic' / 'client_secret_basic' / \
+                     'post' / 'client_secret_post' / 'jwt' / 'client_secret_jwt' / \
+                     'private_key_jwt' / 'tls_client_auth' / 'mtls' / \
+                     'self_signed_tls_client_auth' / 'self_signed_mtls' \
+                     (got {other:?})",
                 )));
             }
         };
         let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
         let r = cloned.with_introspection_auth_method(am);
         Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 17.A / 18.A — auto-select the introspection-endpoint
+    /// auth method against the issuer's RFC 8414
+    /// `introspection_endpoint_auth_methods_supported` list captured
+    /// during discovery. Returns a NEW `OidcAuth`. Silent no-op
+    /// (returns a clone) when no introspection config has been
+    /// attached yet. Raises `ValueError` when discovery advertised
+    /// a list with no supported variant (so the operator notices at
+    /// builder time rather than at HTTP-401 from the introspection
+    /// endpoint).
+    ///
+    /// Preference order (Phase 18.A):
+    /// `private_key_jwt` (only when an asymmetric key is loaded via
+    /// `with_introspection_jwt_*_pem`) →
+    /// `client_secret_jwt` (only when a `client_secret` is
+    /// configured — HS256 needs the symmetric key) →
+    /// `client_secret_basic` → `client_secret_post`.
+    fn with_introspection_auth_method_from_discovery(&self) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_auth_method_from_discovery()
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 18.A — load an RSA private-key PEM (PKCS#8 or
+    /// SEC1-style) and switch the introspection auth method to
+    /// `private_key_jwt` (RFC 7521 / 7523, RS256). Returns a NEW
+    /// `OidcAuth`. Silent no-op when no introspection config has
+    /// been attached yet. Raises `ValueError` on PEM parse failure.
+    fn with_introspection_jwt_rs256_pem(&self, pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_jwt_rs256_pem(pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 18.A — ES256 sibling of
+    /// [`Self::with_introspection_jwt_rs256_pem`].
+    fn with_introspection_jwt_es256_pem(&self, pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_jwt_es256_pem(pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 18.A — EdDSA sibling of
+    /// [`Self::with_introspection_jwt_rs256_pem`].
+    fn with_introspection_jwt_ed25519_pem(&self, pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_jwt_ed25519_pem(pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 24.B — load a client cert + private key from separate
+    /// PEM blobs, build an mTLS-enabled HTTP client, and switch the
+    /// introspection auth method to `tls_client_auth` (RFC 8705).
+    /// Returns a NEW `OidcAuth`. Raises `ValueError` on PEM parse
+    /// failure or `reqwest::Client` build failure.
+    ///
+    /// The `cert_pem` should be a PEM-encoded X.509 certificate
+    /// (or chain); `key_pem` should be a PKCS#8 or SEC1-encoded
+    /// private key matching the cert.
+    fn with_introspection_mtls(&self, cert_pem: &[u8], key_pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_mtls(cert_pem, key_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 24.B — convenience for combined PEM blobs (the common
+    /// `cat cert.pem key.pem` form). Same behaviour as
+    /// [`Self::with_introspection_mtls`] with the same blob passed
+    /// twice.
+    fn with_introspection_mtls_combined(&self, combined_pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_mtls_combined(combined_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 25.B — load a client cert + private key, build an
+    /// mTLS-enabled HTTP client, and switch the introspection
+    /// auth method to RFC 8705 §2.2 `self_signed_tls_client_auth`.
+    /// Identical wire shape to
+    /// [`Self::with_introspection_mtls`]; the only difference is
+    /// the auth-method enum variant. Returns a NEW `OidcAuth`.
+    /// Raises `ValueError` on PEM parse / `Client` build failure.
+    fn with_introspection_self_signed_mtls(
+        &self,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_self_signed_mtls(cert_pem, key_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 25.B — convenience for combined PEM blobs (the
+    /// common `cat cert.pem key.pem` form). Self-signed sibling
+    /// of [`Self::with_introspection_mtls_combined`].
+    fn with_introspection_self_signed_mtls_combined(&self, combined_pem: &[u8]) -> PyResult<Self> {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let r = cloned
+            .with_introspection_self_signed_mtls_combined(combined_pem)
+            .map_err(map_err)?;
+        Ok(PyOidcAuth { inner: Arc::new(r) })
+    }
+
+    /// Phase 33 — atomically replace the mTLS identity used for
+    /// OIDC introspection POSTs without rebuilding the resolver.
+    /// Useful for cert rotation in long-running deployments
+    /// (cert-manager webhook, Vault PKI rotation, filesystem
+    /// watcher, periodic poll).
+    ///
+    /// Mutates state in place via internal mutability (does NOT
+    /// return a new `OidcAuth`). The swap is atomic from the
+    /// request handler's perspective: concurrent introspection
+    /// POSTs either see the old Client or the new one — never a
+    /// torn state.
+    ///
+    /// Raises `ValueError` when no prior `with_introspection_mtls`
+    /// or `with_introspection_self_signed_mtls` call has been
+    /// made (operator error rather than silent no-op). Raises
+    /// `ValueError` on PEM parse / `Client` build failure AND
+    /// leaves the previously installed Client unchanged.
+    fn reload_mtls_identity(&self, cert_pem: &[u8], key_pem: &[u8]) -> PyResult<()> {
+        self.inner
+            .reload_mtls_identity(cert_pem, key_pem)
+            .map_err(map_err)
+    }
+
+    /// Phase 33 — convenience for combined PEM blobs (the common
+    /// `cat cert.pem key.pem` form). Mirrors
+    /// [`Self::with_introspection_mtls_combined`]'s cadence.
+    fn reload_mtls_identity_combined(&self, combined_pem: &[u8]) -> PyResult<()> {
+        self.inner
+            .reload_mtls_identity_combined(combined_pem)
+            .map_err(map_err)
+    }
+
+    /// Phase 18.B — return the OIDC Session Management 1.0
+    /// `end_session_endpoint` URL the issuer advertised at discovery
+    /// time. `None` when the issuer doesn't implement OIDC Session
+    /// Management.
+    fn end_session_endpoint(&self) -> Option<String> {
+        self.inner.end_session_endpoint().map(str::to_string)
+    }
+
+    /// Phase 18.B — build a logout URL per OIDC Session Management
+    /// 1.0 §5. Returns `None` when the issuer didn't advertise
+    /// `end_session_endpoint`. All params are optional; passing
+    /// `None` for everything yields the bare endpoint URL.
+    #[pyo3(signature = (id_token_hint=None, post_logout_redirect_uri=None, state=None))]
+    fn build_logout_uri(
+        &self,
+        id_token_hint: Option<&str>,
+        post_logout_redirect_uri: Option<&str>,
+        state: Option<&str>,
+    ) -> Option<String> {
+        self.inner
+            .build_logout_uri(id_token_hint, post_logout_redirect_uri, state)
     }
 }
 
@@ -416,5 +625,130 @@ impl PyVaultAuth {
         let cloned: tako_compat::VaultAuthResolver = (*self.inner).clone();
         let r = cloned.with_namespace(namespace);
         Self { inner: Arc::new(r) }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 21.B — ChainedAuth pyclass.
+// Always-on (no feature gate) — `ChainedAuthResolver` is itself
+// always-on; only its children carry feature gates.
+// ---------------------------------------------------------------------------
+
+#[pyclass(name = "ChainedAuth", module = "tako._native")]
+pub struct PyChainedAuth {
+    inner: Arc<tako_compat::ChainedAuthResolver>,
+}
+
+impl std::fmt::Debug for PyChainedAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChainedAuth")
+            .field("len", &self.inner.len())
+            .finish()
+    }
+}
+
+#[pymethods]
+impl PyChainedAuth {
+    /// Phase 21.B — empty composite chain. `serve_openai(auth=...)`
+    /// rejects an empty chain at request time
+    /// (`TakoError::Invalid("chained auth: no resolvers
+    /// configured")`); add at least one child via [`Self::with`]
+    /// before passing to `serve_openai`.
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(tako_compat::ChainedAuthResolver::new()),
+        }
+    }
+
+    /// Phase 21.B — append a child resolver. Returns a NEW
+    /// `ChainedAuth` (immutable builder; matches the `OidcAuth` /
+    /// `VaultAuth` cadence). Accepts any `JwtAuth`, `OidcAuth`,
+    /// `VaultAuth`, or `ChainedAuth` (recursive composition); the
+    /// underlying [`extract_auth_resolver`] helper does the
+    /// downcast.
+    ///
+    /// Children are tried in append order at request time; the
+    /// first to return a Principal short-circuits. Any error from
+    /// a child falls through to the next.
+    ///
+    /// Named `then(child)` not `with(child)` because `with` is a
+    /// Python keyword — `chain.with(...)` would be a SyntaxError.
+    /// `then` reads naturally ("try `self`, then `child` if that
+    /// fails") and matches the JS `Promise.then` / Rust `Future`
+    /// `.then(...)` idiom.
+    fn then(&self, py: Python<'_>, child: Py<PyAny>) -> PyResult<Self> {
+        let child = extract_auth_resolver(py, &child)?;
+        let cloned: tako_compat::ChainedAuthResolver = (*self.inner).clone();
+        let next = cloned.then(child);
+        Ok(Self {
+            inner: Arc::new(next),
+        })
+    }
+
+    /// Phase 21.B — number of children appended via
+    /// [`Self::with`]. `len(chain)` from Python.
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Phase 26.B — opt in to fail-fast on transport errors.
+    /// Returns a NEW `ChainedAuth` (immutable builder; matches
+    /// the `then(...)` cadence). Idempotent.
+    ///
+    /// When enabled, a [`tako_compat::TakoError::Transport`] from
+    /// any child halts the chain immediately instead of falling
+    /// through to the next child. Useful for the common
+    /// "OIDC bearer OR static API key" pattern: when the OIDC
+    /// issuer is unreachable, surface the actionable
+    /// `"transport error: ..."` instead of a misleading
+    /// `"unknown bearer token"` from a fallback resolver.
+    fn with_short_circuit_on_transport_error(&self) -> Self {
+        let cloned: tako_compat::ChainedAuthResolver = (*self.inner).clone();
+        let next = cloned.with_short_circuit_on_transport_error();
+        Self {
+            inner: Arc::new(next),
+        }
+    }
+
+    /// Phase 26.B — accessor: returns `True` for both the Phase
+    /// 26 narrower policy
+    /// (`with_short_circuit_on_transport_error`) and the Phase 27
+    /// broader policy
+    /// (`with_short_circuit_on_infrastructure_errors`) — both
+    /// short-circuit on `TakoError::Transport`.
+    fn short_circuits_on_transport_error(&self) -> bool {
+        self.inner.short_circuits_on_transport_error()
+    }
+
+    /// Phase 27.B — opt in to broader fail-fast: short-circuit
+    /// on infrastructure / operator-set-guard errors that
+    /// fall-through would mask:
+    ///
+    /// - `TakoError::Transport` (network failure)
+    /// - `TakoError::RateLimited` (operator-side limit)
+    /// - `TakoError::CircuitOpen` (failsafe circuit)
+    /// - `TakoError::BudgetExhausted` (operator-set spend cap)
+    ///
+    /// Auth-decision errors (`TakoError::Invalid`,
+    /// `PolicyDenied`) and vendor errors (`Provider`) continue to
+    /// fall through. Returns a NEW `ChainedAuth` (immutable
+    /// builder; idempotent). Last-write-wins between this and
+    /// `with_short_circuit_on_transport_error` — the policy is
+    /// overwritten, not merged.
+    fn with_short_circuit_on_infrastructure_errors(&self) -> Self {
+        let cloned: tako_compat::ChainedAuthResolver = (*self.inner).clone();
+        let next = cloned.with_short_circuit_on_infrastructure_errors();
+        Self {
+            inner: Arc::new(next),
+        }
+    }
+
+    /// Phase 27.B — accessor for the broader policy. Returns
+    /// `True` only when
+    /// `with_short_circuit_on_infrastructure_errors` was the most
+    /// recent policy setter.
+    fn short_circuits_on_infrastructure_errors(&self) -> bool {
+        self.inner.short_circuits_on_infrastructure_errors()
     }
 }

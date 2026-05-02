@@ -16,7 +16,7 @@ Prerequisites:
 Set up:
 
 ```bash
-git clone https://github.com/TODO(<org>)/tako-ai-core
+git clone https://github.com/nyankobu010/tako-ai-core
 cd tako-ai-core
 
 # Rust
@@ -76,8 +76,8 @@ mkdocs serve -f docs/mkdocs.yml
 
 ## Good first issues
 
-Filter issues with the `good first issue` label, or see the seed list in
-`docs/contributing.md` (Phase 2+).
+Filter issues with the [`good first issue`](https://github.com/nyankobu010/tako-ai-core/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+label.
 
 ## Releasing
 

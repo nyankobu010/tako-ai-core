@@ -16,5 +16,6 @@
 mod client;
 mod convert;
 mod stream;
+mod url_prefetch;
 
 pub use client::{BedrockBuilder, BedrockProvider};

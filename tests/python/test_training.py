@@ -11,10 +11,8 @@ import json
 from pathlib import Path
 
 import pytest
-
 from tako.training.features import FEATURE_DIM, featurise_text
 from tako.training.trinity import Rollout, TrinityTrainer
-
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 

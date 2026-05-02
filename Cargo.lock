@@ -4473,7 +4473,7 @@ dependencies = [
 
 [[package]]
 name = "tako-compat"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4499,7 +4499,7 @@ dependencies = [
 
 [[package]]
 name = "tako-core"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -4512,7 +4512,7 @@ dependencies = [
 
 [[package]]
 name = "tako-governance"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4552,7 +4552,7 @@ dependencies = [
 
 [[package]]
 name = "tako-mcp"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4581,7 +4581,7 @@ dependencies = [
 
 [[package]]
 name = "tako-orchestrator"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4604,7 +4604,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-anthropic"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4624,7 +4624,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-azure-openai"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -4642,7 +4642,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-bedrock"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4650,17 +4650,20 @@ dependencies = [
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
  "futures",
+ "ipnet",
+ "reqwest 0.13.1",
  "serde",
  "serde_json",
  "tako-core",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]
 name = "tako-providers-http-generic"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4681,7 +4684,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-mistral"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4701,12 +4704,14 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-ollama"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
+ "base64",
  "bytes",
  "futures",
+ "ipnet",
  "reqwest 0.13.1",
  "serde",
  "serde_json",
@@ -4721,7 +4726,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-openai"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4741,7 +4746,7 @@ dependencies = [
 
 [[package]]
 name = "tako-providers-vertex"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4761,7 +4766,7 @@ dependencies = [
 
 [[package]]
 name = "tako-py"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4781,6 +4786,7 @@ dependencies = [
  "tako-providers-azure-openai",
  "tako-providers-bedrock",
  "tako-providers-http-generic",
+ "tako-providers-ollama",
  "tako-providers-openai",
  "tako-providers-vertex",
  "tako-runtime",
@@ -4790,7 +4796,7 @@ dependencies = [
 
 [[package]]
 name = "tako-runtime"
-version = "0.17.0"
+version = "0.35.0"
 dependencies = [
  "anyhow",
  "async-trait",

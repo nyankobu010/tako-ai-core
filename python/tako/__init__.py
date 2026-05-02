@@ -61,4 +61,4 @@ __all__ = [
     "verifiers",
 ]
 
-__version__ = "0.17.0"
+__version__ = "0.35.0"

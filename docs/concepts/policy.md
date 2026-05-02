@@ -66,5 +66,5 @@ read the same shape.
 
 - [recipes/opa_policy.md](../recipes/opa_policy.md) — end-to-end
   walkthrough including a worked Rego rule.
-- [examples/policies/allow_with_audit.rego](https://github.com/TODO(<org>)/tako-ai-core/blob/main/examples/policies/allow_with_audit.rego)
+- [examples/policies/allow_with_audit.rego](https://github.com/nyankobu010/tako-ai-core/blob/main/examples/policies/allow_with_audit.rego)
   — the default 'allow everything but record it' bundle.

@@ -156,6 +156,49 @@ class Bedrock(_ProviderBase):
     Credentials come from the AWS default credential chain (env, profile,
     IRSA, IMDS) — pass ``profile_name`` to pin a specific named profile,
     or ``endpoint_url`` to talk to a VPC-private endpoint or local mock.
+
+    Phase 28.C — opt in to tako-side URL-source image pre-fetch via
+    ``url_prefetch=True``. Bedrock's ``ImageSource`` has no URL variant,
+    so URL-source images (``ContentPart::ImageUrl``) require tako to
+    fetch the bytes itself. SSRF mitigations baked in: ``https://``-only
+    by default (set ``url_prefetch_allow_http=True`` to allow ``http://``);
+    10s timeout (override via ``url_prefetch_timeout_secs``); 10 MiB
+    response cap (override via ``url_prefetch_max_bytes``); MIME
+    validated against ``image/{jpeg,png,gif,webp}``.
+
+    Phase 29.C — private-IP blocklist + DNS-rebinding mitigation are
+    on by default. The pre-fetcher rejects URLs that resolve to
+    loopback (127/8, ::1), RFC 1918 (10/8, 172.16/12, 192.168/16),
+    link-local (169.254/16, fe80::/10), multicast / reserved, IPv6
+    unique-local (fc00::/7), and IPv4-mapped variants of those. The
+    check runs at DNS-resolve time via a custom resolver that
+    validates EVERY returned IP, plus an inline IP-literal check
+    for URLs whose host is already an IP. Set
+    ``url_prefetch_allow_private_ips=True`` to opt out for
+    deployments that already filter network egress (VPC egress
+    rules, Pod-level egress NetworkPolicies).
+
+    Phase 30.C / 31.C / 32.C — three forms of allowlist that
+    bypass the private-IP blocklist (but NOT the scheme / timeout
+    / size / MIME checks):
+
+    - **Exact host** (Phase 30) — ``url_prefetch_allow_hosts``
+      list, entries like ``"registry.corp"``. Match the URL host
+      byte-for-byte. For IP-literal URLs, match the raw IP
+      string (``"10.0.5.4"``).
+    - **Wildcard host** (Phase 31) — same kwarg, entries like
+      ``"*.internal.corp"``. Match any hostname ending in
+      ``.internal.corp`` including multi-level subdomains. Does
+      NOT match the bare apex (``internal.corp``).
+    - **CIDR subnet** (Phase 32) — ``url_prefetch_allow_cidrs``
+      list, entries like ``"10.0.5.0/24"`` (IPv4) or
+      ``"2001:db8::/32"`` (IPv6). Single hosts as ``/32`` or
+      ``/128`` work too. Match any resolved IP that falls inside
+      the network — useful for subnets without a shared DNS
+      suffix or for raw IP-literal URLs. CIDR parse failures
+      surface from the constructor as an exception.
+
+    Pass ``None`` (default) for either kwarg to use no allowlist.
     """
 
     def __init__(
@@ -165,12 +208,106 @@ class Bedrock(_ProviderBase):
         region: str | None = None,
         endpoint_url: str | None = None,
         profile_name: str | None = None,
+        url_prefetch: bool = False,
+        url_prefetch_allow_http: bool = False,
+        url_prefetch_allow_private_ips: bool = False,
+        url_prefetch_allow_hosts: list[str] | None = None,
+        url_prefetch_allow_cidrs: list[str] | None = None,
+        url_prefetch_timeout_secs: int | None = None,
+        url_prefetch_max_bytes: int | None = None,
     ) -> None:
         self._handle = _native.Bedrock(
             model,
             region=region,
             endpoint_url=endpoint_url,
             profile_name=profile_name,
+            url_prefetch=url_prefetch,
+            url_prefetch_allow_http=url_prefetch_allow_http,
+            url_prefetch_allow_private_ips=url_prefetch_allow_private_ips,
+            url_prefetch_allow_hosts=url_prefetch_allow_hosts,
+            url_prefetch_allow_cidrs=url_prefetch_allow_cidrs,
+            url_prefetch_timeout_secs=url_prefetch_timeout_secs,
+            url_prefetch_max_bytes=url_prefetch_max_bytes,
+        )
+
+
+class Ollama(_ProviderBase):
+    """Ollama provider — local-runner LLM inference via the
+    ``/api/chat`` HTTP endpoint.
+
+    Defaults to ``base_url="http://localhost:11434"`` (the standard
+    Ollama daemon bind). Override ``base_url`` to point at a remote
+    Ollama instance. ``timeout_secs`` overrides the 600-second
+    default (local-runner inference can be slow for large models).
+
+    Phase 29.C — opt in to tako-side URL-source image pre-fetch via
+    ``url_prefetch=True``. Ollama's ``images`` field on each message
+    accepts only bare base64, so URL-source images
+    (``ContentPart::ImageUrl``) require tako to fetch the bytes
+    itself. SSRF mitigations baked in: ``https://``-only by default
+    (set ``url_prefetch_allow_http=True`` to allow ``http://``);
+    private-IP blocklist on by default (set
+    ``url_prefetch_allow_private_ips=True`` to opt out for
+    deployments that already filter network egress); 10s timeout
+    (override via ``url_prefetch_timeout_secs``); 10 MiB response
+    cap (override via ``url_prefetch_max_bytes``); MIME validated
+    against ``image/{jpeg,png,gif,webp}``.
+
+    Phase 30.C / 31.C / 32.C — three forms of allowlist that
+    bypass the private-IP blocklist:
+
+    - **Exact host** (Phase 30) — ``url_prefetch_allow_hosts``
+      list, exact-string match.
+    - **Wildcard host** (Phase 31) — same kwarg, entries like
+      ``"*.internal.corp"`` (multi-level subdomain match).
+    - **CIDR subnet** (Phase 32) — ``url_prefetch_allow_cidrs``
+      list, entries like ``"10.0.5.0/24"`` (IPv4) or
+      ``"2001:db8::/32"`` (IPv6).
+
+    Operators must enforce network egress at deployment level
+    (Pod-level egress NetworkPolicies, etc.) for defence-in-depth.
+
+    Example::
+
+        provider = tako.providers.Ollama(
+            model="llama3.2-vision:11b",
+            base_url="http://ollama.internal:11434",
+            url_prefetch=True,
+            url_prefetch_allow_hosts=[
+                "registry.internal.corp",       # exact match
+                "*.images.internal.corp",       # any subdomain
+            ],
+            url_prefetch_allow_cidrs=[
+                "10.0.5.0/24",                  # whole subnet
+            ],
+        )
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        base_url: str | None = None,
+        timeout_secs: int | None = None,
+        url_prefetch: bool = False,
+        url_prefetch_allow_http: bool = False,
+        url_prefetch_allow_private_ips: bool = False,
+        url_prefetch_allow_hosts: list[str] | None = None,
+        url_prefetch_allow_cidrs: list[str] | None = None,
+        url_prefetch_timeout_secs: int | None = None,
+        url_prefetch_max_bytes: int | None = None,
+    ) -> None:
+        self._handle = _native.Ollama(
+            model,
+            base_url=base_url,
+            timeout_secs=timeout_secs,
+            url_prefetch=url_prefetch,
+            url_prefetch_allow_http=url_prefetch_allow_http,
+            url_prefetch_allow_private_ips=url_prefetch_allow_private_ips,
+            url_prefetch_allow_hosts=url_prefetch_allow_hosts,
+            url_prefetch_allow_cidrs=url_prefetch_allow_cidrs,
+            url_prefetch_timeout_secs=url_prefetch_timeout_secs,
+            url_prefetch_max_bytes=url_prefetch_max_bytes,
         )
 
 

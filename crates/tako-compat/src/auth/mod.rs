@@ -21,6 +21,9 @@ use tako_core::{Principal, TakoError};
 mod static_tokens;
 pub use static_tokens::StaticTokens;
 
+mod chained;
+pub use chained::ChainedAuthResolver;
+
 #[cfg(feature = "jwt")]
 mod jwt;
 #[cfg(feature = "jwt")]

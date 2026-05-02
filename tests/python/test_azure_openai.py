@@ -8,7 +8,6 @@ constructs the native handle and surfaces the right id.
 from __future__ import annotations
 
 import pytest
-
 import tako
 
 

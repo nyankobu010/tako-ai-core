@@ -44,6 +44,57 @@ pub enum VxPart {
         #[serde(rename = "functionResponse")]
         function_response: VxFunctionResponse,
     },
+    /// Phase 20.A — inline image content (base64 bytes inline).
+    /// Phase 23 added [`Self::FileData`] for URL-source images
+    /// that Google's API server fetches.
+    InlineData {
+        #[serde(rename = "inlineData")]
+        inline_data: VxInlineData,
+    },
+    /// Phase 23 — URL-source image. Gemini's `fileData` part
+    /// accepts URIs that Google's API server fetches:
+    ///
+    /// - `gs://bucket/path` Google Cloud Storage URIs (private
+    ///   buckets need IAM auth on Google's side, not tako's).
+    /// - `https://...` public web URLs — same vendor-fetch
+    ///   security posture as Phase 22's Anthropic / OpenAI /
+    ///   Mistral URL-source paths.
+    /// - Vertex File API URIs — files uploaded via Google's
+    ///   File API (out of scope for Phase 23; needs a separate
+    ///   upload surface).
+    ///
+    /// Per Gemini docs, `mimeType` is REQUIRED on `fileData` —
+    /// the optional `ContentPart::ImageUrl.mime` is required
+    /// for the Vertex path; mime-less URL-source content
+    /// silently drops (matches the empty-text drop policy
+    /// elsewhere).
+    FileData {
+        #[serde(rename = "fileData")]
+        file_data: VxFileData,
+    },
+}
+
+/// Phase 20.A — Gemini `inline_data` payload. `mime_type` is the
+/// image MIME (one of `image/jpeg` / `image/png` / `image/gif` /
+/// `image/webp`); `data` is raw base64 with any data-URL prefix
+/// stripped.
+#[derive(Serialize, Debug)]
+pub struct VxInlineData {
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub data: String,
+}
+
+/// Phase 23 — Gemini `fileData` payload. `mime_type` is required
+/// (one of the four MIME types `is_supported_vertex_mime`
+/// accepts); `file_uri` is a `gs://` GCS URI, an `https://`
+/// public web URL, or a Vertex File API URI.
+#[derive(Serialize, Debug)]
+pub struct VxFileData {
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    #[serde(rename = "fileUri")]
+    pub file_uri: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -199,8 +250,42 @@ fn message_to_vx(
                     },
                 })
             }
-            ContentPart::Image { .. } => {
-                // Vision parts deferred; drop silently for now.
+            ContentPart::Image { mime, data_b64 } => {
+                // Phase 20.A — Gemini accepts only the four MIME
+                // types listed in `is_supported_vertex_mime`;
+                // anything else is silently dropped to match the
+                // empty-text drop policy elsewhere.
+                if !is_supported_vertex_mime(mime) {
+                    continue;
+                }
+                parts.push(VxPart::InlineData {
+                    inline_data: VxInlineData {
+                        mime_type: mime.clone(),
+                        data: strip_data_url_prefix(data_b64).to_string(),
+                    },
+                });
+            }
+            // Phase 23 — URL-source. Gemini's `fileData` part
+            // accepts `gs://` GCS URIs and `https://` public web
+            // URLs (Google fetches both server-side). `mimeType`
+            // is required on `fileData`; if the optional `mime`
+            // from the core type is None or unsupported, silently
+            // drop (matches the empty-text drop policy elsewhere).
+            // The vendor rejects unknown URL schemes at request
+            // time — tako doesn't pre-validate.
+            ContentPart::ImageUrl { url, mime } => {
+                let Some(mime) = mime else {
+                    continue;
+                };
+                if !is_supported_vertex_mime(mime) {
+                    continue;
+                }
+                parts.push(VxPart::FileData {
+                    file_data: VxFileData {
+                        mime_type: mime.clone(),
+                        file_uri: url.clone(),
+                    },
+                });
             }
         }
     }
@@ -319,4 +404,246 @@ pub fn from_vertex_response(resp: VxResponse) -> Result<ChatResponse, TakoError>
         },
         raw: Default::default(),
     })
+}
+
+/// Phase 20.A — accept only the four MIME types Gemini's vision
+/// surface supports (per Google's published Gemini-pro-vision docs).
+fn is_supported_vertex_mime(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    )
+}
+
+/// Phase 20.A — strip a leading `data:image/...;base64,` data-URL
+/// prefix when present; return the input unchanged otherwise.
+/// Idempotent. Mirrors the per-crate copies in
+/// `tako-providers-anthropic` (Phase 19.A) and
+/// `tako-providers-openai` (Phase 19.B) — kept per-crate to
+/// preserve provider-crate independence (no cross-provider deps
+/// per ARCHITECTURE.md hard rules).
+fn strip_data_url_prefix(s: &str) -> &str {
+    if let Some(rest) = s.strip_prefix("data:")
+        && let Some(comma_at) = rest.find(',')
+    {
+        &rest[comma_at + 1..]
+    } else {
+        s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn user_msg(parts: Vec<ContentPart>) -> Message {
+        Message {
+            role: Role::User,
+            content: parts,
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 20.A — outbound image content for Vertex (Gemini).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn image_block_emits_inline_data_part() {
+        let m = user_msg(vec![
+            ContentPart::text("describe this"),
+            ContentPart::Image {
+                mime: "image/png".into(),
+                data_b64: "aGVsbG8=".into(),
+            },
+        ]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        // Gemini's REST API uses camelCase fields throughout —
+        // matches the existing `functionCall` / `functionResponse`
+        // convention in `VxPart`.
+        assert_eq!(
+            serialised["parts"],
+            json!([
+                { "text": "describe this" },
+                {
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": "aGVsbG8=",
+                    },
+                },
+            ]),
+        );
+    }
+
+    #[test]
+    fn image_block_strips_data_url_prefix() {
+        let m = user_msg(vec![ContentPart::Image {
+            mime: "image/jpeg".into(),
+            data_b64: "data:image/jpeg;base64,YWJjZA==".into(),
+        }]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        assert_eq!(serialised["parts"][0]["inlineData"]["data"], "YWJjZA==");
+        assert_eq!(
+            serialised["parts"][0]["inlineData"]["mimeType"],
+            "image/jpeg"
+        );
+    }
+
+    #[test]
+    fn image_block_unsupported_mime_dropped() {
+        // SVG / BMP / etc. — silently dropped, matches the
+        // empty-text drop policy elsewhere.
+        let m = user_msg(vec![
+            ContentPart::Image {
+                mime: "image/svg+xml".into(),
+                data_b64: "<svg/>".into(),
+            },
+            ContentPart::text("fallback"),
+        ]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        // Only the text survives.
+        assert_eq!(serialised["parts"], json!([{ "text": "fallback" }]),);
+    }
+
+    #[test]
+    fn supported_vertex_mime_smoke() {
+        for ok in ["image/jpeg", "image/png", "image/gif", "image/webp"] {
+            assert!(is_supported_vertex_mime(ok), "expected {ok} accepted");
+        }
+        for bad in ["image/svg+xml", "image/bmp", "text/plain", ""] {
+            assert!(!is_supported_vertex_mime(bad), "expected {bad} rejected");
+        }
+    }
+
+    #[test]
+    fn strip_data_url_prefix_idempotent() {
+        assert_eq!(strip_data_url_prefix("YWJjZA=="), "YWJjZA==");
+        assert_eq!(
+            strip_data_url_prefix("data:image/png;base64,YWJjZA=="),
+            "YWJjZA==",
+        );
+        assert_eq!(strip_data_url_prefix(""), "");
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 23 — URL-source images via `VxPart::FileData`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn image_url_block_emits_file_data_with_gs_uri() {
+        let m = user_msg(vec![
+            ContentPart::text("describe this"),
+            ContentPart::ImageUrl {
+                url: "gs://my-bucket/cat.jpg".into(),
+                mime: Some("image/jpeg".into()),
+            },
+        ]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        assert_eq!(
+            serialised["parts"],
+            json!([
+                { "text": "describe this" },
+                {
+                    "fileData": {
+                        "mimeType": "image/jpeg",
+                        "fileUri": "gs://my-bucket/cat.jpg",
+                    },
+                },
+            ]),
+        );
+    }
+
+    #[test]
+    fn image_url_block_emits_file_data_with_https_uri() {
+        // Gemini's `fileData` accepts both `gs://` GCS URIs and
+        // `https://` public web URLs — Google fetches either.
+        // Same vendor-fetch security posture as Phase 22's
+        // Anthropic / OpenAI / Mistral URL-source paths.
+        let m = user_msg(vec![ContentPart::ImageUrl {
+            url: "https://example.com/dog.png".into(),
+            mime: Some("image/png".into()),
+        }]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        assert_eq!(
+            serialised["parts"][0]["fileData"]["fileUri"],
+            "https://example.com/dog.png",
+        );
+        assert_eq!(serialised["parts"][0]["fileData"]["mimeType"], "image/png",);
+    }
+
+    #[test]
+    fn image_url_block_drops_when_mime_missing() {
+        // Gemini's `fileData` requires `mimeType`. The optional
+        // `mime` from the core `ContentPart::ImageUrl` is
+        // required for the Vertex path; mime-less URL-source
+        // content silently drops.
+        let m = user_msg(vec![
+            ContentPart::ImageUrl {
+                url: "https://example.com/cat.jpg".into(),
+                mime: None,
+            },
+            ContentPart::text("fallback"),
+        ]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        // Only the text part survives.
+        assert_eq!(serialised["parts"], json!([{ "text": "fallback" }]),);
+    }
+
+    #[test]
+    fn image_url_block_drops_unsupported_mime() {
+        // SVG / BMP / etc. — silently dropped, matches the
+        // `is_supported_vertex_mime` filter that Phase 20.A
+        // already applies to inline-data parts.
+        let m = user_msg(vec![
+            ContentPart::ImageUrl {
+                url: "https://example.com/icon.svg".into(),
+                mime: Some("image/svg+xml".into()),
+            },
+            ContentPart::text("fallback"),
+        ]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        assert_eq!(serialised["parts"], json!([{ "text": "fallback" }]),);
+    }
+
+    #[test]
+    fn image_url_and_inline_data_can_coexist() {
+        // Mixed inline base64 + URL-source in a single message:
+        // both should appear as adjacent `parts` entries in
+        // source order (`inlineData` first, then `fileData`).
+        let m = user_msg(vec![
+            ContentPart::Image {
+                mime: "image/png".into(),
+                data_b64: "Zm9v".into(),
+            },
+            ContentPart::ImageUrl {
+                url: "gs://bucket/dog.jpg".into(),
+                mime: Some("image/jpeg".into()),
+            },
+        ]);
+        let names: HashMap<&str, &str> = HashMap::new();
+        let vx = message_to_vx(&m, &names);
+        let serialised = serde_json::to_value(&vx).unwrap();
+        let parts = serialised["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0]["inlineData"].is_object(), "got: {parts:?}");
+        assert!(parts[1]["fileData"].is_object(), "got: {parts:?}");
+        assert_eq!(parts[1]["fileData"]["fileUri"], "gs://bucket/dog.jpg");
+    }
 }

@@ -4,12 +4,12 @@
 
 Please report suspected vulnerabilities privately via GitHub's
 [private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
-or email `TODO(community): security@<placeholder>`.
+on the [`nyankobu010/tako-ai-core`](https://github.com/nyankobu010/tako-ai-core/security/advisories) repository.
+
+Please **do not** open public issues or discussions for security reports.
 
 We follow a **90-day coordinated disclosure** window from the date the report
 is acknowledged. We will work with you on a fix and a public advisory.
-
-Please **do not** open public issues for security reports.
 
 ## Supply chain
 

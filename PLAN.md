@@ -20,7 +20,7 @@ synopsis and quickstart.
 |-------|---------|--------|----------|-----------|
 | 1 — Foundation | v0.1.0 | done (2026-04-28) | [PLAN_PHASE1.md](PLAN_PHASE1.md) | [`## [0.1.0]`](CHANGELOG.md) |
 | 2 — Orchestration (+ bundled 1.5) | v0.2.0 | done (2026-04-29) | [PLAN_PHASE2.md](PLAN_PHASE2.md) | [`## [0.2.0]`](CHANGELOG.md) |
-| 2.5 — Cloud breadth | v0.3.0 | done (2026-04-29) | [PLAN_PHASE25.md](PLAN_PHASE25.md) | [`## [0.3.0]`](CHANGELOG.md) |
+| 2.5 — Cloud breadth | v0.3.0 | done (2026-04-29) | [PLAN_PHASE2_5.md](PLAN_PHASE2_5.md) | [`## [0.3.0]`](CHANGELOG.md) |
 | 3 — Learned coordination | v0.4.0 | done (2026-04-29) | [PLAN_PHASE3.md](PLAN_PHASE3.md) | [`## [0.4.0]`](CHANGELOG.md) |
 | 4 — Search & scale | v0.5.0 | done (2026-04-29, retro plan) | [PLAN_PHASE4.md](PLAN_PHASE4.md) | [`## [0.5.0]`](CHANGELOG.md) |
 | 5 — Production hardening | v0.6.0 | done (2026-04-29) | [PLAN_PHASE5.md](PLAN_PHASE5.md) | [`## [0.6.0]`](CHANGELOG.md) |
@@ -35,36 +35,69 @@ synopsis and quickstart.
 | 14 — Streaming verifier in Conductor + tako-compat real auth providers | v0.15.0 | done (2026-04-30) | [PLAN_PHASE14.md](PLAN_PHASE14.md) | [`## [0.15.0]`](CHANGELOG.md) |
 | 15 — Streaming verifier in AbMcts + tako-compat auth hardening | v0.16.0 | done (2026-05-01) | [PLAN_PHASE15.md](PLAN_PHASE15.md) | [`## [0.16.0]`](CHANGELOG.md) |
 | 16 — Streaming-rollout backpressure + tako-compat auth hardening, continued | v0.17.0 | done (2026-05-01) | [PLAN_PHASE16.md](PLAN_PHASE16.md) | [`## [0.17.0]`](CHANGELOG.md) |
+| 17 — OIDC introspection completeness | v0.18.0 | done (2026-05-01) | [PLAN_PHASE17.md](PLAN_PHASE17.md) | [`## [0.18.0]`](CHANGELOG.md) |
+| 18 — OIDC introspection asymmetric JWT + end-session helper | v0.19.0 | done (2026-05-01) | [PLAN_PHASE18.md](PLAN_PHASE18.md) | [`## [0.19.0]`](CHANGELOG.md) |
+| 19 — Vision content support: Anthropic + OpenAI | v0.20.0 | done (2026-05-01) | [PLAN_PHASE19.md](PLAN_PHASE19.md) | [`## [0.20.0]`](CHANGELOG.md) |
+| 20 — Vision content support: Vertex + Mistral + Ollama | v0.21.0 | done (2026-05-01) | [PLAN_PHASE20.md](PLAN_PHASE20.md) | [`## [0.21.0]`](CHANGELOG.md) |
+| 21 — Composite AuthResolver | v0.22.0 | done (2026-05-01) | [PLAN_PHASE21.md](PLAN_PHASE21.md) | [`## [0.22.0]`](CHANGELOG.md) |
+| 22 — URL-source images: Anthropic + OpenAI + Mistral | v0.23.0 | done (2026-05-01) | [PLAN_PHASE22.md](PLAN_PHASE22.md) | [`## [0.23.0]`](CHANGELOG.md) |
+| 23 — URL-source images: Vertex (Gemini fileData) | v0.24.0 | done (2026-05-01) | [PLAN_PHASE23.md](PLAN_PHASE23.md) | [`## [0.24.0]`](CHANGELOG.md) |
+| 24 — OIDC introspection mTLS / `tls_client_auth` | v0.25.0 | done (2026-05-01) | [PLAN_PHASE24.md](PLAN_PHASE24.md) | [`## [0.25.0]`](CHANGELOG.md) |
+| 25 — OIDC `self_signed_tls_client_auth` | v0.26.0 | done (2026-05-01) | [PLAN_PHASE25.md](PLAN_PHASE25.md) | [`## [0.26.0]`](CHANGELOG.md) |
+| 26 — ChainedAuthResolver fail-fast on transport errors | v0.27.0 | done (2026-05-01) | [PLAN_PHASE26.md](PLAN_PHASE26.md) | [`## [0.27.0]`](CHANGELOG.md) |
+| 27 — ChainedAuthResolver broader infrastructure-error short-circuit | v0.28.0 | done (2026-05-01) | [PLAN_PHASE27.md](PLAN_PHASE27.md) | [`## [0.28.0]`](CHANGELOG.md) |
+| 28 — URL-source images: Bedrock + Ollama (opt-in tako-side pre-fetch) | v0.29.0 | done (2026-05-01) | [PLAN_PHASE28.md](PLAN_PHASE28.md) | [`## [0.29.0]`](CHANGELOG.md) |
+| 29 — URL pre-fetch SSRF hardening (private-IP blocklist + DNS-rebind) + Ollama Python facade | v0.30.0 | done (2026-05-01) | [PLAN_PHASE29.md](PLAN_PHASE29.md) | [`## [0.30.0]`](CHANGELOG.md) |
+| 30 — URL pre-fetch per-host allowlist | v0.31.0 | done (2026-05-01) | [PLAN_PHASE30.md](PLAN_PHASE30.md) | [`## [0.31.0]`](CHANGELOG.md) |
+| 31 — URL pre-fetch wildcard host patterns | v0.32.0 | done (2026-05-01) | [PLAN_PHASE31.md](PLAN_PHASE31.md) | [`## [0.32.0]`](CHANGELOG.md) |
+| 32 — URL pre-fetch CIDR allowlist | v0.33.0 | done (2026-05-02) | [PLAN_PHASE32.md](PLAN_PHASE32.md) | [`## [0.33.0]`](CHANGELOG.md) |
+| 33 — OIDC mTLS cert/key rotation | v0.34.0 | done (2026-05-02) | [PLAN_PHASE33.md](PLAN_PHASE33.md) | [`## [0.34.0]`](CHANGELOG.md) |
+| 34 — Public-release prep, tech-debt + docs sweep | v0.35.0 | done (2026-05-02) | [PLAN_PHASE34.md](PLAN_PHASE34.md) | [`## [0.35.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 17 candidates (indicative, not yet committed)
+### Phase 35 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 16's holding pen — the three items that
-landed in Phase 16 (bounded mpsc backpressure in AbMcts + Conductor
-streaming rollouts; Vault Enterprise namespace support; OIDC
-introspection `client_secret_post` auth method) are now off the
-list. The remainder:
+The original Phase 34 candidate list is postponed to Phase 35+ to
+make room for the Phase 34 cleanup sweep ([PLAN_PHASE34.md](PLAN_PHASE34.md)).
+Carry-forward items, mostly from Phase 33:
 
-- **Vision / image content support across providers.** Anthropic,
-  Vertex, and Bedrock all have stub markers; multi-crate
-  cross-cutting effort that warrants a focused phase.
+- **Trait-based `MtlsIdentityProvider`** — async trait that
+  yields fresh cert+key bytes on demand; tako would call it
+  proactively at e.g. 90% of cert validity. Needs cert-parsing
+  on the tako side (`x509-parser` dep or hand-rolled DER walk).
+  Phase 33 carry-forward.
+- **Automatic refresh-on-handshake-failure** — catch TLS
+  handshake errors at request time and trigger reload. Needs
+  retry logic + cycle-detection. Phase 33 carry-forward.
+- **Filesystem watcher integration** — auto-reload when the
+  cert+key files on disk change. `notify` crate dep. Phase 33
+  carry-forward.
+- **Wildcard at non-leftmost positions** — patterns like
+  `registry.*.corp` (wildcard in middle). Phase 31 ships only
+  the leftmost-`*.` convention. Probably never worth shipping
+  unless a real operator asks.
+- **Strict-allowlist mode** — currently all allowlists are
+  per-rule BYPASSes of the blocklist. A strict mode would
+  REQUIRE every URL host to match an allowlist entry. No
+  operator ask yet.
+- **OIDC mTLS end-to-end integration test** — Phases 24 + 25
+  ship builder-level tests; a real TLS server requiring client
+  auth (axum-server + rustls + per-test CA) would close the
+  loop. ~300 lines of test infra.
+- **Vertex File API upload flow** — separate API surface; the
+  Phase 23 `VxFileData` already accepts uploaded URIs.
 - **Eval harness real graders** (SWE-Bench Lite, GPQA Diamond) —
-  promised in Phase 3 PLAN, still raise `NotImplementedError`.
-  Sandboxed runner needed.
-- **OIDC introspection `client_secret_jwt` and mTLS auth methods.**
-  Phase 16.B.2 closed `client_secret_post`; the JWT-signed and
-  mTLS variants are still deferred.
-- **Discovery-driven introspection auth-method selection** (reading
-  RFC 8414 `introspection_endpoint_auth_methods_supported` from the
-  discovery doc rather than the operator opting in by builder).
-- **OIDC refresh-token flows / end-session endpoint.** Orthogonal
-  hardening for the `OidcAuthResolver`.
-- **Composite `AuthResolver`s** (mTLS + bearer chaining) —
-  orthogonal.
+  needs a sandboxed runner.
+- **OIDC refresh-token / revocation-endpoint flows** — tako as
+  token *consumer* rather than validator.
+- **`TakoError::Provider` short-circuit** — vendor-error
+  short-circuit warrants finer discrimination on the embedded
+  error.
+- **Per-child `ChainedAuthResolver` policy override.**
 
 ### Beyond (speculative)
 
@@ -173,12 +206,48 @@ where the fix would land.
   `IntrospectionAuthMethod` enum (`ClientSecretBasic` default,
   `ClientSecretPost` sibling per RFC 7662 §2.1) plus chainable
   `OidcAuthResolver::with_introspection_auth_method(method)`.
-  `client_secret_jwt` / mTLS / discovery-driven selection remain
-  deferred to Phase 17+.
-- [ ] **Vision / image content support across providers.**
-  Anthropic ([convert.rs:171](crates/tako-providers/anthropic/src/convert.rs#L171)),
-  Vertex ([convert.rs:203](crates/tako-providers/vertex/src/convert.rs#L203)),
-  Bedrock ([convert.rs:268](crates/tako-providers/bedrock/src/convert.rs#L268)).
+- [x] **OIDC introspection `client_secret_jwt` auth method.**
+  Closed in Phase 17.B (v0.18.0): new
+  `IntrospectionAuthMethod::ClientSecretJwt` variant signs a
+  short-lived HS256 JWT over `client_secret` and sends it as
+  `client_assertion` + `client_assertion_type` form fields per
+  RFC 7521 / 7523. Asymmetric `private_key_jwt` (RS256 / ES256)
+  and mTLS auth methods remain deferred to Phase 18+.
+- [x] **Discovery-driven introspection auth-method selection.**
+  Closed in Phase 17.A (v0.18.0):
+  `OidcAuthResolver::with_introspection_auth_method_from_discovery()`
+  reads RFC 8414
+  `introspection_endpoint_auth_methods_supported` from the
+  discovery doc and picks the strongest mutually-supported method
+  (Phase 18.A preference: `private_key_jwt` >
+  `client_secret_jwt` > `client_secret_basic` >
+  `client_secret_post`). Fail-closed when the issuer advertises
+  only methods deferred to Phase 19+ (`tls_client_auth` /
+  unknown).
+- [x] **OIDC introspection `private_key_jwt` auth method.**
+  Closed in Phase 18.A (v0.19.0): new
+  `IntrospectionAuthMethod::PrivateKeyJwt` variant signs an
+  asymmetric (RS256 / ES256 / EdDSA) JWT client assertion via the
+  configured `client_assertion_key`. Same wire shape as
+  `ClientSecretJwt` (form-body `client_assertion_type` +
+  `client_assertion`, no `Authorization` header). New
+  `ClientAssertionKey` struct with typed PEM constructors
+  (`from_rs256_pem` / `from_es256_pem` / `from_ed25519_pem`); new
+  builder shortcuts `with_introspection_jwt_rs256_pem` /
+  `_es256_pem` / `_ed25519_pem`.
+- [x] **OIDC end-session endpoint helper.** Closed in Phase 18.B
+  (v0.19.0): the discovery doc's `end_session_endpoint` (OIDC
+  Session Management 1.0 §2.2.1) is now captured at construction
+  time and exposed via `OidcAuthResolver::end_session_endpoint()`
+  + `build_logout_uri(id_token_hint, post_logout_redirect_uri,
+  state)`. Pure URL building; no I/O.
+- [x] **Vision / image content support across providers.**
+  Anthropic + OpenAI closed in Phase 19.A / 19.B (v0.20.0);
+  Vertex / Mistral / Ollama closed in Phase 20.A / 20.B / 20.C
+  (v0.21.0). After Phase 20, all six shipped provider adapters
+  (Anthropic, OpenAI, Vertex, Bedrock, Mistral, Ollama) handle
+  outbound `ContentPart::Image`. URL-source images (server-side
+  fetch from request-supplied URLs) remain deferred to Phase 21+.
 - [ ] **Eval harness real graders.** `swe_bench_lite` and `gpqa_diamond`
   raise `NotImplementedError`; real SWE-Bench (apply patch + run sandboxed
   repo tests) deferred to "a later phase".
@@ -202,16 +271,14 @@ where the fix would land.
 
 #### First-publish placeholders
 
-- [ ] **Replace `TODO(<org>)` repository URLs** at first public-org
-  publish (intentional single-point-of-edit per `PLAN_PHASE1.md` line 2).
-  [Cargo.toml:26](Cargo.toml#L26), [README.md](README.md),
-  [CONTRIBUTING.md](CONTRIBUTING.md),
-  [CHANGELOG.md:999-1008](CHANGELOG.md#L999-L1008),
-  [crates/tako-core/src/lib.rs:8-9](crates/tako-core/src/lib.rs#L8-L9).
-- [ ] **Resolve `TODO(community)` placeholders** — Discussions
-  categories, Discord/Matrix room ([README.md:135-136](README.md#L135-L136)),
-  conduct@ contact (CODE_OF_CONDUCT.md), security@ contact
-  (SECURITY.md).
+- [x] **Replace `TODO(<org>)` repository URLs.** Closed in Phase 34.A
+  (v0.35.0). Substituted across all 11 non-self-referential files;
+  historical rationale at [PLAN_PHASE1.md:55](PLAN_PHASE1.md#L55) /
+  [PLAN_PHASE21.md:239](PLAN_PHASE21.md#L239) intentionally retained.
+- [x] **Resolve `TODO(community)` placeholders.** Closed in Phase 34.B
+  (v0.35.0). README community section now points at
+  Discussions; CODE_OF_CONDUCT.md and SECURITY.md route to GitHub
+  Private Vulnerability Reporting.
 
 ## How to work this index
 

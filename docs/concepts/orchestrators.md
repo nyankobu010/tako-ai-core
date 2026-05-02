@@ -122,8 +122,53 @@ Use `SelfCaller` when:
 - The acceptance criterion is judgmental — wrap with `LlmJudge` and
   point it at a stronger model than the inner orchestrator uses.
 
-## Phase-4 orchestrators (preview)
+## AbMcts
 
-- **AbMcts**: Adaptive Branching Monte Carlo Tree Search with
-  pluggable verifiers; chooses both refine-vs-generate and which
-  model to use at each tree node.
+Adaptive Branching Monte Carlo Tree Search with pluggable verifiers.
+Each rollout is scored by a `Verifier`; the search expands branches
+adaptively, optionally driven by a `Router` that picks the candidate
+provider for each new branch.
+
+```python
+from tako.routers import RegexRouter
+from tako.verifiers import RuleBased
+
+mcts = tako.AbMcts(
+    candidates=[
+        tako.providers.Anthropic(model="claude-opus-4-7", api_key="..."),
+        tako.providers.OpenAI(model="gpt-5", api_key="..."),
+    ],
+    router=RegexRouter(),               # optional: branch-expansion router
+    verifier=RuleBased(min_chars=200),
+    max_simulations=8,
+    max_depth=3,
+)
+result = await mcts.run("Reason about this physics problem step by step.")
+```
+
+Streaming mode emits `OrchEvent::AssistantText` and per-delta
+`OrchEvent::VerifierScore { step, branch=leaf_idx, score }` for every
+streaming-capable rollout, sharing `(step, branch)` with the
+synthesis-complete final.
+
+## Streaming events
+
+Every orchestrator implements `stream()` returning an `OrchEventStream`.
+Common variants:
+
+- `OrchEvent::AssistantText { text }` — assistant-text delta.
+- `OrchEvent::ToolCall { name, args }` / `ToolCallResult { name, result }` — tool-call lifecycle.
+- `OrchEvent::VerifierScore { step, branch, score }` — partial verifier
+  scores from streaming-aware `Verifier::evaluate_streaming` (Trinity,
+  Conductor, AbMcts).
+- `OrchEvent::Recursion { depth, confidence }` — `SelfCaller` step boundaries.
+
+Conductor and AbMcts use bounded `mpsc::channel(64)` for per-delta
+backpressure so a slow consumer cannot blow up in-flight memory under
+fast streaming workers.
+
+## See also
+
+- [Streaming](streaming.md) — `OrchEvent`, streaming guards, streaming verifiers.
+- [Routing](routing.md) — `RegexRouter`, `OnnxRouter`, training pipeline.
+- [recipes/conductor.md](../recipes/conductor.md), [recipes/trinity.md](../recipes/trinity.md), [recipes/self_caller.md](../recipes/self_caller.md).

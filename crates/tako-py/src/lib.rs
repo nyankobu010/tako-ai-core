@@ -21,6 +21,7 @@ mod py_conductor;
 mod py_governance;
 mod py_http_generic;
 mod py_mcp;
+mod py_ollama;
 mod py_orch_event;
 mod py_orchestrator;
 mod py_provider;
@@ -43,6 +44,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_provider::PyFakeProvider>()?;
     m.add_class::<py_azure::PyAzureOpenAi>()?;
     m.add_class::<py_bedrock::PyBedrock>()?;
+    m.add_class::<py_ollama::PyOllama>()?;
     m.add_class::<py_vertex::PyVertex>()?;
     m.add_class::<py_http_generic::PyHttpGeneric>()?;
     m.add_class::<py_python_provider::PyPythonProvider>()?;
@@ -94,6 +96,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_compat::PyOidcAuth>()?;
     #[cfg(feature = "auth-vault")]
     m.add_class::<py_compat::PyVaultAuth>()?;
+    // Phase 21.B — composite resolver. Always-on (no feature gate);
+    // children themselves carry whatever `auth-*` gates they were
+    // built under.
+    m.add_class::<py_compat::PyChainedAuth>()?;
     m.add_function(wrap_pyfunction!(featurise_text_py, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

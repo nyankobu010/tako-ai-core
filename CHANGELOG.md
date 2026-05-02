@@ -9,6 +9,2114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.35.0] - 2026-05-02
+
+Phase 34 — Public-release prep, tech-debt + docs sweep. Closes the
+long-deferred [`PLAN_CLEANUP.md`](PLAN_CLEANUP.md) backlog (placeholder
+substitution, OSS hygiene files) and brings the mkdocs site current
+with every feature shipped through Phase 33. Original Phase 34
+candidates (trait-based `MtlsIdentityProvider`, automatic
+refresh-on-handshake-failure, filesystem-watcher integration) are
+postponed to Phase 35+ — see
+[PLAN.md → Phase 35 candidates](PLAN.md). No code changes other than
+the rustdoc URL fix in `tako-core/src/lib.rs` and the version bump.
+Plan: [PLAN_PHASE34.md](PLAN_PHASE34.md).
+
+### Changed
+
+- **Phase 34.A — `TODO(<org>)` substitution.** Substituted literal
+  `TODO(<org>)` → `nyankobu010` across 11 non-self-referential files
+  ([Cargo.toml](Cargo.toml#L26), [pyproject.toml](pyproject.toml),
+  [mkdocs.yml](mkdocs.yml), [README.md](README.md),
+  [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md)
+  compare-link footer, [crates/tako-core/src/lib.rs](crates/tako-core/src/lib.rs)
+  rustdoc, [docs/concepts/policy.md](docs/concepts/policy.md)).
+  Self-referential historical sites at
+  [PLAN_PHASE1.md:55](PLAN_PHASE1.md#L55) and
+  [PLAN_PHASE21.md:239](PLAN_PHASE21.md#L239) intentionally retained as
+  the source of the placeholder strategy.
+- **Phase 34.B — `TODO(community)` substitution.**
+  [README.md](README.md) community section now points at
+  [GitHub Discussions](https://github.com/nyankobu010/tako-ai-core/discussions)
+  and [`SECURITY.md`](SECURITY.md). [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+  routes to the maintainer's GitHub noreply address + Private
+  Vulnerability Reporting. [`SECURITY.md`](SECURITY.md) drops the
+  email line and routes to PVR.
+- **Phase 34.D — Documentation refresh.** Brought
+  [`docs/index.md`](docs/index.md) (was pinned to v0.3.0 / Phase 2.5),
+  [`docs/architecture.md`](docs/architecture.md) (was "describes Phase
+  1"), [`docs/quickstart.md`](docs/quickstart.md), and concept pages
+  (`providers`, `orchestrators`, `budgets`, `mcp`, `secrets`) to
+  v0.35.0 / Phase 34 parity. Removed forward-tense markers
+  ("Phase 4 will add…") for capabilities that have shipped.
+- **Phase 34.F — Mkdocs nav update.** [`mkdocs.yml`](mkdocs.yml) nav
+  now lists all the new concept and recipe pages.
+- **Phase 34.H — CHANGELOG anchors.** Compare-link footer extended
+  from v0.14.0 (stale) through v0.34.0, and the org swapped from
+  `TODO(<org>)` to `nyankobu010`.
+- **Phase 34.I — Version bump.** Workspace + Python facade both at
+  v0.35.0.
+
+### Added
+
+- **Phase 34.C — OSS hygiene files.**
+  [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md),
+  [`.github/CODEOWNERS`](.github/CODEOWNERS),
+  [`.github/workflows/dco.yml`](.github/workflows/dco.yml) (enforces the
+  DCO sign-off mandate at [CONTRIBUTING.md:41](CONTRIBUTING.md#L41) —
+  was previously honour-system only),
+  [`SUPPORT.md`](SUPPORT.md), [`CITATION.cff`](CITATION.cff).
+- **Phase 34.E — New documentation pages.** Five new concept pages
+  ([vision](docs/concepts/vision.md),
+  [url_prefetch](docs/concepts/url_prefetch.md),
+  [streaming](docs/concepts/streaming.md),
+  [compat](docs/concepts/compat.md),
+  [sigstore](docs/concepts/sigstore.md))
+  and eight new recipes ([mistral](docs/recipes/mistral.md),
+  [ollama](docs/recipes/ollama.md),
+  [vision](docs/recipes/vision.md),
+  [url_prefetch](docs/recipes/url_prefetch.md),
+  [oidc_introspection](docs/recipes/oidc_introspection.md),
+  [chained_auth](docs/recipes/chained_auth.md),
+  [mtls_rotation](docs/recipes/mtls_rotation.md),
+  [sigstore_keyless](docs/recipes/sigstore_keyless.md)).
+- **Phase 34.G — Sanity script.**
+  [`scripts/check_public_release.sh`](scripts/check_public_release.sh)
+  — eight-check public-release gate (placeholder sweep, secrets scan,
+  version consistency, mkdocs strict build, cargo fmt/clippy/test,
+  ruff/pytest).
+
+## [0.34.0] - 2026-05-02
+
+Phase 33 — OIDC mTLS cert/key rotation. Closes the
+Phase-24/25-deferred operator-UX gap where the mTLS
+introspection client was built once at builder time and
+required a process restart to refresh. Phase 33 adds an
+explicit-reload primitive: operators call
+`OidcAuthResolver::reload_mtls_identity(cert_pem, key_pem)`
+from their own scheduler (cert-manager webhook, Vault PKI
+rotation, filesystem watcher, periodic poll) and the next
+request uses the new identity. The swap is atomic from the
+request-handler's perspective — concurrent introspection POSTs
+either see the old Client or the new one, never a torn state.
+
+Two sub-items, mostly additive (one internal field type
+widening on a 6-week-old struct). Plan:
+[PLAN_PHASE33.md](PLAN_PHASE33.md).
+
+### Added
+
+- **Phase 33.A — Rust core
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+
+  New public `MtlsClient` newtype wraps an
+  `std::sync::RwLock<Arc<reqwest::Client>>`. `MtlsClient::new`
+  constructs from a freshly-built reqwest Client;
+  `MtlsClient::current()` returns an `Arc<reqwest::Client>`
+  snapshot (lock acquisition is brief — read lock + Arc
+  clone; poison-recoverable);
+  `MtlsClient::swap(client)` atomically replaces the inner
+  Client. Concurrent readers either see the old Client or the
+  new one, never a torn state.
+
+  Phase 24/25 builders
+  (`with_introspection_mtls{,_combined}` and
+  `with_introspection_self_signed_mtls{,_combined}`) now wrap
+  the freshly-built `reqwest::Client` in `MtlsClient::new(...)`
+  before storing on `IntrospectionConfig.mtls_client`.
+
+  `introspect()` request-time read path snapshots via
+  `cfg.mtls_client.as_ref().map(|m| m.current())` before
+  building the request. The snapshot lives for the duration
+  of the request; concurrent reloads via
+  `OidcAuthResolver::reload_mtls_identity` affect only the
+  NEXT request, never an in-flight one.
+
+  New `OidcAuthResolver::reload_mtls_identity(cert_pem,
+  key_pem) -> Result<(), TakoError>` and
+  `reload_mtls_identity_combined(combined_pem)` methods. Both
+  take `&self` (not `&mut self`) so operators can call through
+  a shared `Arc<OidcAuthResolver>` — interior mutability lives
+  on the `MtlsClient::inner` RwLock. Reload errors when no
+  prior `with_introspection_mtls` /
+  `with_introspection_self_signed_mtls` call (operator
+  notices early; not silent no-op). Reload PEM parse /
+  `reqwest::Client` build failures surface as
+  `TakoError::Invalid` AND leave the previously installed
+  Client unchanged.
+
+  Seven new unit tests:
+  - `mtls_client_current_returns_arc_clone` — Two `current()`
+    calls before any swap return Arc-equal snapshots.
+  - `mtls_client_swap_replaces_inner` — After `swap()`,
+    `current()` returns a NEW Arc.
+  - `reload_mtls_identity_swaps_under_arc_resolver` — Reload
+    through `Arc<OidcAuthResolver>` works via `&self`.
+  - `reload_mtls_identity_errs_when_no_mtls_configured` —
+    Resolver without prior mTLS call returns `TakoError::Invalid`
+    with operator guidance pointing at the right builder.
+  - `reload_mtls_identity_errs_on_invalid_pem_and_preserves_old`
+    — Garbage PEM returns Err AND the previously installed
+    Client is still served by `current()` (no
+    partial-rollback).
+  - `reload_mtls_identity_combined_works_for_combined_pem` —
+    `cat cert.pem key.pem` form roundtrips.
+  - `reload_mtls_identity_works_for_self_signed_too` — Reload
+    works identically for Phase 25 self-signed mTLS configs.
+
+- **Phase 33.B — Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)
+  +
+  [python/tako/compat.py](python/tako/compat.py)).**
+
+  New `PyOidcAuth.reload_mtls_identity(cert_pem, key_pem)` and
+  `reload_mtls_identity_combined(combined_pem)` methods. Both
+  take `&self` (not the immutable-builder pattern) and mutate
+  state in place via internal mutability. Both raise
+  `ValueError` (mapped from `TakoError::Invalid` via
+  `map_err`) when no prior `with_introspection_mtls` /
+  `with_introspection_self_signed_mtls` call AND when the new
+  PEM fails to parse / the reqwest Client fails to build.
+
+  [`python/tako/compat.py`](python/tako/compat.py) module
+  docstring extended with a Phase 33.B paragraph describing
+  the new methods, the cert-rotation use case, and the
+  atomic-swap semantic.
+
+  Three new tests in
+  [`tests/python/test_phase33_oidc_mtls_reload.py`](tests/python/test_phase33_oidc_mtls_reload.py)
+  pin attribute presence on both methods and confirm the
+  Phase 33.B paragraph appears in the `serve_openai`
+  docstring (documentation-discoverability follows the Phase
+  24.B cadence).
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.34.0.
+- `IntrospectionConfig.mtls_client` field type widens from
+  `Option<Arc<reqwest::Client>>` to
+  `Option<Arc<MtlsClient>>`. The struct is barely 6 weeks old
+  (Phase 24); external callers who pass `None` are unaffected;
+  callers who construct with `Some(Arc::new(client))` need to
+  wrap in `MtlsClient::new(...)`. The Phase 24 + 25 builders
+  do the wrapping; only callers who construct
+  `IntrospectionConfig` directly with `Some(...)` are
+  affected.
+
+### Carried forward to Phase 34+
+
+- **Trait-based `MtlsIdentityProvider`** — async trait that
+  yields fresh cert+key bytes on demand; tako would call it
+  proactively at e.g. 90% of cert validity. Needs cert-parsing
+  on the tako side (`x509-parser` dep or hand-rolled DER
+  walk).
+- **Automatic refresh-on-handshake-failure** — catch TLS
+  handshake errors at request time and trigger reload. Needs
+  retry logic + cycle-detection.
+- **Filesystem watcher integration** — auto-reload when the
+  cert+key files on disk change. `notify` crate dep.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+
+## [0.33.0] - 2026-05-02
+
+Phase 32 — URL pre-fetch CIDR allowlist. Closes the
+Phase-31-deferred operator-UX gap where allowlists could only
+match host strings (exact + wildcard suffix). Operators with
+private subnets hosting many dynamic hosts — or raw IP literals
+with no DNS at all — now get a CIDR-based bypass:
+`with_url_prefetch_allow_cidr("10.0.5.0/24")` permits any IP in
+that subnet whether reached via hostname resolution or as an IP
+literal in the URL.
+
+After Phase 32 the operator allowlist surface covers three
+semantic forms:
+  - Exact string  ("registry.corp")     — URL host string
+  - Wildcard      ("*.internal.corp")   — URL host suffix
+  - CIDR subnet   ("10.0.5.0/24")       — Resolved IP (any)
+
+Three sub-items, all strictly additive — public APIs unchanged
+shape. Plan: [PLAN_PHASE32.md](PLAN_PHASE32.md).
+
+### Added
+
+- **Phase 32.A — Bedrock URL pre-fetch CIDR allowlist
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/bedrock/src/client.rs](crates/tako-providers/bedrock/src/client.rs)).**
+
+  New `ipnet = "2"` workspace dep (small, well-maintained,
+  zero transitive deps). `AllowList` gains `cidrs: Vec<IpNet>`
+  field; constructor renamed `from_strings(hosts) -> Self`
+  → `from_strings_and_cidrs(hosts, cidrs) -> Result<Self,
+  TakoError>` with parse-time CIDR validation. CIDR parse
+  failures surface from the builder as `TakoError::Invalid`
+  so operators notice early — consistent with Phase 24/25 mTLS
+  PEM parse-time failure cadence.
+
+  New `AllowList::contains_ip(&IpAddr) -> bool` checks if an
+  IP falls inside any allowlisted CIDR. The runtime check is a
+  short linear scan over CIDRs (typical operator allowlists are
+  small).
+
+  `BlocklistResolver::resolve` and `fetch_one`'s inline IP-
+  literal check both gain CIDR honouring: bypass triggers when
+  EITHER the host string is allowlisted (Phase 30/31) OR the
+  IP is in an allowlisted CIDR (Phase 32). Per-IP check in the
+  resolver — a host that resolves only to allowlisted-CIDR IPs
+  is allowed even if the hostname itself isn't allowlisted.
+
+  New `UrlPrefetchOpts.allow_cidrs: Vec<String>` builder field.
+  New `BedrockBuilder::with_url_prefetch_allow_cidr(cidr)`
+  chainable builder. Does NOT auto-enable
+  `with_url_prefetch()`.
+
+  Eight new unit tests covering: IPv4 CIDR match/no-match
+  (`10.0.5.0/24`), IPv6 CIDR match/no-match (`2001:db8::/32`),
+  single-host `/32`, invalid-CIDR parse error, three-mode
+  coexistence (exact + wildcard + CIDR in one allowlist),
+  end-to-end wiremock with `127.0.0.0/8` allowlist permitting
+  the loopback binding.
+
+- **Phase 32.B — Ollama URL pre-fetch CIDR allowlist
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/ollama/src/client.rs](crates/tako-providers/ollama/src/client.rs)).**
+  Per-crate copy of all 32.A surfaces. Per ARCHITECTURE.md
+  hard rule, the `AllowList` struct is duplicated rather than
+  shared. Same `OllamaBuilder::with_url_prefetch_allow_cidr(cidr)`
+  builder. Same test surface (8 new unit tests).
+
+- **Phase 32.C — Python facade
+  ([crates/tako-py/src/py_bedrock.rs](crates/tako-py/src/py_bedrock.rs)
+  +
+  [crates/tako-py/src/py_ollama.rs](crates/tako-py/src/py_ollama.rs)
+  +
+  [python/tako/providers.py](python/tako/providers.py)).**
+
+  Both `PyBedrock::new` and `PyOllama::new` gain a
+  `url_prefetch_allow_cidrs: Option<Vec<String>>` kwarg
+  (positioned between `url_prefetch_allow_hosts` and
+  `url_prefetch_timeout_secs`). When `Some(cidrs)`, the PyO3
+  ctor calls `with_url_prefetch_allow_cidr(cidr)` for each
+  entry on the underlying builder. `None` (default) means
+  empty CIDR list. CIDR parse failures surface from the
+  constructor (TakoError::Invalid → Python exception via
+  `map_err`).
+
+  [`python/tako/providers.py`](python/tako/providers.py): both
+  `Bedrock` and `Ollama` `__init__` gain the new kwarg. Both
+  class docstrings rewritten to describe the three allowlist
+  forms (exact host, wildcard host, CIDR subnet) side-by-side
+  with examples. The Ollama docstring example shows all three
+  forms together.
+
+  [`python/tako/_native.pyi`](python/tako/_native.pyi) extended
+  with the new kwarg on both stubs.
+
+  Seven new tests in
+  [`tests/python/test_phase32_allow_cidrs.py`](tests/python/test_phase32_allow_cidrs.py)
+  pin: kwarg presence on both providers; default `None`;
+  docstring documents the kwarg with CIDR examples; Bedrock
+  docstring mentions all three allowlist forms together
+  (`url_prefetch_allow_hosts` + `url_prefetch_allow_cidrs` +
+  `*.` wildcard syntax marker).
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.33.0.
+- `UrlPrefetchOpts` gains `allow_cidrs: Vec<String>` field
+  (default empty; existing callers unaffected).
+- `AllowList::from_strings(...)` renamed to
+  `from_strings_and_cidrs(hosts, cidrs)` and the return type
+  widens to `Result<Self, TakoError>`. Internal pub(crate)
+  signature only — no public-API impact.
+
+### Carried forward to Phase 33+
+
+- **Wildcard at non-leftmost positions** — patterns like
+  `registry.*.corp`. No operator ask yet.
+- **Strict-allowlist mode** — currently all allowlists are
+  per-rule BYPASSes of the blocklist. A strict mode would
+  REQUIRE every URL host to match an allowlist entry.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+
+## [0.32.0] - 2026-05-01
+
+Phase 31 — URL pre-fetch wildcard host patterns. Closes the
+Phase-30-deferred operator-UX gap where exact-string allowlist
+entries had to enumerate every subdomain. A single
+`*.internal.corp` entry now covers all current AND future
+subdomains under that suffix.
+
+Wildcard semantic: `*.X` matches any hostname ending in `.X`
+(literal `ends_with` check), INCLUDING multi-level subdomains
+(`staging.images.internal.corp` matches `*.internal.corp`).
+Does NOT match the bare apex (`internal.corp`) — operators add
+the apex as a separate exact entry if needed. Multi-level
+matching is the operator-intent default; RFC 6125's strict
+one-level semantics is for TLS cert SANs, not operator-
+controlled allowlists.
+
+Three sub-items, all strictly additive — public APIs unchanged
+shape. Plan: [PLAN_PHASE31.md](PLAN_PHASE31.md).
+
+### Added
+
+- **Phase 31.A — Bedrock URL pre-fetch wildcard host patterns
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/bedrock/src/client.rs](crates/tako-providers/bedrock/src/client.rs)).**
+
+  New `AllowList` struct splits exact-match hostnames from
+  wildcard suffix patterns at config time:
+
+  ```rust
+  pub(crate) struct AllowList {
+      exact: HashSet<String>,
+      suffixes: Vec<String>,  // each entry stored as `.X` for ends_with
+  }
+
+  impl AllowList {
+      pub(crate) fn from_strings(entries: Vec<String>) -> Self;
+      pub(crate) fn contains(&self, host: &str) -> bool;
+  }
+  ```
+
+  Entries starting with `*.` are recognised at `from_strings`
+  time and stored in `suffixes` (with the leading `*` stripped
+  and the result prefixed with `.` for `ends_with`). Phase 30
+  entries (no `*.` prefix) continue to flow into the `exact`
+  HashSet — semantics preserved byte-for-byte.
+
+  Runtime check (`AllowList::contains`) is a single
+  `HashSet::contains` plus a short linear scan over dotted
+  suffixes — no per-call `format!` allocation.
+
+  `Arc<HashSet<String>>` becomes `Arc<AllowList>` on
+  `UrlPrefetchConfig` and `BlocklistResolver`. The Phase 30
+  builder method `with_url_prefetch_allow_host(host)` is
+  unchanged — entries are parsed at `into_config` time. Doc
+  comment updated to document both match modes.
+
+  Eight new unit tests covering: exact match (Phase 30
+  regression), single-level subdomain match, multi-level
+  subdomain match, bare-domain non-match, other-domain
+  non-match, attacker-domain non-match (`attacker-internal.corp`
+  vs `*.internal.corp`), and exact + wildcard coexistence.
+
+- **Phase 31.B — Ollama URL pre-fetch wildcard host patterns
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/ollama/src/client.rs](crates/tako-providers/ollama/src/client.rs)).**
+  Per-crate copy of all 31.A surfaces. Per ARCHITECTURE.md
+  hard rule (provider crates depend only on `tako-core` +
+  their vendor SDK + reqwest; never on each other), the
+  `AllowList` struct is duplicated rather than shared. Same
+  test surface (8 new unit tests).
+
+- **Phase 31.C — Python facade docstrings + tests
+  ([python/tako/providers.py](python/tako/providers.py)
+  +
+  [tests/python/test_phase31_wildcard_hosts.py](tests/python/test_phase31_wildcard_hosts.py)).**
+
+  No PyO3 code change — the
+  `url_prefetch_allow_hosts: list[str] | None` kwarg shape is
+  unchanged; the new wildcard semantic lands entirely on the
+  Rust side. The Python facade ships:
+
+  - Both `Bedrock` and `Ollama` class docstrings updated to
+    document the two match modes (exact-string + wildcard
+    suffix), the multi-level matching semantic, and the
+    bare-apex caveat.
+  - The `Ollama` docstring example was extended to show both
+    modes side-by-side.
+  - Six new tests in
+    [`tests/python/test_phase31_wildcard_hosts.py`](tests/python/test_phase31_wildcard_hosts.py)
+    pin: kwarg type unchanged (Phase 30 regression); both
+    docstrings document `*.X` patterns with multi-level
+    matching; both docstrings include the bare-apex caveat.
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.32.0.
+- `UrlPrefetchConfig::new`'s fifth parameter widens from
+  `Arc<HashSet<String>>` to `Arc<AllowList>`. Internal
+  pub(crate) signature only — no public-API impact.
+
+### Carried forward to Phase 32+
+
+- **CIDR allowlist** — `with_url_prefetch_allow_cidr("10.0.5.0/24")`.
+  Operators may want to permit a whole subnet without
+  enumerating each host. Needs a CIDR parser dep
+  (`ipnet` or hand-rolled).
+- **Wildcard at non-leftmost positions** — patterns like
+  `registry.*.corp`. Phase 31 ships only the leftmost-`*.`
+  convention. Probably never worth shipping unless a real
+  operator asks.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+- **Per-child `ChainedAuthResolver` policy override**
+  (Phase 27 carry-forward).
+
+## [0.31.0] - 2026-05-01
+
+Phase 30 — URL pre-fetch per-host allowlist. Closes the
+Phase-29-deferred operator-UX gap where the binary
+`with_url_prefetch_allow_private_ips()` flag is a sledgehammer:
+operators with an internal artifact registry on a private RFC
+1918 address would have to disable the WHOLE blocklist (incl.
+the canary 169.254.169.254 cloud-metadata endpoint) just to
+permit one trusted host.
+
+Phase 30 adds a per-host BYPASS that lets operators allowlist
+specific hostnames while keeping the rest of the blocklist
+active. Allowlisted hosts skip ONLY the private-IP blocklist;
+scheme / timeout / size cap / MIME validation all still apply
+(defence-in-depth). Plan: [PLAN_PHASE30.md](PLAN_PHASE30.md).
+
+### Added
+
+- **Phase 30.A — Bedrock URL pre-fetch per-host allowlist
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/bedrock/src/client.rs](crates/tako-providers/bedrock/src/client.rs)).**
+
+  New `UrlPrefetchConfig.allow_hosts: Arc<HashSet<String>>`
+  field shared between the `BlocklistResolver` and the inline
+  IP-literal check via `Arc` (cheap clone). The
+  `BlocklistResolver` carries a clone and skips the per-IP
+  blocklist when the requested hostname is in the set. The
+  inline IP-literal check (Phase 29.A) gains the same bypass:
+  matched against the raw `host_str` so
+  `with_url_prefetch_allow_host("10.0.5.4")` matches a URL
+  whose host is exactly `10.0.5.4`.
+
+  `UrlPrefetchOpts.allow_hosts: Vec<String>` builder field;
+  `into_config` collects to `Arc<HashSet<String>>` so duplicate
+  builder calls dedupe naturally.
+
+  New `BedrockBuilder::with_url_prefetch_allow_host(host: impl
+  Into<String>)` builder method — chainable; can be called
+  multiple times. Does NOT auto-enable `with_url_prefetch()`
+  (master switch must already be on).
+
+  Five new unit tests pinning: default empty allowlist,
+  into_config round-trip + dedupe, IP-literal allowlist bypass
+  (wiremock on 127.0.0.1 with allowlist={"127.0.0.1"}), and the
+  exact-match semantics (allowlist={"some-other-host"} does NOT
+  bypass `127.0.0.1`).
+
+- **Phase 30.B — Ollama URL pre-fetch per-host allowlist
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)
+  +
+  [crates/tako-providers/ollama/src/client.rs](crates/tako-providers/ollama/src/client.rs)).**
+  Per-crate copy of all 30.A surfaces (per ARCHITECTURE.md
+  hard rule — provider crates depend only on `tako-core` +
+  their vendor SDK + reqwest; never on each other). Same
+  `OllamaBuilder::with_url_prefetch_allow_host(host)` builder.
+  Same test surface (5 new unit tests).
+
+- **Phase 30.C — Python facade
+  ([crates/tako-py/src/py_bedrock.rs](crates/tako-py/src/py_bedrock.rs)
+  +
+  [crates/tako-py/src/py_ollama.rs](crates/tako-py/src/py_ollama.rs)
+  +
+  [python/tako/providers.py](python/tako/providers.py)).**
+  Both `tako.providers.Bedrock` and `tako.providers.Ollama`
+  gain a new `url_prefetch_allow_hosts: list[str] | None`
+  kwarg, positioned between `url_prefetch_allow_private_ips`
+  and `url_prefetch_timeout_secs`. When `Some(hosts)`, the
+  PyO3 ctor calls
+  `with_url_prefetch_allow_host(host)` for each entry on the
+  underlying builder. `None` (default) means empty allowlist
+  — existing callers unaffected.
+
+  [`python/tako/_native.pyi`](python/tako/_native.pyi) updated
+  with the new kwarg on both stubs. Both class docstrings
+  document the new kwarg + bypass semantics.
+
+  Six new tests in
+  [`tests/python/test_phase30_allow_hosts.py`](tests/python/test_phase30_allow_hosts.py)
+  pin: kwarg presence on both providers; default `None`;
+  docstring documents the kwarg + bypass semantic. Behaviour
+  pinned in the Rust unit tests.
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.31.0.
+- `UrlPrefetchConfig::new` widens to take a fifth
+  `allow_hosts: Arc<HashSet<String>>` parameter. Internal
+  pub(crate) signature only — no public-API impact.
+
+### Carried forward to Phase 31+
+
+- **Wildcard / suffix host patterns** — Phase 30 ships
+  exact-string match only. Operators may want
+  `*.internal.corp.local` to permit all subdomains. Needs a
+  pattern matcher.
+- **CIDR allowlist** — `with_url_prefetch_allow_cidr("10.0.5.0/24")`
+  to permit a whole subnet without enumerating each host.
+  Needs a CIDR parser dep.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+- **Per-child `ChainedAuthResolver` policy override**
+  (Phase 27 carry-forward).
+
+## [0.30.0] - 2026-05-01
+
+Phase 29 — URL pre-fetch SSRF hardening + Ollama Python facade.
+Closes the Phase 28-deferred CIDR-block + DNS-rebinding
+mitigation gap, and the Phase 28.C asymmetry where
+`url_prefetch` was threaded through `tako.providers.Bedrock`
+but not Ollama (which had no Python binding in tako-py).
+
+The Phase 28 SSRF mitigations were `https`-only / timeout /
+size cap / MIME validation; operators were left to enforce
+network egress at deployment level. Phase 29 adds
+defence-in-depth at two layers: (a) a custom DNS resolver
+that rejects private/loopback/link-local/multicast/IPv6-
+unique-local IPs at resolve time AND validates EVERY returned
+`SocketAddr` (closing the DNS-rebinding window); (b) an inline
+IP-literal check for URLs whose host is already an IP (where
+reqwest skips the resolver). Default-on; opt out via the new
+`with_url_prefetch_allow_private_ips()` builder for deployments
+that already filter network egress.
+
+After Phase 29 the tako-side URL pre-fetch surface ships with a
+complete SSRF-mitigation stack, and both URL-prefetching
+providers (Bedrock + Ollama) have full Python parity.
+Plan: [PLAN_PHASE29.md](PLAN_PHASE29.md).
+
+### Added
+
+- **Phase 29.A — Bedrock URL pre-fetch private-IP blocklist +
+  DNS-rebind mitigation
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)).**
+  New public-to-crate `is_blocked_ip(&IpAddr) -> bool` helper
+  rejects: IPv4 loopback (`127/8`), RFC 1918 (`10/8`,
+  `172.16/12`, `192.168/16`), link-local (`169.254/16`),
+  unspecified (`0.0.0.0`), broadcast (`255.255.255.255`),
+  multicast (`224/4`), and reserved (`240/4`); IPv6 loopback
+  (`::1`), unspecified (`::`), multicast (`ff00::/8`),
+  unique-local (`fc00::/7`), unicast-link-local (`fe80::/10`),
+  and IPv4-mapped variants (`::ffff:x.x.x.x`) recursively
+  checked via `Ipv6Addr::to_ipv4_mapped` (stable on workspace
+  MSRV 1.85). Pure stdlib; no new deps.
+
+  New `BlocklistResolver` impl of `reqwest::dns::Resolve` wraps
+  `tokio::net::lookup_host` and validates EVERY returned
+  `SocketAddr` against `is_blocked_ip`. Validating all
+  addresses (not just first) is the DNS-rebinding mitigation —
+  a malicious resolver returning two A records (one public,
+  one private) can't slip the private IP through alongside a
+  public one, and there's no second resolution between
+  validation and connection.
+
+  New inline IP-literal check in `fetch_one` after URL parse:
+  reqwest skips the DNS resolver for IP-literal URLs (e.g.
+  `http://127.0.0.1/...`), so the blocklist must be enforced
+  here too. Parses `host_str` as `IpAddr` (stripping IPv6
+  brackets); on parse failure it's a domain name and the
+  resolver path takes over.
+
+  `UrlPrefetchOpts.block_private_ips: bool` field defaults to
+  `true` (Phase 29 default-deny stance for SSRF). Plumbed
+  through `UrlPrefetchConfig::new()` to conditionally install
+  the resolver. New
+  `BedrockBuilder::with_url_prefetch_allow_private_ips()`
+  builder method opts out for deployments where the network
+  layer already filters egress. Does NOT auto-enable the
+  master `with_url_prefetch()` switch.
+
+  Thirteen new unit tests covering all blocked + allowed IP
+  categories (including the `169.254.169.254` cloud-metadata
+  canary and `::ffff:127.0.0.1` IPv4-mapped variant); two
+  wiremock integration tests pinning end-to-end loopback
+  rejection and the operator opt-out.
+
+- **Phase 29.B — Ollama URL pre-fetch private-IP blocklist +
+  DNS-rebind mitigation
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)).**
+  Per-crate copy of all 29.A surfaces (per ARCHITECTURE.md
+  hard rule — provider crates depend only on `tako-core` +
+  their vendor SDK + reqwest; never on each other). Phase 28.B
+  established the duplication; Phase 29.B extends each copy.
+  Same `is_blocked_ip` / `BlocklistResolver` /
+  `UrlPrefetchOpts.block_private_ips` /
+  `OllamaBuilder::with_url_prefetch_allow_private_ips()`
+  surface. Same test surface as 29.A.
+
+- **Phase 29.C — `tako.providers.Ollama` Python facade +
+  `url_prefetch_allow_private_ips` kwarg on Bedrock
+  ([crates/tako-py/src/py_ollama.rs](crates/tako-py/src/py_ollama.rs)
+  +
+  [crates/tako-py/src/py_bedrock.rs](crates/tako-py/src/py_bedrock.rs)
+  +
+  [python/tako/providers.py](python/tako/providers.py)).**
+
+  New `PyOllama` pyclass mirrors the Phase 28.C `PyBedrock`
+  cadence. Constructor signature:
+  ```python
+  Ollama(
+      model: str,
+      *,
+      base_url: str | None = None,
+      timeout_secs: int | None = None,
+      url_prefetch: bool = False,
+      url_prefetch_allow_http: bool = False,
+      url_prefetch_allow_private_ips: bool = False,
+      url_prefetch_timeout_secs: int | None = None,
+      url_prefetch_max_bytes: int | None = None,
+  )
+  ```
+  `OllamaBuilder::build()` is sync (no async credential chain),
+  so the constructor calls `b.build()?` directly without
+  `py.detach + rt.block_on` (Bedrock's async path).
+
+  `PyBedrock::new` gains the new
+  `url_prefetch_allow_private_ips: bool = False` kwarg between
+  `url_prefetch_allow_http` and `url_prefetch_timeout_secs`,
+  plumbing through to
+  `BedrockBuilder::with_url_prefetch_allow_private_ips()`.
+
+  Wiring:
+  [`crates/tako-py/Cargo.toml`](crates/tako-py/Cargo.toml) adds
+  `tako-providers-ollama` workspace dep;
+  [`crates/tako-py/src/lib.rs`](crates/tako-py/src/lib.rs)
+  registers `mod py_ollama` and adds `PyOllama` to the
+  `_native` module; [`python/tako/providers.py`](python/tako/providers.py)
+  adds new `class Ollama(_ProviderBase)` and the new kwarg on
+  `class Bedrock`; [`python/tako/_native.pyi`](python/tako/_native.pyi)
+  adds new `Ollama` stub and the extended `Bedrock` stub.
+
+  Six new tests in
+  [`tests/python/test_phase29_ssrf_hardening.py`](tests/python/test_phase29_ssrf_hardening.py)
+  pin the kwarg presence + default + docstring on both
+  providers; seven new tests in
+  [`tests/python/test_phase29_ollama_facade.py`](tests/python/test_phase29_ollama_facade.py)
+  pin the new `Ollama` class exists, has the expected
+  signature, has sensible defaults, and inherits from
+  `_ProviderBase`. Both files validate the Python-facing
+  *signature* rather than constructing live providers
+  (Bedrock needs AWS credentials; Ollama needs a daemon).
+  Behaviour pinned in the Rust unit tests.
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.30.0.
+- Phase 28 wiremock tests in
+  `crates/tako-providers/{bedrock,ollama}/src/url_prefetch.rs`
+  now pass `block_private_ips: false` in their
+  `UrlPrefetchConfig::new()` calls — they pre-date the new
+  Phase 29 default and bind to `127.0.0.1`. Public
+  `BedrockBuilder` / `OllamaBuilder` API unchanged byte-for-
+  byte for callers who didn't opt in to URL pre-fetch.
+
+### Carried forward to Phase 30+
+
+- **Per-domain allowlist for URL pre-fetch** — operators may
+  want to permit specific internal hostnames (e.g., a private
+  artifact registry on `10.0.x.x`) while still blocking
+  everything else. Phase 29 ships only the binary on/off
+  allow-private-IPs flag; an allowlist would need a chainable
+  `with_url_prefetch_allow_host(host)` builder + matching
+  Python kwarg.
+- **OIDC mTLS end-to-end integration test** (Phase 24/25
+  carry-forward).
+- **OIDC mTLS cert / key rotation** for long-running
+  deployments rotating client certs (Phase 24/25 carry-
+  forward).
+- **Vertex File API upload flow** (Phase 23 carry-forward).
+- **`TakoError::Provider` short-circuit on
+  `ChainedAuthResolver`** (Phase 27 carry-forward).
+- **Per-child `ChainedAuthResolver` policy override**
+  (Phase 27 carry-forward).
+
+## [0.29.0] - 2026-05-01
+
+Phase 28 — closes the URL-source-image gap on Bedrock + Ollama.
+Phase 22 + Phase 23 shipped URL-source images on the four
+providers whose API servers fetch URLs themselves (Anthropic +
+OpenAI + Mistral + Vertex). Bedrock's `ImageSource` has no URL
+variant, and Ollama's `images: Vec<String>` field requires bare
+base64 — for those two, tako must fetch the URL itself. Phase
+28 ships that with security-conscious defaults: opt-in
+default-off, `https`-only by default, configurable timeout / size
+cap (with `Content-Length` pre-flight + post-fetch byte-count
+defence-in-depth), MIME validation against the four supported
+types (`image/{jpeg,png,gif,webp}`). CIDR-block egress filtering
+and DNS-rebinding mitigation are explicitly NOT in scope —
+operators must enforce network egress at the deployment level
+(VPC egress rules, Pod-level egress NetworkPolicies, etc).
+After Phase 28 every shipped provider adapter (Anthropic +
+OpenAI + Mistral + Vertex + Bedrock + Ollama — six of six)
+handles outbound `ContentPart::ImageUrl`. Plan: [PLAN_PHASE28.md](PLAN_PHASE28.md).
+
+### Added
+
+- **Phase 28.A — Bedrock URL pre-fetch
+  ([crates/tako-providers/bedrock/src/url_prefetch.rs](crates/tako-providers/bedrock/src/url_prefetch.rs)).**
+  New `UrlPrefetchConfig` struct with
+  `allow_http: bool` / `max_bytes: usize` / `http: reqwest::Client`
+  fields. `UrlPrefetchConfig::rewrite(&mut ChatRequest)` walks
+  every message's content array; for each
+  `ContentPart::ImageUrl { url, mime }`, fetches the URL,
+  validates the response MIME against the four supported types,
+  base64-encodes the body via `aws_smithy_types::base64::encode`
+  (already in the dep tree), and replaces the content part with
+  `ContentPart::Image { mime, data_b64 }` in place. Other content
+  parts pass through unchanged. URL parsing uses
+  `reqwest::Url::parse` for the scheme check
+  (`http`/`https` only; `https`-only by default).
+  `BedrockBuilder` gains four new methods:
+  `with_url_prefetch(self, enabled: bool)`,
+  `with_url_prefetch_allow_http(self, allow: bool)`,
+  `with_url_prefetch_timeout(self, secs: u64)`,
+  `with_url_prefetch_max_bytes(self, bytes: usize)`. The
+  `Inner` struct gains `url_prefetch: Option<UrlPrefetchConfig>`;
+  `chat()` and `stream()` call `prefetch.rewrite(&mut req).await?`
+  before the existing convert step. New `reqwest = workspace`
+  + `wiremock` dev-dep added to `bedrock/Cargo.toml`. Eight new
+  unit tests + four wiremock integration tests covering the
+  rewrite path, scheme rejection, MIME validation, size cap
+  (both pre-flight `Content-Length` rejection and post-fetch
+  byte-count rejection), and timeout enforcement.
+
+- **Phase 28.B — Ollama URL pre-fetch
+  ([crates/tako-providers/ollama/src/url_prefetch.rs](crates/tako-providers/ollama/src/url_prefetch.rs)).**
+  Mirror of Bedrock's structure with per-crate copies of the
+  helpers (per ARCHITECTURE.md hard rule — provider crates
+  depend only on `tako-core` + their vendor SDK + `reqwest`;
+  never on each other). Uses
+  `base64::engine::general_purpose::STANDARD.encode` instead of
+  the AWS SDK's helper (Bedrock has `aws_smithy_types` already
+  in the dep tree; Ollama doesn't). New
+  `base64 = workspace` dep added to `ollama/Cargo.toml`.
+  `OllamaBuilder::with_url_prefetch_*` methods + `Inner.url_prefetch`
+  + `chat()` / `stream()` rewrite call wired identically to
+  Bedrock. Three new unit tests.
+
+- **Phase 28.C — Python facade
+  ([crates/tako-py/src/py_bedrock.rs](crates/tako-py/src/py_bedrock.rs)
+  + [python/tako/providers.py](python/tako/providers.py)).**
+  `tako.providers.Bedrock(...)` gains four new keyword arguments
+  mirroring the Rust builder: `url_prefetch: bool = False`,
+  `url_prefetch_allow_http: bool = False`,
+  `url_prefetch_timeout_secs: int | None = None`,
+  `url_prefetch_max_bytes: int | None = None`. Defaults
+  preserve byte-for-byte the Phase 27 zero-config behaviour.
+  Type stub
+  ([python/tako/_native.pyi](python/tako/_native.pyi)) updated.
+  Class docstring updated with SSRF-mitigation summary +
+  operator-level network-egress reminder. Ollama has no Python
+  binding (no entry in tako-py) — Python surface is Bedrock-only
+  for Phase 28. New
+  [tests/python/test_phase28_url_prefetch.py](tests/python/test_phase28_url_prefetch.py)
+  validates kwarg presence, default values, and docstring
+  documentation; behaviour is asserted on the Rust side (15
+  tests across 28.A + 28.B).
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.29.0.
+
+### Carried forward to Phase 29+
+
+- CIDR-block egress filtering — opt-in CIDR allowlist /
+  blocklist on the URL-prefetch resolver. Operators currently
+  enforce at the network layer (VPC egress, NetworkPolicies);
+  in-tako filtering would be defence-in-depth.
+- DNS-rebinding mitigation — resolve the host once and pin the
+  IP across the connection. Pairs with the CIDR work.
+- Vertex File API URI scheme on `fileData` — Phase 23 noted
+  Vertex's File API (`projects/.../files/...` URIs) is out of
+  scope; needs an upload helper to round-trip a local image
+  through the File API endpoint. Not yet asked for.
+- `tako.providers.Ollama` Python binding — Phase 28.C ships
+  Bedrock-only because Ollama has no entry in tako-py today.
+  Adding it would mirror `PyBedrock` byte-for-byte.
+
+## [0.28.0] - 2026-05-01
+
+Phase 27 — closes the Phase-26 carry-forward by extending
+`ChainedAuthResolver`'s opt-in fail-fast to four "definitely
+infrastructure / operator-set guard" `TakoError` variants:
+`Transport`, `RateLimited`, `CircuitOpen`, `BudgetExhausted`.
+Plan: [PLAN_PHASE27.md](PLAN_PHASE27.md).
+
+The case-by-case analysis on which variants to short-circuit:
+
+- `Transport(String)` — network failure; falling through to
+  another resolver gets the wrong-cause error. **Short-circuit ✓**
+- `RateLimited(Duration)` — falling through doesn't reset the
+  upstream rate limit. **Short-circuit ✓**
+- `CircuitOpen` — internal failsafe; falling through doesn't
+  reset. **Short-circuit ✓**
+- `BudgetExhausted(String)` — operator-set cap; falling through
+  circumvents it. **Short-circuit ✓**
+- `Provider { ... }` — vendor error; could be auth-related.
+  **Fall through** (deferred pending finer discrimination)
+- `Invalid(String)` — auth decision. **Fall through**
+- `PolicyDenied(String)` — policy decision. **Fall through**
+
+### Added
+
+- **Phase 27.A — `ChainedAuthResolver::with_short_circuit_on_infrastructure_errors`
+  ([crates/tako-compat/src/auth/chained.rs](crates/tako-compat/src/auth/chained.rs)).**
+
+  Internal refactor: the Phase-26
+  `short_circuit_on_transport_error: bool` field is upgraded
+  to a `ShortCircuitPolicy` enum (`None` / `TransportOnly` /
+  `AllInfrastructure`). The enum is private; public-API churn
+  is zero. Phase 26 callers
+  (`with_short_circuit_on_transport_error()` +
+  `short_circuits_on_transport_error()`) work byte-for-byte.
+
+  New surfaces:
+  - `ChainedAuthResolver::with_short_circuit_on_infrastructure_errors()`
+    builder method (idempotent). Last-write-wins between this
+    and the Phase-26 narrower builder — the policy is
+    overwritten, not merged.
+  - `ChainedAuthResolver::short_circuits_on_infrastructure_errors() -> bool`
+    accessor. Returns `true` only when the broader builder was
+    the most recent policy setter.
+  - The Phase-26 `short_circuits_on_transport_error()` accessor
+    now returns `true` for both `TransportOnly` and
+    `AllInfrastructure` policies (both short-circuit on
+    `Transport`).
+
+  `resolve()` extension uses an explicit `match
+  self.short_circuit_policy` switch over the three enum
+  variants. The `CountingAuth` test mock is extended further to
+  preserve `RateLimited` / `CircuitOpen` / `BudgetExhausted`
+  variants (currently only `Transport` and `Invalid`
+  round-trip; others collapse into `Invalid`).
+
+  Eight new unit tests:
+
+  - `infrastructure_short_circuit_default_falls_through_on_rate_limited`
+    — Phase 21 / 26 regression pin.
+  - `infrastructure_short_circuit_returns_immediately_on_rate_limited`
+  - `infrastructure_short_circuit_returns_immediately_on_circuit_open`
+  - `infrastructure_short_circuit_returns_immediately_on_budget_exhausted`
+  - `infrastructure_short_circuit_falls_through_on_invalid_error`
+    — auth-decision errors still fall through with broader policy.
+  - `transport_only_falls_through_on_rate_limited_when_transport_only_set`
+    — regression: the Phase-26 narrower flag does NOT broaden
+    scope after the policy enum refactor.
+  - `short_circuits_on_infrastructure_errors_accessor_reflects_state`
+    — both accessors track the policy correctly across the three
+    states.
+  - `short_circuit_policy_is_last_write_wins` — calling broader
+    after narrower (and vice versa) overwrites the policy.
+
+- **Phase 27.B — Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `ChainedAuth.with_short_circuit_on_infrastructure_errors()` +
+  `short_circuits_on_infrastructure_errors() -> bool` accessor
+  mirror the Rust API. Returns a NEW `ChainedAuth` (immutable
+  builder; idempotent). `tako.compat` module docstring updated
+  to mention the new builder + the variant coverage. New
+  [`tests/python/test_phase27_chained_infrastructure.py`](tests/python/test_phase27_chained_infrastructure.py)
+  covers facade attribute presence, immutable-builder semantics,
+  last-write-wins between Phase-26 and Phase-27 builders, the
+  regression pin that the narrower flag doesn't flip the
+  broader accessor, and idempotence.
+
+### Changed
+
+- `ChainedAuthResolver`'s private state widens from a single
+  `bool` to a three-state `ShortCircuitPolicy` enum. Public API
+  unchanged byte-for-byte; Phase 21 + 26 callers preserve
+  semantics.
+- The Phase-26 `short_circuits_on_transport_error()` accessor's
+  semantics are now "is this chain configured to short-circuit
+  on transport errors?" — which is `true` for both narrower
+  and broader policies. The doc comment was updated to clarify;
+  the boolean output is unchanged for callers who only set the
+  Phase-26 narrower flag.
+- Workspace + Python crate version bumped to v0.28.0.
+
+### Carried forward to Phase 28+
+
+- `TakoError::Provider` short-circuit — vendor-error
+  short-circuit warrants finer discrimination on the embedded
+  error. Deferred pending real-world need.
+- Per-child `ChainedAuthResolver` policy override — operators
+  may want different short-circuit policies per child. Not yet
+  asked for.
+- OIDC mTLS end-to-end integration test, OIDC mTLS cert
+  rotation, URL-source for Bedrock / Ollama, Vertex File API
+  upload, eval-harness real graders, OIDC refresh-token /
+  revocation.
+
+## [0.27.0] - 2026-05-01
+
+Phase 26 — closes the Phase-21-deferred operator-UX issue with
+the `ChainedAuthResolver` fall-through-on-any-Err default. The
+Phase 21 PLAN explicitly noted the deferral: "If patterns emerge
+for 'fail fast on transport errors' ... a future phase may add
+`with_short_circuit_on_transport_error`." Phase 26 ships that
+opt-in flag. Plan: [PLAN_PHASE26.md](PLAN_PHASE26.md).
+
+The pattern this addresses: chain
+`OidcAuth().then(StaticTokens)`. When the OIDC issuer is
+unreachable, OIDC returns `TakoError::Transport(...)`, which the
+Phase-21 chain unconditionally falls through to StaticTokens,
+which returns `"unknown bearer token"` because the user's OIDC
+token isn't in the static map. The end-user sees a misleading
+401 with a wrong-cause diagnostic; the operator gets paged for
+a wrong-cause symptom. Phase 26's opt-in flag halts the chain
+on transport errors, surfacing the actionable
+`"transport error: oidc unreachable"` instead.
+
+### Added
+
+- **Phase 26.A — `ChainedAuthResolver::with_short_circuit_on_transport_error`
+  ([crates/tako-compat/src/auth/chained.rs](crates/tako-compat/src/auth/chained.rs)).**
+
+  New surfaces:
+  - `ChainedAuthResolver.short_circuit_on_transport_error: bool`
+    field. Default `false` preserves Phase 21
+    fall-through-on-any-Err semantics byte-for-byte.
+  - `ChainedAuthResolver::with_short_circuit_on_transport_error()`
+    builder method (idempotent).
+  - `ChainedAuthResolver::short_circuits_on_transport_error() ->
+    bool` accessor.
+
+  `resolve()` extension: when the flag is set AND a child
+  returns `Err(TakoError::Transport(_))`, return immediately
+  (don't fall through to the next child). Other error variants
+  (`TakoError::Invalid`, `PolicyDenied`, etc.) continue to fall
+  through — those represent auth decisions the next resolver
+  might overturn. Only `Transport` short-circuits in Phase 26;
+  broader infrastructure-error semantics (`RateLimited` /
+  `CircuitOpen` / `BudgetExhausted` / `Provider` source-error)
+  deferred to Phase 27+.
+
+  The existing `CountingAuth` test mock is extended with a
+  `Transport`-preserving arm so tests can construct the
+  specific error variant; other arms continue to collapse into
+  `Invalid` (which the Phase 21 tests rely on).
+
+  Five new unit tests:
+  - `short_circuit_default_falls_through_on_transport_error` —
+    Phase 21 regression pin: without the flag, transport errors
+    fall through exactly like Invalid does.
+  - `short_circuit_enabled_returns_immediately_on_transport_error`
+    — first child returns `Transport`; the second is **not**
+    called; the transport error propagates verbatim.
+  - `short_circuit_enabled_falls_through_on_invalid_error` —
+    only `Transport` short-circuits.
+  - `short_circuit_enabled_first_ok_still_short_circuits_happy_path`
+    — happy-path regression pin.
+  - `short_circuits_on_transport_error_accessor_reflects_state`
+    — accessor + idempotence.
+
+- **Phase 26.B — Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `ChainedAuth.with_short_circuit_on_transport_error()` mirrors
+  the Rust builder. Returns a NEW `ChainedAuth` (immutable-
+  builder cadence). `short_circuits_on_transport_error() ->
+  bool` accessor exposes the flag.
+
+  `tako.compat` module docstring updated to mention the new
+  builder + the operator-UX rationale. New
+  [`tests/python/test_phase26_chained_short_circuit.py`](tests/python/test_phase26_chained_short_circuit.py)
+  covers facade attribute presence, immutable-builder semantics,
+  idempotence, child preservation across the flag flip, and the
+  Phase-21 default-falls-through regression pin from the Python
+  side.
+
+### Changed
+
+- `ChainedAuthResolver` gains a `short_circuit_on_transport_error:
+  bool` field (private; default `false`). The Phase 21 default
+  fall-through-on-any-Err semantics are preserved byte-for-byte
+  for callers who don't opt in.
+- Workspace + Python crate version bumped to v0.27.0.
+
+### Carried forward to Phase 27+
+
+- Broader infrastructure-error short-circuit (RateLimited /
+  CircuitOpen / BudgetExhausted / Provider source-error) —
+  warrants per-variant analysis. Phase 27+ may add
+  `with_short_circuit_on_infrastructure_errors`.
+- OIDC mTLS end-to-end integration test — real TLS server
+  requiring client auth (axum-server + rustls + per-test CA);
+  ~300 lines of test infra.
+- OIDC mTLS cert / key rotation — long-running deployments
+  rotating client certs would need a refresh mechanism.
+- URL-source images for Bedrock / Ollama (need tako-side
+  pre-fetch with SSRF guard), Vertex File API upload flow,
+  eval-harness real graders, OIDC refresh-token / revocation.
+
+## [0.26.0] - 2026-05-01
+
+Phase 25 — closes the OIDC introspection auth-method surface to
+all six RFC 7662 §2.1 / RFC 8414 / RFC 8705-listed methods tako
+ships. Phase 24 added CA-backed mTLS (`tls_client_auth`);
+Phase 25 adds the self-signed sibling (`self_signed_tls_client_auth`,
+RFC 8705 §2.2). Natural close-out of the ~10-phase OIDC
+hardening arc that started with Phase 14.B. Plan:
+[PLAN_PHASE25.md](PLAN_PHASE25.md).
+
+The auth-method surface tako now covers:
+
+1. `client_secret_basic` (Phase 15.B.2 default; RFC 7662 §2.1)
+2. `client_secret_post` (Phase 16.B.2; RFC 7662 §2.1)
+3. `client_secret_jwt` (Phase 17.B; RFC 7521 / 7523 HS256)
+4. `private_key_jwt` (Phase 18.A; RFC 7521 / 7523 RS256 / ES256
+   / EdDSA)
+5. `tls_client_auth` (Phase 24; RFC 8705 §2.1 CA-backed mTLS)
+6. `self_signed_tls_client_auth` (Phase 25; RFC 8705 §2.2
+   self-signed mTLS)
+
+### Added
+
+- **Phase 25.A — OIDC introspection
+  `self_signed_tls_client_auth`
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+
+  New `IntrospectionAuthMethod::SelfSignedTlsClientAuth`
+  variant. Wire-identical to Phase 24's
+  `IntrospectionAuthMethod::TlsClientAuth` (both present a TLS
+  client cert during the handshake), but the issuer matches the
+  cert directly against a pre-registered cert thumbprint or
+  public-key fingerprint instead of validating against a CA
+  chain. The distinction is in the discovery-list entry; the
+  wire format is identical so the same `mtls_client` field on
+  `IntrospectionConfig` carries the Identity for both variants.
+
+  Two new `OidcAuthResolver` builders:
+  - `with_introspection_self_signed_mtls(cert_pem, key_pem)`
+  - `with_introspection_self_signed_mtls_combined(combined_pem)`
+
+  Both load the cert + key, build a per-resolver mTLS-enabled
+  `reqwest::Client` via `reqwest::Identity::from_pem`, and flip
+  `auth_method` to `SelfSignedTlsClientAuth`. PEM parse /
+  `Client` build failures surface as `TakoError::Invalid` at
+  builder time, matching Phase 24's pattern.
+
+  Auto-selector extension: extends the Phase 24 five-tier
+  preference order to a six-tier ordering with
+  `tls_client_auth` (CA-backed) at the head and
+  `self_signed_tls_client_auth` second. Rationale: CA-backed
+  wins because the chain provides ongoing trust validation
+  (revocation, etc.). Both gated on having an mTLS identity
+  configured. When only `self_signed_tls_client_auth` is
+  advertised, the auto-selector picks it (regardless of which
+  mTLS builder set the identity up).
+
+  `introspect()` extension: the body-build, Client-swap, and
+  no-Authorization-header arms all extend to handle
+  `SelfSignedTlsClientAuth` identically to `TlsClientAuth`.
+  The pre-flight identity check is generalised over both
+  variants, producing distinct error messages
+  (`"oidc: tls_client_auth requires mtls_client to be set"` vs.
+  `"oidc: self_signed_tls_client_auth requires mtls_client to
+  be set"`).
+
+  Six new unit tests:
+  - `with_introspection_self_signed_mtls_accepts_valid_pem`
+  - `with_introspection_self_signed_mtls_combined_accepts_concatenated_pem`
+  - `with_introspection_self_signed_mtls_rejects_garbage_pem`
+  - `auto_select_prefers_tls_client_auth_over_self_signed_when_both_listed`
+    — even after `with_introspection_mtls` then re-run
+    auto-selector with both advertised, CA-backed wins.
+  - `auto_select_picks_self_signed_when_only_self_signed_listed` —
+    `tls_client_auth` not advertised; auto-selector picks
+    self-signed.
+  - `introspect_self_signed_tls_client_auth_errors_when_mtls_client_missing`
+    — request-time fail.
+
+  Phase 24 mTLS test cert + key fixtures are reused. All Phase
+  24 mTLS tests pass byte-for-byte unchanged.
+
+- **Phase 25.B — Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `OidcAuth.with_introspection_self_signed_mtls(cert_pem,
+  key_pem)` and `_combined(combined_pem)` mirror the Rust
+  builders. Returns a NEW `OidcAuth`. Raises `ValueError` on
+  PEM parse failure.
+
+  `OidcAuth.with_introspection_auth_method(method)` alias
+  parser extended with four case-insensitive aliases for the
+  new variant: `"self_signed_tls_client_auth"` (RFC 8705 §2.2
+  spec name), `"self-signed-tls-client-auth"` (kebab variant),
+  `"self_signed_mtls"` and `"self-signed-mtls"`
+  (operator-friendly shorthands).
+
+  `tako.compat` module docstring updated with the close-out
+  note that the OIDC introspection auth-method surface now
+  covers all six published methods. New
+  [`tests/python/test_phase25_self_signed_mtls.py`](tests/python/test_phase25_self_signed_mtls.py)
+  covers facade attribute presence + the alias-parser entries.
+
+- **`PLAN_PHASE25.md` filename free.** A previous file by this
+  name held Phase 2.5's plan because of the `2.5 → 25`
+  reading. Renamed to `PLAN_PHASE2_5.md` (underscore variant)
+  in this phase so the actual Phase 25 plan can claim the
+  natural filename. PLAN.md table row + cross-references in
+  `PLAN_PHASE1.md` and `PLAN_PHASE3.md` updated.
+
+### Changed
+
+- `IntrospectionAuthMethod` gains a sixth unit variant
+  `SelfSignedTlsClientAuth`. The enum keeps `#[derive(Debug,
+  Clone, Copy, Default, PartialEq, Eq)]`; default is unchanged
+  (`ClientSecretBasic`).
+- The pre-flight mTLS identity check in `introspect()` is
+  generalised over both mTLS variants and produces
+  variant-specific error messages.
+- Workspace + Python crate version bumped to v0.26.0.
+
+### Carried forward to Phase 26+
+
+- OIDC mTLS end-to-end integration test — real TLS server
+  requiring client auth (axum-server + rustls + per-test CA);
+  ~300 lines of test infra.
+- OIDC mTLS cert / key rotation — long-running deployments
+  rotating client certs would need a refresh mechanism.
+- URL-source images for Bedrock / Ollama (need tako-side
+  pre-fetch with SSRF guard), Vertex File API upload flow,
+  eval-harness real graders, OIDC refresh-token / revocation,
+  ChainedAuth short-circuit-on-transport-error.
+
+## [0.25.0] - 2026-05-01
+
+Phase 24 — closes the OIDC introspection mTLS gap that's been
+deferred since Phase 16 with the framing "needs reqwest TLS
+feature changes at workspace scope". That framing was wrong:
+the existing workspace reqwest features
+(`["rustls", "webpki-roots", ...]`) already expose
+`reqwest::Identity::from_pem` (verified via a probe compile).
+Phase 24 implements RFC 8705 mTLS introspection without any
+workspace-level dep change. Plan: [PLAN_PHASE24.md](PLAN_PHASE24.md).
+
+After Phase 24 the OIDC introspection auth-method surface
+covers all five RFC 7662 §2.1 / RFC 8414-listed methods tako
+intends to ship: `client_secret_basic` / `_post` / `_jwt` /
+`private_key_jwt` / `tls_client_auth`. RFC 8705 §2.2
+`self_signed_tls_client_auth` corner case (issuer accepts
+self-signed certs without a CA chain) and end-to-end
+mTLS-handshake integration tests (real TLS server requiring
+client auth) remain deferred to Phase 25+.
+
+### Added
+
+- **Phase 24.A — OIDC introspection mTLS / `tls_client_auth`
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+
+  New surfaces:
+  - `IntrospectionAuthMethod::TlsClientAuth` variant on the
+    introspection auth-method enum.
+  - `IntrospectionConfig.mtls_client:
+    Option<Arc<reqwest::Client>>` field. `Arc` because
+    `reqwest::Client` is already internally `Arc`'d; cloning
+    is cheap.
+  - `OidcAuthResolver::with_introspection_mtls(cert_pem,
+    key_pem)` builder. Loads the cert + key, builds a
+    per-resolver mTLS-enabled `reqwest::Client` via
+    `reqwest::Identity::from_pem`, attaches to the
+    introspection config, flips `auth_method` to
+    `TlsClientAuth`. PEM parse failure (or `Client` build
+    failure) surfaces as
+    `TakoError::Invalid("oidc: invalid mTLS identity PEM:
+    ...")` at builder time.
+  - `OidcAuthResolver::with_introspection_mtls_combined(combined_pem)`
+    convenience for the common `cat cert.pem key.pem` shape.
+  - Internal helper `build_mtls_identity` that concatenates
+    separate cert + key PEMs with a separating newline (which
+    is what `reqwest::Identity::from_pem` requires).
+
+  Auto-selector extension: extends the Phase 18.A four-tier
+  preference order to a five-tier ordering with
+  `tls_client_auth` at the head when (a) the issuer advertises
+  it AND (b) an mTLS identity is configured. Rationale: mTLS
+  is the strongest authentication method (the private key
+  never leaves the client; the cert binds to a DN / SAN the
+  issuer pre-registered).
+
+  `introspect()` extension: when `auth_method ==
+  TlsClientAuth`, swap to `cfg.mtls_client` (not the resolver's
+  default `self.http`) for the POST. Body is credential-free
+  (same as Basic) — the issuer authenticates via the TLS
+  handshake's client cert, not a body field or `Authorization`
+  header. Pre-flight check errors with
+  `TakoError::Invalid("oidc: tls_client_auth requires
+  mtls_client to be set")` when the auth method was flipped
+  without configuring identity (matches the Phase 17.B / 18.A
+  request-time-fail pattern for missing JWT keys).
+
+  Seven new unit tests:
+  - `with_introspection_mtls_accepts_valid_pem`
+  - `with_introspection_mtls_combined_accepts_concatenated_pem`
+  - `with_introspection_mtls_rejects_garbage_pem` — PEM parse
+    failure surfaces at builder time.
+  - `with_introspection_mtls_no_op_without_introspection` —
+    chainable-builder cadence (no PEM parsing if no
+    introspection config attached yet).
+  - `auto_select_prefers_tls_client_auth_when_listed_and_identity_present`
+  - `auto_select_skips_tls_client_auth_when_no_identity` —
+    falls back to `client_secret_basic` when listed but
+    identity missing.
+  - `introspect_tls_client_auth_errors_when_mtls_client_missing`
+    — request-time fail.
+
+  A 2048-bit RSA self-signed test cert + matching PKCS#8 key
+  are embedded as `static &[u8]` PEM fixtures in the test
+  module (matches the Phase 18.A pattern).
+
+- **Phase 24.B — OidcAuth mTLS Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `OidcAuth.with_introspection_mtls(cert_pem: bytes, key_pem:
+  bytes)` and `with_introspection_mtls_combined(combined_pem:
+  bytes)` mirror the Rust builders. Returns a NEW `OidcAuth`.
+  Raises `ValueError` on PEM parse failure.
+
+  `OidcAuth.with_introspection_auth_method(method)` alias
+  parser extended to accept three case-insensitive aliases for
+  the new variant: `"tls_client_auth"` (RFC 8705 spec name),
+  `"tls-client-auth"` (kebab variant), `"mtls"`
+  (operator-friendly shorthand).
+
+  `tako.compat` module docstring updated. New
+  [`tests/python/test_phase24_mtls.py`](tests/python/test_phase24_mtls.py)
+  covers facade attribute presence + the alias-parser entries.
+
+### Changed
+
+- `IntrospectionAuthMethod` gains a fifth unit variant
+  `TlsClientAuth`. The enum keeps `#[derive(Debug, Clone,
+  Copy, Default, PartialEq, Eq)]`; default is unchanged
+  (`ClientSecretBasic`).
+- `IntrospectionConfig` gains a public `mtls_client:
+  Option<Arc<reqwest::Client>>` field; existing struct-literal
+  initialisers (test code) need to pass `mtls_client: None`.
+- Workspace + Python crate version bumped to v0.25.0.
+
+### Carried forward to Phase 25+
+
+- `self_signed_tls_client_auth` (RFC 8705 §2.2) — issuer
+  accepts self-signed certs without a CA chain. Identical wire
+  shape to `tls_client_auth`; same builder works, but the
+  discovery-list entry is distinct.
+- OIDC mTLS end-to-end integration test — real TLS server
+  requiring client auth (e.g. rustls-server in the test
+  harness) would close the loop.
+- OIDC mTLS cert / key rotation — Phase 24 builds the mTLS
+  Client once at builder time; long-running deployments that
+  rotate client certs would need a refresh mechanism.
+- URL-source images for Bedrock / Ollama (need tako-side
+  pre-fetch with SSRF guard), Vertex File API upload flow,
+  eval-harness real graders, OIDC refresh-token / revocation,
+  ChainedAuth short-circuit-on-transport-error.
+
+## [0.24.0] - 2026-05-01
+
+Phase 23 — extends Phase 22's URL-source-image work to Vertex.
+After Phase 23 four of the six provider adapters (Anthropic,
+OpenAI, Mistral, Vertex) handle outbound URL-source images;
+Bedrock + Ollama remain deferred (both need tako-side pre-fetch
+with an SSRF guard — different design problem from the
+vendor-fetched-URL case). Plan: [PLAN_PHASE23.md](PLAN_PHASE23.md).
+
+### Added
+
+- **Phase 23.A — URL-source images for Vertex via
+  `VxPart::FileData`
+  ([crates/tako-providers/vertex/src/convert.rs](crates/tako-providers/vertex/src/convert.rs)).**
+  Phase 22 framed Vertex's deferral as "Gemini's `fileData`
+  accepts only vendor-specific URI schemes (`gs://...`)". Per
+  Gemini's published API docs, `fileData` actually accepts URIs
+  from three sources:
+  - `gs://bucket/path` GCS URIs (Google fetches server-side;
+    private buckets need IAM auth on Google's side, not tako's).
+  - `https://...` public web URLs — same vendor-fetch security
+    posture as Phase 22's Anthropic / OpenAI / Mistral
+    URL-source paths.
+  - Vertex File API URIs — files uploaded via Google's File
+    API (out of scope; needs a separate upload surface that
+    tako doesn't expose yet).
+
+  This commit covers the first two. New `VxPart::FileData {
+  file_data: VxFileData }` variant on the untagged
+  content-part enum; `VxFileData` carries `mime_type` (renamed
+  `mimeType` on the wire) and `file_uri` (renamed `fileUri`).
+  Camel-case naming matches the existing `inlineData` /
+  `functionCall` / `functionResponse` convention.
+
+  Mapping in `message_to_vx`:
+
+  ```rust
+  ContentPart::ImageUrl { url, mime } => {
+      let Some(mime) = mime else { continue; };
+      if !is_supported_vertex_mime(mime) { continue; }
+      parts.push(VxPart::FileData {
+          file_data: VxFileData {
+              mime_type: mime.clone(),
+              file_uri: url.clone(),
+          },
+      });
+  }
+  ```
+
+  Per Gemini docs `mimeType` is REQUIRED on `fileData` — the
+  optional `ContentPart::ImageUrl.mime` is required for the
+  Vertex path; mime-less URL-source content silently drops.
+  Unsupported MIME types also drop, reusing the
+  `is_supported_vertex_mime` filter from Phase 20.A.
+
+  URL-scheme branching: tako does not pre-validate — Gemini
+  rejects unsupported schemes at request time. Same pass-through
+  pattern as Phase 22.B's choice on Anthropic's `https`-only
+  constraint.
+
+  Five new unit tests: `image_url_block_emits_file_data_with_gs_uri`
+  (pinned JSON shape with GCS URI),
+  `image_url_block_emits_file_data_with_https_uri` (HTTPS URL
+  pass-through), `image_url_block_drops_when_mime_missing`,
+  `image_url_block_drops_unsupported_mime`,
+  `image_url_and_inline_data_can_coexist` (mixed inline base64
+  + URL-source parts emit two adjacent `parts` entries —
+  `inlineData` + `fileData` — in source order).
+
+### Changed
+
+- `VxPart` enum gains a new `FileData` variant. `#[serde(untagged)]`
+  so the addition is wire-invisible to existing
+  `inlineData`/`text`/`functionCall`/`functionResponse` paths.
+  Phase 20.A inline-data tests pass byte-for-byte unchanged.
+- Workspace + Python crate version bumped to v0.24.0.
+
+### Carried forward to Phase 24+
+
+- URL-source images for Bedrock / Ollama. Bedrock's AWS SDK
+  `ImageSource` has no URL variant; Ollama's `images` field
+  carries bare base64 only. Both need tako-side pre-fetch with
+  an SSRF guard — a different design problem from the
+  vendor-fetched-URL case Phases 22 + 23 covered.
+- Vertex File API upload flow — separate API surface for
+  uploading bytes and getting back a Vertex File URI. The
+  Phase 23 `VxFileData` part already accepts those URIs, but
+  tako doesn't expose an upload helper.
+- OIDC introspection mTLS auth methods, OIDC refresh-token /
+  revocation-endpoint flows, eval-harness real graders,
+  `ChainedAuthResolver` short-circuit-on-transport-error.
+
+## [0.23.0] - 2026-05-01
+
+Phase 22 — closes the long-deferred URL-source-image gap.
+Phases 19 + 20 framed the deferral as "server-side fetch needs
+a security story", but that concern only applies when *tako*
+fetches the URL. The three vendors whose API servers fetch URLs
+themselves (Anthropic, OpenAI, Mistral) now accept URL-source
+content; the three that would need tako-side pre-fetch (Vertex
+file-data, Bedrock, Ollama) stay deferred. Plan:
+[PLAN_PHASE22.md](PLAN_PHASE22.md).
+
+### Added
+
+- **Phase 22.A — `tako_core::ContentPart::ImageUrl` variant +
+  provider stubs
+  ([crates/tako-core/src/types.rs](crates/tako-core/src/types.rs)).**
+  New `ContentPart::ImageUrl { url: String, mime: Option<String> }`
+  variant. The optional `mime` is a hint some vendors use; others
+  ignore it.
+
+  All six provider adapter `convert.rs` files gain exhaustive
+  match arms for the new variant; per-vendor disposition:
+  - Anthropic: full wiring in 22.B.
+  - OpenAI / Mistral: full wiring in 22.C.
+  - Vertex: silent-drop (deferred). Gemini's `fileData` accepts
+    only vendor-specific URI schemes (`gs://...` GCS, Vertex
+    File API URIs); arbitrary `https://` not supported.
+  - Bedrock: silent-drop (deferred). The AWS SDK's `ImageSource`
+    has no URL variant — would need a tako-side pre-fetch.
+  - Ollama: silent-drop (deferred). `images` field carries bare
+    base64 only.
+
+  Existing `match`-with-wildcard sites in tako-orchestrator,
+  tako-py, tako-compat, and the http-generic provider are
+  unaffected (they all use `_ => ...` arms over `ContentPart`).
+
+- **Phase 22.B — Anthropic URL-source via `AnImageSource` enum
+  ([crates/tako-providers/anthropic/src/convert.rs](crates/tako-providers/anthropic/src/convert.rs)).**
+  `AnImageSource` refactors from a flat struct (with `kind:
+  "base64"` literal) to a `#[serde(tag = "type")]`-tagged enum
+  with two variants:
+  - `Base64 { media_type, data }` — Phase 19.A wire shape, byte-
+    for-byte preserved (the literal `kind: "base64"` becomes the
+    enum tag). Pinned by the new
+    `image_block_base64_wire_shape_unchanged_after_enum_refactor`
+    regression test.
+  - `Url { url }` — Phase 22.B. Per Anthropic Messages API:
+    `{"type": "url", "url": "https://..."}`. No `media_type`
+    field — Anthropic's URL variant doesn't accept one.
+
+  The optional `mime` from the core `ContentPart::ImageUrl` is
+  intentionally dropped — Anthropic's API rejects unknown source
+  fields. Phase 22.B does not pre-validate the URL scheme;
+  Anthropic rejects non-`https` URLs at the API boundary.
+
+  Four new unit tests including a multi-source-type regression
+  pin (`image_url_and_base64_can_coexist_in_one_message`).
+
+- **Phase 22.C — OpenAI + Mistral URL pass-through
+  ([crates/tako-providers/openai/src/convert.rs](crates/tako-providers/openai/src/convert.rs),
+  [crates/tako-providers/mistral/src/convert.rs](crates/tako-providers/mistral/src/convert.rs)).**
+  Both vendors accept `https://` URLs in `image_url.url`
+  directly (the same field that holds data-URLs in 19.B / 20.B).
+  The adapter passes `url` through verbatim — no `data:` prefix
+  wrapping (regression-pinned by `image_url_does_not_get_data_url_wrapped`).
+  Optional `mime` intentionally dropped; neither vendor accepts
+  a separate mime hint on URL-source blocks.
+
+  Five new unit tests across the two crates. The Phase 19.B /
+  20.B `text_only_message_keeps_flat_string_content` regression
+  pins still hold byte-for-byte — the URL-source path shares the
+  `has_image` guard with the base64 path, so non-vision messages
+  keep the flat-string `content` shape.
+
+- **Phase 22.D — Python facade
+  ([python/tako/models.py](python/tako/models.py)).**
+  Pydantic `ContentPart` model gains an explicit `url: str | None`
+  field. The model already had `extra="allow"` so URL-source
+  dicts round-tripped through the wheel before this commit, but
+  the explicit field gives type checking, IDE completion, and a
+  pinned-by-test surface. Eight new Python tests in
+  [`tests/python/test_phase22_image_url.py`](tests/python/test_phase22_image_url.py)
+  including parameterised coverage for various HTTPS URL forms
+  and a mixed `image` + `image_url` regression pin.
+
+### Changed
+
+- `AnImageSource` widens from `pub struct` to
+  `pub enum` (provider-internal type; wire shape on the existing
+  `Base64` path is byte-for-byte preserved).
+- Workspace + Python crate version bumped to v0.23.0.
+
+### Carried forward to Phase 23+
+
+- URL-source images for Vertex / Bedrock / Ollama. Vertex needs
+  per-URL-scheme branching (`gs://...`); Bedrock + Ollama need
+  the SSRF security story Phase 22 dodged.
+- OIDC introspection mTLS auth methods, OIDC refresh-token /
+  revocation-endpoint flows, eval-harness real graders,
+  `ChainedAuthResolver` short-circuit-on-transport-error.
+
+## [0.22.0] - 2026-05-01
+
+Phase 21 — closes the long-standing operator gap on the
+OpenAI-compat HTTP server. `ChainedAuthResolver` lets operators
+compose existing `AuthResolver` impls for the common "accept
+either OIDC bearer OR API key" pattern. Plan:
+[PLAN_PHASE21.md](PLAN_PHASE21.md).
+
+### Added
+
+- **Phase 21.A — `ChainedAuthResolver` composite auth
+  ([crates/tako-compat/src/auth/chained.rs](crates/tako-compat/src/auth/chained.rs)).**
+  New always-on (no cargo feature gate) `AuthResolver` impl that
+  wraps N children and tries them in append order. The first
+  child to return `Ok` short-circuits; on all-`Err` the last
+  child's error propagates.
+
+  Public API: `tako_compat::ChainedAuthResolver` with builder
+  methods `new()`, `then(child: Arc<dyn AuthResolver>)`, plus
+  `len()` / `is_empty()` for assertions. `Clone + Debug + Default
+  + Send + Sync + 'static`. Re-exported from both
+  `auth/mod.rs` and `lib.rs`.
+
+  Semantics: empty chain returns
+  `TakoError::Invalid("chained auth: no resolvers configured")`;
+  any `Err` from a child falls through to the next (transient
+  OIDC transport failures don't strand a static-API-key
+  client); on all-`Err` the last child's error propagates.
+
+  Method named `then(child)` not `with(child)` because `with` is
+  a Python keyword — `chain.with(...)` would be a SyntaxError on
+  the Python facade. `then` matches the JS `Promise.then` and
+  Rust `Future` `.then(...)` idiom for sequential composition.
+
+  Eight new unit tests including a `CountingAuth` mock used by
+  `chained_first_match_short_circuits` to assert the second
+  child is **not** called when the first short-circuits, and
+  `chained_can_nest` exercising recursive composition (a chain
+  whose child is itself a chain). The `with`→`then` rename
+  landed as a fix commit (9a15877) on top of the initial
+  Phase-21.A landing (5856683).
+
+- **Phase 21.B — `ChainedAuth` Python facade
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `tako.compat.ChainedAuth` is always-on (no `auth-*` cargo
+  feature gate) — children themselves carry whatever gates they
+  were built under, so a wheel without `auth-oidc` simply can't
+  construct an `OidcAuth` to pass to `then(...)`.
+
+  PyO3 surface: `__init__()` (empty chain), `then(child)`
+  (immutable-builder append), `__len__()` (number of children).
+
+  The `extract_auth_resolver` helper that downcasts the
+  `serve_openai(auth=...)` kwarg gains a fourth always-on
+  `cast::<PyChainedAuth>` arm. Recursive composition works
+  (a chain containing another chain).
+
+  `tako.compat.ChainedAuth` re-export at
+  `python/tako/compat.py` (always-on `getattr` mirroring the
+  existing Jwt/Oidc/Vault cadence). Module docstring updated.
+  Class registration at `crates/tako-py/src/lib.rs` (no
+  `#[cfg(feature = ...)]` gate).
+
+  Six new Python tests in
+  [`tests/python/test_phase21_chained_auth.py`](tests/python/test_phase21_chained_auth.py)
+  covering attribute presence, empty construction, immutable-
+  builder semantics, `__len__` after stacking, garbage-input
+  `ValueError`, and recursive self-nesting.
+
+### Changed
+
+- Workspace + Python crate version bumped to v0.22.0.
+
+### Carried forward to Phase 22+
+
+- URL-source images — Anthropic's `source.type = "url"`,
+  OpenAI's `image_url.url` with `https://...`, Vertex's
+  `file_data` with `file_uri`. Server-side fetch from
+  request-supplied URLs needs a security story.
+- OIDC introspection mTLS auth methods (`tls_client_auth` /
+  `self_signed_tls_client_auth`) — needs reqwest TLS feature
+  changes at workspace scope.
+- OIDC refresh-token / revocation-endpoint flows.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+- `ChainedAuthResolver` short-circuit-on-transport-error
+  semantics — Phase 21 treats every `Err` as fall-through; if
+  patterns emerge for fail-fast on transport errors, Phase 22+
+  may add `with_short_circuit_on_transport_error`.
+
+## [0.21.0] - 2026-05-01
+
+Phase 20 — finishes the vision-content sweep started in Phase 19.
+After Phase 20 every shipped provider adapter (Anthropic, OpenAI,
+Vertex, Bedrock, Mistral, Ollama — six of six) handles outbound
+`ContentPart::Image`. Plan: [PLAN_PHASE20.md](PLAN_PHASE20.md).
+
+### Added
+
+- **Phase 20.A — Outbound image content for Vertex (Gemini)
+  ([crates/tako-providers/vertex/src/convert.rs](crates/tako-providers/vertex/src/convert.rs)).**
+  New `VxPart::InlineData { inline_data: VxInlineData }` variant
+  on the untagged content-part enum. `VxInlineData` carries
+  `mime_type` (renamed `mimeType` on the wire — matches the
+  existing `functionCall` / `functionResponse` camelCase
+  convention) and `data` (raw base64 with any data-URL prefix
+  stripped). Per Gemini REST docs:
+  `{"inlineData": {"mimeType": "image/jpeg", "data": "<base64>"}}`.
+
+  `is_supported_vertex_mime` filters to the same four MIME types
+  as Phase 19 (`image/jpeg`, `image/png`, `image/gif`,
+  `image/webp`); other types are silently dropped.
+  `strip_data_url_prefix` is a per-crate copy of the Phase-19
+  helper, kept per-crate per ARCHITECTURE.md hard rules.
+
+  Five new unit tests covering the pinned JSON shape, data-URL
+  prefix stripping, unsupported-MIME silent-drop, the
+  supported-MIME matrix, and `strip_data_url_prefix` idempotence.
+  URL-source images via `file_data` remain deferred — server-side
+  fetch from request-supplied URLs has security implications.
+
+- **Phase 20.B — Outbound image content for Mistral
+  ([crates/tako-providers/mistral/src/convert.rs](crates/tako-providers/mistral/src/convert.rs)).**
+  Mistral's vision-capable models (Pixtral) accept OpenAI-
+  compatible content blocks. The wire format mirrors Phase 19.B
+  byte-for-byte: array-shaped `content` with `text` and
+  `image_url` blocks (nested `{"url": "..."}` form holding a
+  data-URL).
+
+  New surfaces: `MiContent` untagged enum
+  (`Text(String)` | `Blocks(Vec<MiContentBlock>)`),
+  `MiContentBlock` tagged enum, `MiImageUrl` payload struct.
+  `MiMessage.content` field type widens from `Option<String>` to
+  `Option<MiContent>`.
+
+  `message_to_mi` refactor follows the 19.B pattern: array form
+  emitted only when an image is present; non-vision messages
+  preserve byte-for-byte wire shape (pinned by
+  `text_only_message_keeps_flat_string_content`); tool-result
+  messages keep the flat-string shape (pinned by
+  `tool_result_message_keeps_flat_string_content`).
+
+  Six new unit tests mirroring 19.B's coverage: regression pins
+  + array-form emission + data-URL normalisation +
+  unsupported-MIME drop + tool-result shape + supported-MIME
+  matrix.
+
+- **Phase 20.C — Outbound image content for Ollama
+  ([crates/tako-providers/ollama/src/convert.rs](crates/tako-providers/ollama/src/convert.rs)).**
+  Ollama's `/api/chat` endpoint is fundamentally different from
+  the content-block protocols of Anthropic / OpenAI / Mistral /
+  Vertex: images live alongside `content` as a sibling
+  `images: Vec<String>` field on `OlMessage` carrying bare
+  base64 (no MIME prefix, no data-URL). `content` stays a flat
+  string.
+
+  New `OlMessage.images: Vec<String>` field gated by
+  `#[serde(skip_serializing_if = "Vec::is_empty")]` so non-vision
+  messages keep byte-for-byte wire-shape compatibility with
+  pre-Phase-20 traffic (pinned by
+  `text_only_message_omits_images_field`).
+
+  Source order is preserved across multiple images even though
+  they live in a sibling field rather than interleaved with
+  text (pinned by `multiple_images_preserve_source_order`).
+  Ollama doesn't filter MIME — pass the bytes through and let
+  the model decide what formats it can decode.
+
+  Five new unit tests: regression pin on `images`-field
+  absence, populated-shape assertion, multi-image source-order
+  preservation, data-URL prefix stripping, idempotence smoke.
+
+### Changed
+
+- `MiMessage.content` field type widens from `Option<String>` to
+  `Option<MiContent>`. `MiContent` is the new top-level public
+  type for Mistral message content. Existing callers reading
+  this field directly (none in the workspace per `grep`) need
+  to match on the enum.
+- `OlMessage` gains a new public `images: Vec<String>` field;
+  the `skip_serializing_if = "Vec::is_empty"` gate keeps the
+  wire shape byte-for-byte identical for non-vision traffic.
+- `VxPart` gains a new `InlineData` variant; existing serialised
+  wire shape on text / functionCall / functionResponse paths is
+  byte-for-byte preserved.
+- Workspace + Python crate version bumped to v0.21.0.
+
+### Carried forward to Phase 21+
+
+- URL-source images — Anthropic's `source.type = "url"`,
+  OpenAI's `image_url.url` with `https://...`, Vertex's
+  `file_data` with `file_uri`. Server-side fetch from
+  request-supplied URLs needs a security story.
+- OIDC introspection mTLS auth methods, OIDC refresh-token /
+  revocation-endpoint flows, composite `AuthResolver`s.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
+## [0.20.0] - 2026-05-01
+
+Phase 19 — closes the long-stale "vision is out of scope for
+Phase 1" markers on the two flagship providers. Anthropic +
+OpenAI now emit outbound `ContentPart::Image` content;
+Bedrock has shipped this since Phase 2.5 (so the three-of-six
+adapters now have it). Vertex / Mistral / Ollama stay deferred
+to Phase 20+. Plan: [PLAN_PHASE19.md](PLAN_PHASE19.md).
+
+### Added
+
+- **Phase 19.A — Outbound image content for Anthropic
+  ([crates/tako-providers/anthropic/src/convert.rs](crates/tako-providers/anthropic/src/convert.rs)).**
+  New `AnBlock::Image { source: AnImageSource }` variant on the
+  Anthropic content-block enum. `AnImageSource` carries `kind`
+  (always `"base64"` in Phase 19), `media_type`, and `data`.
+  Per Anthropic Messages API: `{"type": "image", "source":
+  {"type": "base64", "media_type": "image/jpeg", "data":
+  "<base64>"}}`.
+
+  `is_supported_anthropic_mime` filters to the four MIME types
+  Anthropic accepts (`image/jpeg`, `image/png`, `image/gif`,
+  `image/webp`); other types are silently dropped to match the
+  existing `Text { text: "" } => None` cadence in
+  `content_to_blocks`. `strip_data_url_prefix` normalises
+  `data:image/...;base64,<data>` inputs to the bare-base64 form
+  Anthropic's API requires; idempotent.
+
+  Five new unit tests covering serialised JSON shape, data-URL
+  prefix stripping, unsupported-MIME silent-drop,
+  `strip_data_url_prefix` idempotence, and the supported-MIME
+  matrix. URL-source images (`source.type = "url"`) remain
+  deferred — server-side fetch from request-supplied URLs has
+  security implications we haven't designed yet.
+
+- **Phase 19.B — Outbound image content for OpenAI
+  ([crates/tako-providers/openai/src/convert.rs](crates/tako-providers/openai/src/convert.rs)).**
+  OpenAI's Chat Completions API requires `content` to switch
+  from a flat string to an array of typed blocks when an image
+  is present. The adapter now emits the array form **only when**
+  an image content part is present, preserving byte-for-byte
+  wire shape on existing non-vision traffic (pinned by the new
+  `text_only_message_keeps_flat_string_content` regression test).
+
+  New surfaces:
+  - `OaContent` untagged enum: `Text(String)` (Phase 1 default)
+    | `Blocks(Vec<OaContentBlock>)` (Phase 19.B array form).
+  - `OaContentBlock` tagged enum (`text` / `image_url`).
+  - `OaImageUrl` struct holding the data-URL string.
+  - `OaMessage.content` field type widens from `Option<String>`
+    to `Option<OaContent>`.
+
+  `message_to_oa` walks once, accumulating both `text_parts`
+  (for the flat-string fallback) and ordered `blocks` (text +
+  image entries in source order — preserves narrative ordering).
+  Tool-result messages keep the flat-string shape because
+  OpenAI's API doesn't accept array content on `role=tool`
+  (pinned by `tool_result_message_keeps_flat_string_content`).
+
+  Like the Anthropic adapter, OpenAI accepts the same four MIME
+  types; other types are silently dropped. `build_data_url`
+  normalises double-prefixed inputs.
+
+  Seven new unit tests covering wire-shape regression
+  (text-only + tool-result), array-form emission, data-URL
+  normalisation, unsupported-MIME drop, the supported-MIME
+  matrix, and idempotent `build_data_url`.
+
+- **Phase 19.C — Python facade smoke
+  ([tests/python/test_phase19_vision.py](tests/python/test_phase19_vision.py)).**
+  Pins the Pydantic `ContentPart` mirror's image-field surface:
+  `ContentPart(type="image", mime, data_b64)` constructs cleanly,
+  serialises to the dict shape the Rust adapters consume, and
+  preserves source order in mixed text + image messages. Seven
+  new tests including parameterised coverage for the four
+  supported MIME types. The Python facade's `messages_from`
+  (`tako-py/src/conv.rs`) remains text-only — wiring image
+  content through the wheel's ergonomic Python entry points is
+  a richer surface for a later phase.
+
+### Changed
+
+- `OaMessage.content` field type widens from `Option<String>` to
+  `Option<OaContent>`. `OaContent` is the new top-level public
+  type for OpenAI message content. Existing callers that read
+  this field directly (none in the workspace per `grep`) need
+  to match on the enum.
+- `tako-providers-azure-openai` doesn't read `OaMessage.content`
+  directly — it depends on `tako-providers-openai` only at the
+  public-API level — and its 4 integration tests remain green
+  byte-for-byte.
+- Stub markers on Vertex / Mistral / Ollama image-content arms
+  reframed from "out of scope" to "deferred to Phase 20+", with
+  vendor-specific reasons (Vertex's `inline_data` / `file_data`,
+  Mistral's model-specific multimodal, Ollama's LLaVA-family
+  embedding).
+- Workspace + Python crate version bumped to v0.20.0.
+
+### Carried forward to Phase 20+
+
+- Vision / image content for Vertex + Mistral + Ollama. Best
+  handled in a single Phase 20 sweep — each has a different
+  per-vendor multimodal-content shape.
+- URL-source images (Anthropic's `source.type = "url"` /
+  OpenAI's `image_url.url` with a `https://...` value).
+  Server-side fetch from request-supplied URLs needs a security
+  story.
+- OIDC introspection mTLS auth methods, OIDC refresh-token /
+  revocation-endpoint flows, composite `AuthResolver`s.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
+## [0.19.0] - 2026-05-01
+
+Phase 18 — clears two more OIDC carry-forward items from the Phase
+17 holding pen. Strictly additive: asymmetric `private_key_jwt`
+introspection auth method per RFC 7521 / 7523 (RS256 / ES256 /
+EdDSA), and an OIDC Session Management 1.0 end-session endpoint
+helper. Python facade mirrors both. Plan:
+[PLAN_PHASE18.md](PLAN_PHASE18.md).
+
+### Added
+
+- **Phase 18.A — `private_key_jwt` OIDC introspection auth method
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  Asymmetric sibling of Phase 17.B's `client_secret_jwt`. New
+  `IntrospectionAuthMethod::PrivateKeyJwt` variant signs the same
+  RFC 7521 / 7523 client-assertion JWT but with an RSA / EC /
+  Ed25519 private key instead of the symmetric `client_secret`.
+  Same wire shape: form-body
+  `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
+  + `client_assertion=<jwt>`, no `Authorization` header.
+
+  New surfaces:
+  - `ClientAssertionKey` struct holding the algorithm +
+    `EncodingKey`. Three typed PEM constructors:
+    `from_rs256_pem`, `from_es256_pem`, `from_ed25519_pem`.
+    `Debug` impl redacts the key body but exposes the algorithm.
+  - `IntrospectionConfig.client_assertion_key:
+    Option<Arc<ClientAssertionKey>>`. `Arc` because `EncodingKey`
+    doesn't impl `Clone` and `OidcAuthResolver` is `Clone` for
+    the Python immutable-builder pattern.
+  - `OidcAuthResolver::with_introspection_private_key(key)` —
+    attach a key without flipping the auth method.
+  - `with_introspection_jwt_rs256_pem(pem)` /
+    `with_introspection_jwt_es256_pem(pem)` /
+    `with_introspection_jwt_ed25519_pem(pem)` — convenience
+    combos that load the PEM AND flip `auth_method` to
+    `PrivateKeyJwt`.
+
+  The 17.A auto-selector is extended to a four-tier preference
+  order: `private_key_jwt` (only when an asymmetric key is
+  configured) > `client_secret_jwt` (only when a symmetric secret
+  is configured) > `client_secret_basic` > `client_secret_post`.
+  The fail-closed branch now fires only when the issuer
+  advertises methods deferred to Phase 19+ (`tls_client_auth`)
+  or unknown.
+
+  `introspect()` refactored:
+  - Existing `build_client_assertion_hs256(client_id,
+    client_secret, audience)` renamed to
+    `build_client_assertion(client_id, audience, &EncodingKey,
+    Algorithm)` — a single signing path used by both
+    `ClientSecretJwt` and `PrivateKeyJwt`.
+  - `PrivateKeyJwt` errors at request time
+    (`TakoError::Invalid("oidc: private_key_jwt requires
+    client_assertion_key to be set")`) when no key configured.
+
+  Nine new tests including a wiremock test that captures the
+  posted body, parses out the `client_assertion` JWT, verifies
+  the RS256 signature against the matching public key, and
+  asserts the claim layout (`iss` / `sub` = `client_id`, `aud` =
+  `introspect_uri`, `exp` ~ 30s in the future). 2048-bit RSA and
+  P-256 EC test keypairs embedded as `static` PEM fixtures (test
+  use only).
+
+- **Phase 18.B — OIDC Session Management 1.0 end-session
+  endpoint helper
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  The OIDC Session Management 1.0 spec defines `end_session_endpoint`
+  as a discovery-doc field (§2.2.1) and a query-string-formatted
+  URL for relying-party-initiated logout (§5).
+  `DiscoveryDoc.end_session_endpoint:
+  Option<String>` is now captured at construction time, threaded
+  into a new private
+  `OidcAuthResolver.discovered_end_session_uri: Option<String>`.
+
+  Two new public methods:
+  - `OidcAuthResolver::end_session_endpoint() -> Option<&str>` —
+    returns the captured URI; `None` when the issuer doesn't
+    implement OIDC Session Management.
+  - `OidcAuthResolver::build_logout_uri(id_token_hint,
+    post_logout_redirect_uri, state) -> Option<String>` — builds
+    the redirect URL per the spec. All params optional. Returns
+    `None` when the issuer didn't advertise the endpoint. URL-
+    encodes via `url::form_urlencoded::Serializer`. Joins with
+    `?` or `&` depending on whether the configured endpoint
+    already carries a query string (RFC 3986 conformance).
+
+  Pure URL building; no I/O. Seven new tests covering discovery-
+  doc parsing, accessor plumbing, the bare-endpoint case, all-
+  params formatting (with URL-encoded `post_logout_redirect_uri`
+  containing `https%3A%2F%2F...`), the existing-query-string
+  separator semantics, and partial-param sets.
+
+- **Phase 18.C — Python facade mirror
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `tako.compat.OidcAuth` gains:
+  - `with_introspection_jwt_rs256_pem(pem: bytes)` /
+    `with_introspection_jwt_es256_pem(pem: bytes)` /
+    `with_introspection_jwt_ed25519_pem(pem: bytes)` — load an
+    asymmetric private-key PEM and switch the introspection auth
+    method to `private_key_jwt`. Raises `ValueError` on PEM
+    parse failure.
+  - `with_introspection_auth_method(method)` alias parser
+    extended to accept case-insensitive `"private_key_jwt"` /
+    `"private-key-jwt"` (in addition to the existing aliases for
+    Basic / Post / `client_secret_jwt`).
+  - `end_session_endpoint() -> Optional[str]` — returns the
+    captured URI.
+  - `build_logout_uri(id_token_hint=None,
+    post_logout_redirect_uri=None, state=None) -> Optional[str]` —
+    the URL-builder helper.
+
+  `tako.compat` module docstring updated to mention the new
+  entry points. New
+  [`tests/python/test_phase18_oidc.py`](tests/python/test_phase18_oidc.py)
+  covers facade attribute presence; the 16 new Rust unit tests
+  across 18.A + 18.B remain the source of truth for behaviour.
+
+### Changed
+
+- `IntrospectionAuthMethod` gains a fourth unit variant
+  `PrivateKeyJwt`. The enum keeps
+  `#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]` — all
+  variants are unit-shaped, no field-bearing variants. The
+  default remains `ClientSecretBasic`; existing wire shape on
+  Basic / Post / `client_secret_jwt` paths is byte-for-byte
+  preserved.
+- `IntrospectionConfig` gains a public `client_assertion_key:
+  Option<Arc<ClientAssertionKey>>` field; existing struct-literal
+  initialisers (test code) need to pass the new field
+  (`client_assertion_key: None`).
+- `OidcAuthResolver` gains a private `discovered_end_session_uri:
+  Option<String>` field; existing struct-literal initialisers
+  (test code) need to pass the new field
+  (`discovered_end_session_uri: None`). The runtime constructor
+  (`discover()`) auto-populates from the discovery doc.
+- The internal `build_client_assertion_hs256` helper is renamed
+  to `build_client_assertion` and accepts `&EncodingKey` +
+  `Algorithm` directly. Both JWT auth-method variants share the
+  same signing path. Module-private; no public-API impact.
+- Workspace + Python crate version bumped to v0.19.0.
+
+### Carried forward to Phase 19+
+
+- OIDC introspection mTLS (`tls_client_auth` /
+  `self_signed_tls_client_auth`) auth methods — needs reqwest
+  TLS feature changes at workspace scope.
+- OIDC refresh-token / revocation-endpoint (RFC 7009) flows —
+  tako as token consumer rather than validator (different model
+  from the existing `AuthResolver` surface).
+- Composite `AuthResolver`s (mTLS + bearer chaining).
+- Vision / image content support across Anthropic / Vertex /
+  Bedrock.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
+## [0.18.0] - 2026-05-01
+
+Phase 17 — closes the two OIDC introspection auth-method items
+that Phase 16.B.2 explicitly deferred. Strictly additive:
+discovery-driven auth-method selection per RFC 8414 reads the
+`introspection_endpoint_auth_methods_supported` field of the
+issuer's discovery doc and auto-selects the strongest method;
+`client_secret_jwt` introspection auth method per RFC 7521 / 7523
+builds an HS256-signed client-assertion JWT and sends it as
+`client_assertion` form fields. Python facade mirrors both.
+Plan: [PLAN_PHASE17.md](PLAN_PHASE17.md).
+
+### Added
+
+- **Phase 17.A — Discovery-driven OIDC introspection auth-method
+  selection
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  The OIDC discovery doc (RFC 8414) advertises supported
+  introspection-endpoint auth methods via the
+  `introspection_endpoint_auth_methods_supported` field.
+  `OidcAuthResolver` now captures that list at construction time
+  in a new `discovered_introspection_auth_methods: Option<Vec<String>>`
+  field. The new chainable
+  `with_introspection_auth_method_from_discovery()` builder picks
+  the strongest mutually-supported method per the preference
+  order shipped in 17.B (`client_secret_jwt` >
+  `client_secret_basic` > `client_secret_post`).
+  - Silent no-op when no introspection config has been attached
+    yet (matches the Phase-16.B.2 chainable-builder cadence).
+  - When discovery did not advertise the field (`None`): selects
+    `ClientSecretBasic` per RFC 8414's documented default.
+  - When discovery advertised a list with **no** supported
+    variant (e.g. issuer requires only `tls_client_auth` or
+    `private_key_jwt`, both deferred to Phase 18+): returns
+    `TakoError::Invalid("oidc: no supported introspection auth
+    method advertised by issuer; supported: [...]")`. Surfacing
+    this at builder time rather than as an HTTP-401 from the
+    introspection endpoint helps the operator notice the
+    misconfiguration before the first request.
+  Six new unit tests covering discovery-doc parsing, the no-op /
+  field-absent / Basic-listed / Post-only-listed / fail-closed /
+  Basic-preferred-over-Post cases. Existing 15.B.2 / 16.B.2 wire
+  tests still byte-for-byte green.
+
+- **Phase 17.B — OIDC introspection `client_secret_jwt` auth
+  method
+  ([crates/tako-compat/src/auth/oidc.rs](crates/tako-compat/src/auth/oidc.rs)).**
+  New `IntrospectionAuthMethod::ClientSecretJwt` variant per
+  RFC 7521 / 7523 client-assertion JWT authentication. When
+  selected, `introspect()` builds a short-lived HS256 JWT signed
+  over the configured `client_secret` and sends it as the
+  `client_assertion` form field alongside the fixed
+  `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.
+  No `Authorization` header is sent.
+
+  JWT claims (RFC 7521 §5 / 7523 §3 / 7519): `iss` = `sub` =
+  `client_id`; `aud` = `introspect_uri` (binds the assertion to
+  its target endpoint to prevent replay against a different
+  endpoint at the same authorization server); `iat` = unix-now;
+  `exp` = `iat + 30s` (RFC 7521 §4.2 recommends a "short
+  lifetime"); `jti` = `{nanos}-{counter}` from a process-monotonic
+  `AtomicU64` paired with the wall-clock nanosecond — RFC 7519
+  §4.1.7 only requires uniqueness within the issuer's tokens, the
+  combo gives effectively-zero collision risk inside the
+  30-second validity window even across process restarts.
+
+  Errors at request time (not builder time) when `ClientSecretJwt`
+  is selected but `client_secret.is_none()` — HS256 needs the
+  symmetric key. The 17.A auto-selector is extended to prefer
+  `client_secret_jwt` when (a) the issuer advertises it AND (b)
+  a `client_secret` is configured; new `auto_select_skips_jwt_when_no_secret`
+  test pins this guardrail.
+
+  Asymmetric `private_key_jwt` (RS256 / ES256 with separate
+  signing-key storage) remains deferred to Phase 18+ —
+  `EncodingKey` doesn't impl `Clone` cleanly and a separate
+  config surface is warranted.
+
+  Seven new tests: `auto_select_prefers_jwt_when_listed_and_secret_present`,
+  `auto_select_skips_jwt_when_no_secret`,
+  `auto_select_errors_when_jwt_only_listed_and_no_secret`,
+  `introspect_jwt_errors_when_secret_missing`,
+  `introspect_jwt_carries_client_assertion_form_fields`
+  (asserts the form-encoded `client_assertion_type=urn%3A...` and
+  `client_assertion=...` fields, AND the absence of a
+  `client_secret=` field), `introspect_jwt_signed_with_client_secret_hs256`
+  (captures the wiremock request body, parses out the
+  `client_assertion` JWT, verifies the HS256 signature against
+  the configured client_secret using `jsonwebtoken::decode`, and
+  asserts the claim layout), and `make_jti_yields_unique_values`
+  (256-iter uniqueness smoke).
+
+- **Phase 17.C — Python facade mirror
+  ([crates/tako-py/src/py_compat.rs](crates/tako-py/src/py_compat.rs)).**
+  `tako.compat.OidcAuth.with_introspection_auth_method` alias
+  parser extended to accept case-insensitive `"jwt"` /
+  `"client_secret_jwt"`. New chainable
+  `tako.compat.OidcAuth.with_introspection_auth_method_from_discovery()`
+  instance method. Module docstring at
+  [`python/tako/compat.py`](python/tako/compat.py) updated to
+  mention the new entry points. New
+  [`tests/python/test_phase17_oidc.py`](tests/python/test_phase17_oidc.py)
+  covers facade attribute presence; the eight new Rust unit
+  tests across 17.A + 17.B remain the source of truth for
+  behaviour.
+
+### Changed
+
+- `IntrospectionAuthMethod` gains a third unit variant
+  `ClientSecretJwt`. The enum keeps
+  `#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]` — the
+  new variant is unit-shaped so all 16.B.2 Copy/Eq machinery
+  still works. Default remains `ClientSecretBasic`; existing
+  Basic / Post wire shape byte-for-byte preserved.
+- `OidcAuthResolver` gains a private
+  `discovered_introspection_auth_methods: Option<Vec<String>>`
+  field; existing struct-literal initialisers (test code) need
+  to pass the new field. The runtime constructor (`discover()`)
+  remains the only public path so this isn't a breaking change
+  for external callers.
+- Workspace + Python crate version bumped to v0.18.0.
+
+### Carried forward to Phase 18+
+
+- OIDC introspection mTLS (`tls_client_auth` /
+  `self_signed_tls_client_auth`) auth methods — needs client TLS
+  material plumbed through `reqwest::ClientBuilder`.
+- OIDC introspection `private_key_jwt` (asymmetric JWT client
+  auth — RS256 / ES256 with separate signing-key storage).
+- OIDC refresh-token / end-session endpoint flows.
+- Composite `AuthResolver`s (mTLS + bearer chaining).
+- Vision / image content support across Anthropic / Vertex /
+  Bedrock.
+- Eval harness real graders (SWE-Bench Lite, GPQA Diamond).
+
 ## [0.17.0] - 2026-05-01
 
 Phase 16 — production hardening of the streaming-verifier and auth
@@ -2026,18 +4134,39 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.14.0...HEAD
-[0.14.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.13.0...v0.14.0
-[0.13.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.12.0...v0.13.0
-[0.12.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.11.0...v0.12.0
-[0.11.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/TODO(<org>)/tako-ai-core/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.34.0...v0.35.0
+[0.34.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.33.0...v0.34.0
+[0.33.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.32.0...v0.33.0
+[0.32.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.31.0...v0.32.0
+[0.31.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.28.0...v0.29.0
+[0.28.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nyankobu010/tako-ai-core/releases/tag/v0.1.0

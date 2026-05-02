@@ -31,9 +31,17 @@ pub trait BudgetBackend: Send + Sync + 'static + Debug {
 }
 ```
 
-The default `InMemoryBudgetBackend` is fine for single-process
-deployments. Phase 4 will add a Redis-backed implementation for
-multi-tenant SaaS scenarios.
+Two backends ship out of the box:
+
+- `InMemoryBudgetBackend` — single-process deployments (default).
+- `RedisBudgetBackend` — multi-replica deployments. Backed by a
+  monotonic-write Lua script so a slow replica cannot clobber a higher
+  water-mark. Behind the `tako-runtime/redis` cargo feature; mirror in
+  Python is `tako.Client(budget_backend=tako.RedisBudgetBackend(...))`.
+
+`BudgetTracker` is wired through `tako.SingleAgent`, `tako.Conductor`,
+`tako.Trinity`, and `tako.guards.LlmJudge` — every provider call counts
+against the same caps, including the judge in `SelfCaller`.
 
 ## Cost estimation
 
