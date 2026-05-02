@@ -56,6 +56,55 @@ The two builders compose last-write-wins: calling
 `with_short_circuit_on_infrastructure_errors()` after
 `with_short_circuit_on_transport_error()` upgrades the policy.
 
+## Per-child policy override
+
+The chain-wide flag forces a single sensitivity level on every
+child. Real deployments often want to mix:
+
+- **Critical primary** (OIDC issuer) — transport / rate-limit /
+  circuit failures should halt the chain so the operator gets the
+  actionable diagnostic, not a misleading "unknown bearer" from a
+  fallback.
+- **Graceful tail** (in-process static API keys) — an in-process
+  resolver functionally cannot raise `RateLimited` /
+  `CircuitOpen` / `BudgetExhausted`; if it does, that's a bug,
+  not a "real" infrastructure failure. Operators want the tail
+  to keep serving.
+
+`then_with_short_circuit(child, policy)` (Phase 36) appends a
+child with a per-child override:
+
+```python
+oidc = ...                       # critical primary
+jwt = ...                        # critical secondary
+static = tako.compat.StaticTokens({"sk-dev-1": tako.Principal(...)})
+
+chain = (
+    tako.compat.ChainedAuth()
+    .then(oidc)                  # Inherit chain-wide policy
+    .then(jwt)                   # Inherit chain-wide policy
+    .then_with_short_circuit(static, "always_fall_through")
+    .with_short_circuit_on_infrastructure_errors()
+)
+```
+
+Accepted policy aliases (case-insensitive; kebab-case variants
+also work):
+
+| Policy | Behaviour |
+|--------|-----------|
+| `"inherit"` | Same as bare `then(child)`. Default. |
+| `"always_fall_through"` | Override: every error from this child falls through. Use for graceful-tail fallbacks. |
+| `"transport_only"` | Override: short-circuit only on `Transport`. Narrower than chain-wide infra. |
+| `"all_infrastructure"` | Override: short-circuit on `Transport` / `RateLimited` / `CircuitOpen` / `BudgetExhausted`. Broader than chain-wide transport-only. |
+
+Override priority: when a child's policy is anything other than
+`"inherit"`, that policy alone determines whether the child's
+error halts the chain — the chain-wide flag is ignored for this
+child. Bare `then(child)` is equivalent to
+`then_with_short_circuit(child, "inherit")` byte-for-byte; you
+can mix both builders in any order.
+
 ## Nesting
 
 Chains compose recursively — a chain whose child is itself a chain

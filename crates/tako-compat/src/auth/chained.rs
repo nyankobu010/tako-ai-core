@@ -56,14 +56,59 @@ enum ShortCircuitPolicy {
     AllInfrastructure,
 }
 
+/// Phase 36 — per-child override for the chain-wide
+/// short-circuit policy set by Phase 26 / 27 builders.
+///
+/// Default [`Self::Inherit`] preserves Phase 21 / 26 / 27
+/// chain-wide semantics byte-for-byte: the per-child override
+/// is inert unless explicitly set.
+///
+/// Real deployments often mix critical primary backends (OIDC
+/// issuer; transport / rate-limit / circuit failures should
+/// halt the chain) with graceful-tail fallbacks (in-process
+/// static API keys; never short-circuit). Without per-child
+/// override, the chain-wide flag forces a single sensitivity
+/// level on all children.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ChildShortCircuitPolicy {
+    /// Inherit the chain-wide policy. Default — equivalent to
+    /// the Phase 21 `then(child)` builder.
+    #[default]
+    Inherit,
+    /// Override: every `Err` from this child falls through to
+    /// the next, regardless of chain-wide policy. Useful for
+    /// graceful-tail fallbacks (in-process static-token
+    /// last-resort that must keep serving even when the
+    /// chain-wide flag is set).
+    AlwaysFallThrough,
+    /// Override: short-circuit only on
+    /// [`TakoError::Transport`]. Narrower than chain-wide
+    /// `AllInfrastructure`.
+    TransportOnly,
+    /// Override: short-circuit on `Transport` /
+    /// `RateLimited` / `CircuitOpen` / `BudgetExhausted`.
+    /// Broader than chain-wide `TransportOnly`.
+    AllInfrastructure,
+}
+
+/// Internal child entry. Phase 36 widens the `Vec<Arc<dyn
+/// AuthResolver>>` to carry per-child policy.
+#[derive(Clone, Debug)]
+struct ChildEntry {
+    resolver: Arc<dyn AuthResolver>,
+    policy: ChildShortCircuitPolicy,
+}
+
 /// Phase 21.A — try children in order until one returns `Ok`.
 #[derive(Clone, Debug, Default)]
 pub struct ChainedAuthResolver {
-    children: Vec<Arc<dyn AuthResolver>>,
+    children: Vec<ChildEntry>,
     /// Phase 26 / 27 — selects which error variants halt the
     /// chain immediately instead of falling through to the next
     /// child. Default `ShortCircuitPolicy::None` preserves Phase
     /// 21 fall-through-on-any-Err semantics byte-for-byte.
+    /// Phase 36 lets individual children override this via
+    /// [`ChildShortCircuitPolicy`].
     short_circuit_policy: ShortCircuitPolicy,
 }
 
@@ -83,8 +128,42 @@ impl ChainedAuthResolver {
     /// idiom for sequential composition. Avoids the Python `with`
     /// keyword clash that would prevent the Python facade from
     /// using the same method name.
+    ///
+    /// Phase 36: equivalent to
+    /// [`Self::then_with_short_circuit`] with
+    /// [`ChildShortCircuitPolicy::Inherit`].
     pub fn then(mut self, child: Arc<dyn AuthResolver>) -> Self {
-        self.children.push(child);
+        self.children.push(ChildEntry {
+            resolver: child,
+            policy: ChildShortCircuitPolicy::Inherit,
+        });
+        self
+    }
+
+    /// Phase 36 — append a child WITH a per-child
+    /// short-circuit-policy override.
+    ///
+    /// The chain-wide policy (set by [`Self::with_short_circuit_on_transport_error`]
+    /// / [`Self::with_short_circuit_on_infrastructure_errors`])
+    /// still applies to every child whose own override is
+    /// [`ChildShortCircuitPolicy::Inherit`] — so the existing
+    /// [`Self::then`] keeps Phase 21 / 26 / 27 cadence
+    /// byte-for-byte.
+    ///
+    /// Override priority: when a child's
+    /// [`ChildShortCircuitPolicy`] is anything other than
+    /// `Inherit`, that policy alone determines whether the
+    /// child's error halts the chain — the chain-wide flag is
+    /// ignored for this child.
+    pub fn then_with_short_circuit(
+        mut self,
+        child: Arc<dyn AuthResolver>,
+        policy: ChildShortCircuitPolicy,
+    ) -> Self {
+        self.children.push(ChildEntry {
+            resolver: child,
+            policy,
+        });
         self
     }
 
@@ -180,27 +259,24 @@ impl AuthResolver for ChainedAuthResolver {
             ));
         }
         let mut last_err: Option<TakoError> = None;
-        for child in &self.children {
-            match child.resolve(token).await {
+        for entry in &self.children {
+            match entry.resolver.resolve(token).await {
                 Ok(p) => return Ok(p),
                 Err(e) => {
-                    // Phase 26 / 27 — short-circuit when the
-                    // configured policy matches the error variant.
-                    // Auth-decision errors (`Invalid`,
-                    // `PolicyDenied`) and vendor errors
-                    // (`Provider`) always fall through.
-                    let should_short_circuit = match self.short_circuit_policy {
-                        ShortCircuitPolicy::None => false,
-                        ShortCircuitPolicy::TransportOnly => {
+                    // Phase 36 — per-child policy overrides the
+                    // chain-wide policy when it's anything other
+                    // than `Inherit`. Phase 26 / 27 chain-wide
+                    // semantics still drive `Inherit` children
+                    // byte-for-byte.
+                    let should_short_circuit = match entry.policy {
+                        ChildShortCircuitPolicy::Inherit => {
+                            chain_wide_short_circuit(&self.short_circuit_policy, &e)
+                        }
+                        ChildShortCircuitPolicy::AlwaysFallThrough => false,
+                        ChildShortCircuitPolicy::TransportOnly => {
                             matches!(e, TakoError::Transport(_))
                         }
-                        ShortCircuitPolicy::AllInfrastructure => matches!(
-                            e,
-                            TakoError::Transport(_)
-                                | TakoError::RateLimited(_)
-                                | TakoError::CircuitOpen
-                                | TakoError::BudgetExhausted(_)
-                        ),
+                        ChildShortCircuitPolicy::AllInfrastructure => is_infrastructure_error(&e),
                     };
                     if should_short_circuit {
                         return Err(e);
@@ -216,6 +292,33 @@ impl AuthResolver for ChainedAuthResolver {
             TakoError::Invalid("chained auth: unreachable empty-error path".into())
         }))
     }
+}
+
+/// Phase 26 / 27 chain-wide short-circuit predicate. Auth-decision
+/// errors (`Invalid`, `PolicyDenied`) and vendor errors
+/// (`Provider`) always fall through. Phase 36 routes `Inherit`
+/// children through this helper.
+fn chain_wide_short_circuit(policy: &ShortCircuitPolicy, e: &TakoError) -> bool {
+    match policy {
+        ShortCircuitPolicy::None => false,
+        ShortCircuitPolicy::TransportOnly => matches!(e, TakoError::Transport(_)),
+        ShortCircuitPolicy::AllInfrastructure => is_infrastructure_error(e),
+    }
+}
+
+/// Phase 27's "definitely infrastructure / operator-set guard"
+/// set: `Transport` (network failure), `RateLimited` (operator-side
+/// limit), `CircuitOpen` (failsafe circuit), `BudgetExhausted`
+/// (operator-set spend cap). Pulled into a helper in Phase 36 so
+/// chain-wide and per-child code paths agree on the set.
+fn is_infrastructure_error(e: &TakoError) -> bool {
+    matches!(
+        e,
+        TakoError::Transport(_)
+            | TakoError::RateLimited(_)
+            | TakoError::CircuitOpen
+            | TakoError::BudgetExhausted(_)
+    )
 }
 
 #[cfg(test)]
@@ -628,5 +731,176 @@ mod tests {
             .with_short_circuit_on_transport_error();
         assert!(!chain.short_circuits_on_infrastructure_errors());
         assert!(chain.short_circuits_on_transport_error());
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 36 — per-child short-circuit policy override.
+    //
+    // Adds `then_with_short_circuit(child, ChildShortCircuitPolicy)`
+    // for marking individual children with a different sensitivity
+    // than the chain-wide policy. Bare `then(...)` keeps the Phase
+    // 21 cadence (defaults to `ChildShortCircuitPolicy::Inherit`).
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn per_child_always_fall_through_overrides_chain_wide_infra() {
+        // Chain-wide infra short-circuit, but the first child is
+        // marked AlwaysFallThrough — `RateLimited` still falls
+        // through to the second.
+        let first = CountingAuth::new(Err(TakoError::RateLimited(std::time::Duration::from_secs(
+            60,
+        ))));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then_with_short_circuit(
+                first.clone() as Arc<dyn AuthResolver>,
+                ChildShortCircuitPolicy::AlwaysFallThrough,
+            )
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_infrastructure_errors();
+
+        let p = chain.resolve("any").await.unwrap();
+        assert_eq!(p.user_id, "alice");
+        assert_eq!(first.call_count(), 1);
+        assert_eq!(
+            second.call_count(),
+            1,
+            "AlwaysFallThrough must override chain-wide infra short-circuit"
+        );
+    }
+
+    #[tokio::test]
+    async fn per_child_transport_only_overrides_chain_wide_infra() {
+        // Chain-wide infra short-circuit, but the first child is
+        // marked TransportOnly — `RateLimited` falls through (the
+        // narrower per-child policy doesn't include it), while
+        // `Transport` would halt.
+        let first = CountingAuth::new(Err(TakoError::RateLimited(std::time::Duration::from_secs(
+            30,
+        ))));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then_with_short_circuit(
+                first.clone() as Arc<dyn AuthResolver>,
+                ChildShortCircuitPolicy::TransportOnly,
+            )
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_infrastructure_errors();
+
+        let p = chain.resolve("any").await.unwrap();
+        assert_eq!(p.user_id, "alice");
+        assert_eq!(first.call_count(), 1);
+        assert_eq!(second.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn per_child_transport_only_still_halts_on_transport() {
+        let first = CountingAuth::new(Err(TakoError::Transport("oidc unreachable".into())));
+        let second = CountingAuth::new(Ok(alice()));
+        // Chain-wide is None (Phase 21 default), but per-child
+        // TransportOnly halts.
+        let chain = ChainedAuthResolver::new()
+            .then_with_short_circuit(
+                first.clone() as Arc<dyn AuthResolver>,
+                ChildShortCircuitPolicy::TransportOnly,
+            )
+            .then(second.clone() as Arc<dyn AuthResolver>);
+
+        let err = chain.resolve("any").await.unwrap_err();
+        assert!(matches!(err, TakoError::Transport(_)), "got: {err:?}");
+        assert_eq!(second.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn per_child_all_infrastructure_overrides_chain_wide_transport_only() {
+        // Chain-wide TransportOnly, but the first child is
+        // marked AllInfrastructure — `RateLimited` halts the
+        // chain because the per-child policy is broader.
+        let first = CountingAuth::new(Err(TakoError::RateLimited(std::time::Duration::from_secs(
+            30,
+        ))));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then_with_short_circuit(
+                first.clone() as Arc<dyn AuthResolver>,
+                ChildShortCircuitPolicy::AllInfrastructure,
+            )
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_transport_error();
+
+        let err = chain.resolve("any").await.unwrap_err();
+        assert!(matches!(err, TakoError::RateLimited(_)), "got: {err:?}");
+        assert_eq!(
+            second.call_count(),
+            0,
+            "per-child AllInfrastructure must halt on RateLimited even when chain-wide is TransportOnly"
+        );
+    }
+
+    #[tokio::test]
+    async fn per_child_inherit_default_preserves_chain_wide() {
+        // `then_with_short_circuit(child, Inherit)` is identical
+        // to `then(child)` — chain-wide TransportOnly applies.
+        let first = CountingAuth::new(Err(TakoError::Transport("oidc unreachable".into())));
+        let second = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then_with_short_circuit(
+                first.clone() as Arc<dyn AuthResolver>,
+                ChildShortCircuitPolicy::Inherit,
+            )
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_transport_error();
+
+        let err = chain.resolve("any").await.unwrap_err();
+        assert!(matches!(err, TakoError::Transport(_)), "got: {err:?}");
+        assert_eq!(second.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn per_child_policy_does_not_affect_happy_path() {
+        // Even with a non-default per-child policy, an `Ok` from
+        // the first child still short-circuits the chain.
+        let first = CountingAuth::new(Ok(alice()));
+        let second = CountingAuth::new(Ok(bob()));
+        let chain = ChainedAuthResolver::new()
+            .then_with_short_circuit(
+                first.clone() as Arc<dyn AuthResolver>,
+                ChildShortCircuitPolicy::AlwaysFallThrough,
+            )
+            .then(second.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_infrastructure_errors();
+
+        let p = chain.resolve("any").await.unwrap();
+        assert_eq!(p.user_id, "alice");
+        assert_eq!(first.call_count(), 1);
+        assert_eq!(second.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn then_and_then_with_short_circuit_can_mix() {
+        // Operator builds a 3-child chain mixing both builders:
+        // OIDC (Inherit) → JWT (AlwaysFallThrough) → static
+        // (Inherit). Chain-wide is infra short-circuit. JWT
+        // returns `RateLimited` but its AlwaysFallThrough
+        // override forces fall-through; static then succeeds.
+        let oidc = CountingAuth::new(Err(TakoError::Invalid("bad token".into())));
+        let jwt = CountingAuth::new(Err(TakoError::RateLimited(std::time::Duration::from_secs(
+            10,
+        ))));
+        let static_tail = CountingAuth::new(Ok(alice()));
+        let chain = ChainedAuthResolver::new()
+            .then(oidc.clone() as Arc<dyn AuthResolver>)
+            .then_with_short_circuit(
+                jwt.clone() as Arc<dyn AuthResolver>,
+                ChildShortCircuitPolicy::AlwaysFallThrough,
+            )
+            .then(static_tail.clone() as Arc<dyn AuthResolver>)
+            .with_short_circuit_on_infrastructure_errors();
+
+        let p = chain.resolve("any").await.unwrap();
+        assert_eq!(p.user_id, "alice");
+        assert_eq!(oidc.call_count(), 1);
+        assert_eq!(jwt.call_count(), 1);
+        assert_eq!(static_tail.call_count(), 1);
     }
 }

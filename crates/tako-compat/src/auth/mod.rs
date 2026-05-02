@@ -22,7 +22,7 @@ mod static_tokens;
 pub use static_tokens::StaticTokens;
 
 mod chained;
-pub use chained::ChainedAuthResolver;
+pub use chained::{ChainedAuthResolver, ChildShortCircuitPolicy};
 
 #[cfg(feature = "jwt")]
 mod jwt;
