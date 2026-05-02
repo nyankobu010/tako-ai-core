@@ -281,6 +281,50 @@ proceeds anyway with whatever client is currently installed —
 worst case the second attempt fails the same way and the
 caller sees the original error.
 
+### Python API (Phase 40)
+
+Build the wheel with `auth-mtls-fs-watch` (or
+`auth-mtls-identity-provider`) plus the always-present
+`auth-oidc`:
+
+```bash
+maturin develop --features "auth-oidc auth-mtls-fs-watch"
+```
+
+```python
+import tako.compat
+
+oidc = (
+    await tako.compat.OidcAuth.discover(
+        issuer="https://issuer.example.com",
+        audience="my-api",
+    )
+).with_introspection(
+    client_id="my-api", client_secret=None,
+).with_introspection_self_signed_mtls(
+    initial_cert_pem, initial_key_pem,
+)
+
+watcher = oidc.watch_mtls_files(cert_path, key_path)
+
+# Pair the resolver with the watcher's refresh hook. Returns
+# a NEW OidcAuth (immutable builder); rebind the variable.
+oidc = oidc.with_mtls_refresh_hook(watcher.refresh_hook())
+```
+
+Same shape for the Phase 38 trait-based provider:
+
+```python
+provider = tako.compat.MtlsIdentityProvider(fetch_callable)
+watcher = oidc.watch_mtls_provider(provider)
+oidc = oidc.with_mtls_refresh_hook(watcher.refresh_hook())
+```
+
+The hook is `Clone`-able on the Rust side; if you have several
+mTLS-introspecting endpoints sharing one cert source, call
+`watcher.refresh_hook()` once per resolver — they all drive the
+same background task.
+
 ## Atomicity
 
 The swap is atomic from the request-handler's perspective. Concurrent

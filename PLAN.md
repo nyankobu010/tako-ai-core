@@ -58,32 +58,29 @@ synopsis and quickstart.
 | 37 — Trait-based MtlsIdentityProvider | v0.38.0 | done (2026-05-02) | [plans/PLAN_PHASE37.md](plans/PLAN_PHASE37.md) | [`## [0.38.0]`](CHANGELOG.md) |
 | 38 — Python facade for MtlsIdentityProvider | v0.39.0 | done (2026-05-02) | [plans/PLAN_PHASE38.md](plans/PLAN_PHASE38.md) | [`## [0.39.0]`](CHANGELOG.md) |
 | 39 — Auto refresh-on-handshake-failure for OIDC mTLS | v0.40.0 | done (2026-05-02) | [plans/PLAN_PHASE39.md](plans/PLAN_PHASE39.md) | [`## [0.40.0]`](CHANGELOG.md) |
+| 40 — Python facade for MtlsRefreshHook | v0.41.0 | done (2026-05-02) | [plans/PLAN_PHASE40.md](plans/PLAN_PHASE40.md) | [`## [0.41.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 40 candidates (indicative, not yet committed)
+### Phase 41 candidates (indicative, not yet committed)
 
-After Phase 39 the Phase 33 mTLS rotation backlog is fully
-retired (all three rotation strategies + the reactive retry
-layer ship). Carry-forward items remaining:
+After Phase 40 the entire Phase 33 mTLS rotation surface — Rust
+core (Phases 33/35/37/39) plus Python facade (Phases 35.B / 38 /
+40) — is feature-complete. Operator-knob surfaces for the
+existing rotation paths are exhausted; the remaining items are
+fix-it tasks and broader-roadmap work:
 
 - **`jsonwebtoken` 10.x migration.** PR #32 bumped the dep
   but jsonwebtoken 10.x dropped PEM-helper functions
   (`from_rsa_pem` / `from_ec_pem` / `from_ed_pem`) entirely
-  in favour of DER-only constructors. Phase 39 reverts the
-  bump on its branch to unblock; a proper migration would
-  layer a PEM-decode step (e.g. via the `pem` crate) over
-  the new DER-only API. ~6 call sites across `oidc.rs` /
-  `jwt.rs`.
-- **Python facade for `MtlsRefreshHook`.** Phase 39 wires
-  the Rust-side primitive; Python operators using
-  `OidcAuth.watch_mtls_files` / `watch_mtls_provider` get
-  no auto-retry today. Small follow-on: expose
-  `watcher.refresh_hook()` and
-  `oidc.with_mtls_refresh_hook(...)` through PyO3.
+  in favour of DER-only constructors. Phase 39 reverted the
+  bump on its branch (carried through Phase 40); a proper
+  migration would layer a PEM-decode step (e.g. via the
+  `pem` crate) over the new DER-only API. ~6 call sites
+  across `oidc.rs` / `jwt.rs`.
 - **Wildcard at non-leftmost positions** — patterns like
   `registry.*.corp` (wildcard in middle). Phase 31 ships only
   the leftmost-`*.` convention. Probably never worth shipping

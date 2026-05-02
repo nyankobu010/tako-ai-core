@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.41.0] - 2026-05-02
+
+Phase 40 — Python facade for the Phase 39 ``MtlsRefreshHook``.
+Closes the deferred Python facade carry-forward from Phase 39:
+Python-wheel operators using ``OidcAuth.watch_mtls_files``
+(Phase 35.B) or ``OidcAuth.watch_mtls_provider`` (Phase 38) now
+get full parity with the Rust API for the auto-retry layer.
+After Phase 40 the entire Phase 33 mTLS rotation surface is
+feature-complete on both Rust and Python sides.
+Plan: [plans/PLAN_PHASE40.md](plans/PLAN_PHASE40.md).
+
+### Added
+
+- **`tako-py`: ``tako.compat.MtlsRefreshHook``** pyclass —
+  Clone-able wrapper around the Phase 39 Rust handle. Returned
+  by `MtlsFsWatcher.refresh_hook()` and
+  `MtlsProviderWatcher.refresh_hook()`; pair with
+  `OidcAuth.with_mtls_refresh_hook(hook)`.
+- **`tako-py`: `OidcAuth.with_mtls_refresh_hook(hook)`**
+  Python method mirroring the Phase 39 Rust API. Returns a NEW
+  `OidcAuth` (immutable builder; matches the `with_introspection_*`
+  cadence).
+- **`tako-py`: `MtlsFsWatcher.refresh_hook()`** /
+  `MtlsProviderWatcher.refresh_hook()` Python methods — return
+  a `MtlsRefreshHook` wired to the watcher's background task.
+  Raise `ValueError` if the watcher has been shut down.
+
 ## [0.40.0] - 2026-05-02
 
 Phase 39 — auto refresh-on-handshake-failure for OIDC mTLS.
@@ -4355,7 +4382,8 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.37.0...v0.38.0

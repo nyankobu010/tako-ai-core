@@ -606,6 +606,35 @@ impl PyOidcAuth {
         })
     }
 
+    /// Phase 40 — wire a refresh hook from a Phase 35
+    /// `MtlsFsWatcher` or Phase 38 `MtlsProviderWatcher`
+    /// (via the matching `refresh_hook()` accessor on each
+    /// pyclass) so the introspection POST can trigger an
+    /// out-of-band reload on a transport-error retry.
+    ///
+    /// When wired AND mTLS introspection is configured, the
+    /// retry layer:
+    ///
+    /// 1. Sees a `TakoError::Transport` from the
+    ///    introspection POST.
+    /// 2. Calls `MtlsRefreshHook::force_refresh` (capped at
+    ///    2s).
+    /// 3. Re-sends the POST exactly once.
+    ///
+    /// Cycle-detection is structural — at most one retry per
+    /// `introspect()` call.
+    ///
+    /// Returns a NEW `OidcAuth` (immutable builder; matches
+    /// `with_introspection_*` cadence). Idempotent.
+    /// Last-write-wins.
+    fn with_mtls_refresh_hook(&self, hook: PyRef<'_, PyMtlsRefreshHook>) -> Self {
+        let cloned: tako_compat::OidcAuthResolver = (*self.inner).clone();
+        let next = cloned.with_mtls_refresh_hook(hook.inner.clone());
+        Self {
+            inner: Arc::new(next),
+        }
+    }
+
     /// Phase 18.B — return the OIDC Session Management 1.0
     /// `end_session_endpoint` URL the issuer advertised at discovery
     /// time. `None` when the issuer doesn't implement OIDC Session
@@ -898,6 +927,27 @@ impl std::fmt::Debug for PyMtlsFsWatcher {
 #[cfg(feature = "auth-mtls-fs-watch")]
 #[pymethods]
 impl PyMtlsFsWatcher {
+    /// Phase 40 — return a `MtlsRefreshHook` wired to this
+    /// watcher's background task. Pair with
+    /// `OidcAuth.with_mtls_refresh_hook(hook)` to enable
+    /// auto-retry of failed introspection POSTs against this
+    /// watcher's reload primitive.
+    ///
+    /// The hook is `Clone`-able on the Rust side; multiple
+    /// resolvers can share the same refresh source.
+    ///
+    /// Raises `ValueError` if the watcher has been shut down.
+    #[cfg(feature = "auth-oidc")]
+    fn refresh_hook(&self) -> PyResult<PyMtlsRefreshHook> {
+        let watcher = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("watcher has been shut down"))?;
+        Ok(PyMtlsRefreshHook {
+            inner: watcher.refresh_hook(),
+        })
+    }
+
     /// Stop the watcher and await teardown of the background
     /// task. Idempotent; calling twice is a no-op the second
     /// time.
@@ -1104,6 +1154,27 @@ impl std::fmt::Debug for PyMtlsProviderWatcher {
 #[cfg(feature = "auth-mtls-identity-provider")]
 #[pymethods]
 impl PyMtlsProviderWatcher {
+    /// Phase 40 — return a `MtlsRefreshHook` wired to this
+    /// provider's background task. Pair with
+    /// `OidcAuth.with_mtls_refresh_hook(hook)` to enable
+    /// auto-retry of failed introspection POSTs against this
+    /// provider's reload primitive.
+    ///
+    /// The hook is `Clone`-able on the Rust side; multiple
+    /// resolvers can share the same refresh source.
+    ///
+    /// Raises `ValueError` if the watcher has been shut down.
+    #[cfg(feature = "auth-oidc")]
+    fn refresh_hook(&self) -> PyResult<PyMtlsRefreshHook> {
+        let watcher = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("watcher has been shut down"))?;
+        Ok(PyMtlsRefreshHook {
+            inner: watcher.refresh_hook(),
+        })
+    }
+
     /// Stop the watcher and await teardown of the background
     /// task. Idempotent.
     fn shutdown(&mut self, py: Python<'_>) -> PyResult<()> {
@@ -1141,5 +1212,40 @@ impl PyMtlsProviderWatcher {
                 "False"
             }
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 40 — Python facade for `MtlsRefreshHook` (Phase 39).
+//
+// Returned by `MtlsFsWatcher.refresh_hook()` (Phase 35 feature) and
+// `MtlsProviderWatcher.refresh_hook()` (Phase 38 feature). Operators
+// pair the hook with `OidcAuth.with_mtls_refresh_hook(hook)` to enable
+// the Phase 39 retry-on-Transport-error layer.
+//
+// The pyclass is `Clone`-able to mirror the Rust API; one hook can be
+// wired into multiple resolvers if several mTLS-introspecting endpoints
+// share one cert source.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "auth-oidc")]
+#[pyclass(name = "MtlsRefreshHook", module = "tako._native", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyMtlsRefreshHook {
+    inner: tako_compat::MtlsRefreshHook,
+}
+
+#[cfg(feature = "auth-oidc")]
+impl std::fmt::Debug for PyMtlsRefreshHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MtlsRefreshHook").finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "auth-oidc")]
+#[pymethods]
+impl PyMtlsRefreshHook {
+    fn __repr__(&self) -> String {
+        "MtlsRefreshHook(...)".into()
     }
 }

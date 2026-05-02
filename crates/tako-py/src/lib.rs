@@ -94,6 +94,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_compat::PyJwtAuth>()?;
     #[cfg(feature = "auth-oidc")]
     m.add_class::<py_compat::PyOidcAuth>()?;
+    #[cfg(feature = "auth-oidc")]
+    m.add_class::<py_compat::PyMtlsRefreshHook>()?;
     #[cfg(feature = "auth-mtls-fs-watch")]
     m.add_class::<py_compat::PyMtlsFsWatcher>()?;
     #[cfg(feature = "auth-mtls-identity-provider")]
