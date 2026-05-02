@@ -71,9 +71,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      # cargo-audit picks up `.cargo/audit.toml` from the workspace root
+      # automatically, so the documented ignores live there (versioned in
+      # the repo, not in YAML).
+      - name: cargo audit
+        run: |
+          cargo install --locked cargo-audit
+          cargo audit
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"

@@ -22,7 +22,6 @@ serde              = { workspace = true }
 serde_json         = { workspace = true }
 governor           = { workspace = true }
 failsafe           = { workspace = true }
-backoff            = { workspace = true }
 rand               = "0.8"
 
 # Phase 4 Redis-backed BudgetBackend (optional, behind `redis` feature).
