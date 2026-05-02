@@ -23,7 +23,6 @@ Tests skip themselves when the wheel was built without the
 from __future__ import annotations
 
 import pytest
-
 from tako import compat
 
 

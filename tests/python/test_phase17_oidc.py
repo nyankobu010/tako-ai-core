@@ -27,7 +27,6 @@ Tests skip themselves when the wheel was built without the
 from __future__ import annotations
 
 import pytest
-
 from tako import compat
 
 
@@ -44,9 +43,7 @@ def test_oidc_auth_with_introspection_auth_method_attribute_exists() -> None:
     compat.OidcAuth is None,
     reason="wheel built without the auth-oidc feature",
 )
-def test_oidc_auth_with_introspection_auth_method_from_discovery_attribute_exists() -> (
-    None
-):
+def test_oidc_auth_with_introspection_auth_method_from_discovery_attribute_exists() -> None:
     """Phase 17.A — auto-select builder is exposed."""
     assert hasattr(compat.OidcAuth, "with_introspection_auth_method_from_discovery")
     assert callable(compat.OidcAuth.with_introspection_auth_method_from_discovery)

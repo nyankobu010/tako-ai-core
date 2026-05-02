@@ -21,7 +21,6 @@ skip themselves.
 from __future__ import annotations
 
 import pytest
-
 from tako import _native, compat
 
 
@@ -87,7 +86,7 @@ def test_serve_openai_rejects_both_tokens_and_auth() -> None:
     auth = compat.JwtAuth.hs256(b"super-secret-test-secret-32-chars")
     fake_provider = tako.providers.Fake(canned_text="x")
     orch = tako.SingleAgent(provider=fake_provider)
-    with pytest.raises(ValueError, match="tokens.*auth"):
+    with pytest.raises(ValueError, match=r"tokens.*auth"):
         compat.serve_openai(
             orch,
             host="127.0.0.1",

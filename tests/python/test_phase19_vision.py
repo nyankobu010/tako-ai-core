@@ -23,7 +23,6 @@ Pydantic model surface lands here before it lands in user code.
 from __future__ import annotations
 
 import pytest
-
 from tako import ContentPart, Message, Role
 
 

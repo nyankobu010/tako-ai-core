@@ -11,10 +11,8 @@ from __future__ import annotations
 import os
 
 import pytest
-
 import tako
 from tako import _native
-
 
 REDIS_URL = os.environ.get("TAKO_REDIS_URL", "redis://127.0.0.1:6379")
 REDIS_TESTS_ENABLED = bool(os.environ.get("TAKO_REDIS_TESTS"))

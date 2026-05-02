@@ -15,7 +15,6 @@ from collections.abc import Iterator
 
 import pytest
 import requests
-
 import tako
 
 

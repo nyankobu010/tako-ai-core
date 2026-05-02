@@ -17,7 +17,6 @@ Tests skip themselves on a wheel built without ``auth-oidc``.
 from __future__ import annotations
 
 import pytest
-
 from tako import compat
 
 

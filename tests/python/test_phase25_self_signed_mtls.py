@@ -18,7 +18,6 @@ Tests skip themselves on a wheel built without ``auth-oidc``.
 from __future__ import annotations
 
 import pytest
-
 from tako import compat
 
 
@@ -53,10 +52,7 @@ def test_phase25_aliases_documented_in_module_docstring() -> None:
     `tako.compat` module docstring so end users discover them."""
     docstring = compat.serve_openai.__doc__ or ""
     assert "with_introspection_self_signed_mtls" in docstring
-    assert (
-        "self_signed_tls_client_auth" in docstring
-        or "self-signed-mtls" in docstring.lower()
-    )
+    assert "self_signed_tls_client_auth" in docstring or "self-signed-mtls" in docstring.lower()
 
 
 @pytest.mark.skipif(

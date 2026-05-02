@@ -166,10 +166,10 @@ ChainedAuth = getattr(_native, "ChainedAuth", None)
 
 
 __all__ = [
-    "serve_openai",
-    "shutdown_openai",
+    "ChainedAuth",
     "JwtAuth",
     "OidcAuth",
     "VaultAuth",
-    "ChainedAuth",
+    "serve_openai",
+    "shutdown_openai",
 ]

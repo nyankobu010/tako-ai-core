@@ -17,7 +17,6 @@ unit tests in `crates/tako-providers/{anthropic,openai,mistral}/src/convert.rs`.
 from __future__ import annotations
 
 import pytest
-
 from tako import ContentPart, Message, Role
 
 

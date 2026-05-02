@@ -20,8 +20,7 @@ from __future__ import annotations
 
 import inspect
 
-from tako import providers
-from tako import _native
+from tako import _native, providers
 
 
 def test_ollama_class_exists() -> None:

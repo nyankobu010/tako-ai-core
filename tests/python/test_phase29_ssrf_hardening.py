@@ -59,10 +59,7 @@ def test_bedrock_docstring_documents_phase29_blocklist() -> None:
     docstring = providers.Bedrock.__doc__ or ""
     assert "url_prefetch_allow_private_ips" in docstring
     # At least one of the canonical SSRF target IP families is named.
-    assert any(
-        token in docstring
-        for token in ("loopback", "RFC 1918", "link-local", "169.254")
-    )
+    assert any(token in docstring for token in ("loopback", "RFC 1918", "link-local", "169.254"))
 
 
 def test_ollama_docstring_documents_phase29_blocklist() -> None:
@@ -70,7 +67,4 @@ def test_ollama_docstring_documents_phase29_blocklist() -> None:
     ``tako.providers.Ollama`` class docstring."""
     docstring = providers.Ollama.__doc__ or ""
     assert "url_prefetch_allow_private_ips" in docstring
-    assert any(
-        token in docstring
-        for token in ("loopback", "RFC 1918", "link-local", "private")
-    )
+    assert any(token in docstring for token in ("loopback", "RFC 1918", "link-local", "private"))
