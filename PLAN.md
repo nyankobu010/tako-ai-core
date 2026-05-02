@@ -2,7 +2,7 @@
 
 > Per spec §19 rule 1: this is the rolling project plan that future
 > Claude Code sessions read on entry. **Each phase owns its own
-> `PLAN_PHASE*.md`**; this file is the high-level index + roadmap.
+> `plans/PLAN_PHASE*.md`**; this file is the high-level index + roadmap.
 >
 > Workflow rules (commit cadence, fmt/clippy/test gates, etc.) live in
 > [CLAUDE.md](CLAUDE.md). Architectural rules live in
@@ -18,41 +18,41 @@ synopsis and quickstart.
 
 | Phase | Version | Status | Plan doc | Changelog |
 |-------|---------|--------|----------|-----------|
-| 1 — Foundation | v0.1.0 | done (2026-04-28) | [PLAN_PHASE1.md](PLAN_PHASE1.md) | [`## [0.1.0]`](CHANGELOG.md) |
-| 2 — Orchestration (+ bundled 1.5) | v0.2.0 | done (2026-04-29) | [PLAN_PHASE2.md](PLAN_PHASE2.md) | [`## [0.2.0]`](CHANGELOG.md) |
-| 2.5 — Cloud breadth | v0.3.0 | done (2026-04-29) | [PLAN_PHASE2_5.md](PLAN_PHASE2_5.md) | [`## [0.3.0]`](CHANGELOG.md) |
-| 3 — Learned coordination | v0.4.0 | done (2026-04-29) | [PLAN_PHASE3.md](PLAN_PHASE3.md) | [`## [0.4.0]`](CHANGELOG.md) |
-| 4 — Search & scale | v0.5.0 | done (2026-04-29, retro plan) | [PLAN_PHASE4.md](PLAN_PHASE4.md) | [`## [0.5.0]`](CHANGELOG.md) |
-| 5 — Production hardening | v0.6.0 | done (2026-04-29) | [PLAN_PHASE5.md](PLAN_PHASE5.md) | [`## [0.6.0]`](CHANGELOG.md) |
-| 6 — Production hardening, continued | v0.7.0 | done (2026-04-29) | [PLAN_PHASE6.md](PLAN_PHASE6.md) | [`## [0.7.0]`](CHANGELOG.md) |
-| 7 — Sigstore + streaming closures | v0.8.0 | done (2026-04-29) | [PLAN_PHASE7.md](PLAN_PHASE7.md) | [`## [0.8.0]`](CHANGELOG.md) |
-| 8 — Search streaming + transparency-log completeness | v0.9.0 | done (2026-04-29) | [PLAN_PHASE8.md](PLAN_PHASE8.md) | [`## [0.9.0]`](CHANGELOG.md) |
-| 9 — Cost-aware streaming guards + log freshness + protocol completeness + router-driven AB-MCTS | v0.10.0 | done (2026-04-30) | [PLAN_PHASE9.md](PLAN_PHASE9.md) | [`## [0.10.0]`](CHANGELOG.md) |
-| 10 — Phase 9 follow-on completeness + cross-orchestrator verifier scores + Python provider streaming | v0.11.0 | done (2026-04-30) | [PLAN_PHASE10.md](PLAN_PHASE10.md) | [`## [0.11.0]`](CHANGELOG.md) |
-| 11 — Sigstore security hardening + http-generic provider streaming | v0.12.0 | done (2026-04-30) | [PLAN_PHASE11.md](PLAN_PHASE11.md) | [`## [0.12.0]`](CHANGELOG.md) |
-| 12 — MCP SSE notifications + HttpGeneric Python facade | v0.13.0 | done (2026-04-30) | [PLAN_PHASE12.md](PLAN_PHASE12.md) | [`## [0.13.0]`](CHANGELOG.md) |
-| 13 — Multi-replica `StateStore` + streaming verifier in Trinity | v0.14.0 | done (2026-04-30) | [PLAN_PHASE13.md](PLAN_PHASE13.md) | [`## [0.14.0]`](CHANGELOG.md) |
-| 14 — Streaming verifier in Conductor + tako-compat real auth providers | v0.15.0 | done (2026-04-30) | [PLAN_PHASE14.md](PLAN_PHASE14.md) | [`## [0.15.0]`](CHANGELOG.md) |
-| 15 — Streaming verifier in AbMcts + tako-compat auth hardening | v0.16.0 | done (2026-05-01) | [PLAN_PHASE15.md](PLAN_PHASE15.md) | [`## [0.16.0]`](CHANGELOG.md) |
-| 16 — Streaming-rollout backpressure + tako-compat auth hardening, continued | v0.17.0 | done (2026-05-01) | [PLAN_PHASE16.md](PLAN_PHASE16.md) | [`## [0.17.0]`](CHANGELOG.md) |
-| 17 — OIDC introspection completeness | v0.18.0 | done (2026-05-01) | [PLAN_PHASE17.md](PLAN_PHASE17.md) | [`## [0.18.0]`](CHANGELOG.md) |
-| 18 — OIDC introspection asymmetric JWT + end-session helper | v0.19.0 | done (2026-05-01) | [PLAN_PHASE18.md](PLAN_PHASE18.md) | [`## [0.19.0]`](CHANGELOG.md) |
-| 19 — Vision content support: Anthropic + OpenAI | v0.20.0 | done (2026-05-01) | [PLAN_PHASE19.md](PLAN_PHASE19.md) | [`## [0.20.0]`](CHANGELOG.md) |
-| 20 — Vision content support: Vertex + Mistral + Ollama | v0.21.0 | done (2026-05-01) | [PLAN_PHASE20.md](PLAN_PHASE20.md) | [`## [0.21.0]`](CHANGELOG.md) |
-| 21 — Composite AuthResolver | v0.22.0 | done (2026-05-01) | [PLAN_PHASE21.md](PLAN_PHASE21.md) | [`## [0.22.0]`](CHANGELOG.md) |
-| 22 — URL-source images: Anthropic + OpenAI + Mistral | v0.23.0 | done (2026-05-01) | [PLAN_PHASE22.md](PLAN_PHASE22.md) | [`## [0.23.0]`](CHANGELOG.md) |
-| 23 — URL-source images: Vertex (Gemini fileData) | v0.24.0 | done (2026-05-01) | [PLAN_PHASE23.md](PLAN_PHASE23.md) | [`## [0.24.0]`](CHANGELOG.md) |
-| 24 — OIDC introspection mTLS / `tls_client_auth` | v0.25.0 | done (2026-05-01) | [PLAN_PHASE24.md](PLAN_PHASE24.md) | [`## [0.25.0]`](CHANGELOG.md) |
-| 25 — OIDC `self_signed_tls_client_auth` | v0.26.0 | done (2026-05-01) | [PLAN_PHASE25.md](PLAN_PHASE25.md) | [`## [0.26.0]`](CHANGELOG.md) |
-| 26 — ChainedAuthResolver fail-fast on transport errors | v0.27.0 | done (2026-05-01) | [PLAN_PHASE26.md](PLAN_PHASE26.md) | [`## [0.27.0]`](CHANGELOG.md) |
-| 27 — ChainedAuthResolver broader infrastructure-error short-circuit | v0.28.0 | done (2026-05-01) | [PLAN_PHASE27.md](PLAN_PHASE27.md) | [`## [0.28.0]`](CHANGELOG.md) |
-| 28 — URL-source images: Bedrock + Ollama (opt-in tako-side pre-fetch) | v0.29.0 | done (2026-05-01) | [PLAN_PHASE28.md](PLAN_PHASE28.md) | [`## [0.29.0]`](CHANGELOG.md) |
-| 29 — URL pre-fetch SSRF hardening (private-IP blocklist + DNS-rebind) + Ollama Python facade | v0.30.0 | done (2026-05-01) | [PLAN_PHASE29.md](PLAN_PHASE29.md) | [`## [0.30.0]`](CHANGELOG.md) |
-| 30 — URL pre-fetch per-host allowlist | v0.31.0 | done (2026-05-01) | [PLAN_PHASE30.md](PLAN_PHASE30.md) | [`## [0.31.0]`](CHANGELOG.md) |
-| 31 — URL pre-fetch wildcard host patterns | v0.32.0 | done (2026-05-01) | [PLAN_PHASE31.md](PLAN_PHASE31.md) | [`## [0.32.0]`](CHANGELOG.md) |
-| 32 — URL pre-fetch CIDR allowlist | v0.33.0 | done (2026-05-02) | [PLAN_PHASE32.md](PLAN_PHASE32.md) | [`## [0.33.0]`](CHANGELOG.md) |
-| 33 — OIDC mTLS cert/key rotation | v0.34.0 | done (2026-05-02) | [PLAN_PHASE33.md](PLAN_PHASE33.md) | [`## [0.34.0]`](CHANGELOG.md) |
-| 34 — Public-release prep, tech-debt + docs sweep | v0.35.0 | done (2026-05-02) | [PLAN_PHASE34.md](PLAN_PHASE34.md) | [`## [0.35.0]`](CHANGELOG.md) |
+| 1 — Foundation | v0.1.0 | done (2026-04-28) | [plans/PLAN_PHASE1.md](plans/PLAN_PHASE1.md) | [`## [0.1.0]`](CHANGELOG.md) |
+| 2 — Orchestration (+ bundled 1.5) | v0.2.0 | done (2026-04-29) | [plans/PLAN_PHASE2.md](plans/PLAN_PHASE2.md) | [`## [0.2.0]`](CHANGELOG.md) |
+| 2.5 — Cloud breadth | v0.3.0 | done (2026-04-29) | [plans/PLAN_PHASE2_5.md](plans/PLAN_PHASE2_5.md) | [`## [0.3.0]`](CHANGELOG.md) |
+| 3 — Learned coordination | v0.4.0 | done (2026-04-29) | [plans/PLAN_PHASE3.md](plans/PLAN_PHASE3.md) | [`## [0.4.0]`](CHANGELOG.md) |
+| 4 — Search & scale | v0.5.0 | done (2026-04-29, retro plan) | [plans/PLAN_PHASE4.md](plans/PLAN_PHASE4.md) | [`## [0.5.0]`](CHANGELOG.md) |
+| 5 — Production hardening | v0.6.0 | done (2026-04-29) | [plans/PLAN_PHASE5.md](plans/PLAN_PHASE5.md) | [`## [0.6.0]`](CHANGELOG.md) |
+| 6 — Production hardening, continued | v0.7.0 | done (2026-04-29) | [plans/PLAN_PHASE6.md](plans/PLAN_PHASE6.md) | [`## [0.7.0]`](CHANGELOG.md) |
+| 7 — Sigstore + streaming closures | v0.8.0 | done (2026-04-29) | [plans/PLAN_PHASE7.md](plans/PLAN_PHASE7.md) | [`## [0.8.0]`](CHANGELOG.md) |
+| 8 — Search streaming + transparency-log completeness | v0.9.0 | done (2026-04-29) | [plans/PLAN_PHASE8.md](plans/PLAN_PHASE8.md) | [`## [0.9.0]`](CHANGELOG.md) |
+| 9 — Cost-aware streaming guards + log freshness + protocol completeness + router-driven AB-MCTS | v0.10.0 | done (2026-04-30) | [plans/PLAN_PHASE9.md](plans/PLAN_PHASE9.md) | [`## [0.10.0]`](CHANGELOG.md) |
+| 10 — Phase 9 follow-on completeness + cross-orchestrator verifier scores + Python provider streaming | v0.11.0 | done (2026-04-30) | [plans/PLAN_PHASE10.md](plans/PLAN_PHASE10.md) | [`## [0.11.0]`](CHANGELOG.md) |
+| 11 — Sigstore security hardening + http-generic provider streaming | v0.12.0 | done (2026-04-30) | [plans/PLAN_PHASE11.md](plans/PLAN_PHASE11.md) | [`## [0.12.0]`](CHANGELOG.md) |
+| 12 — MCP SSE notifications + HttpGeneric Python facade | v0.13.0 | done (2026-04-30) | [plans/PLAN_PHASE12.md](plans/PLAN_PHASE12.md) | [`## [0.13.0]`](CHANGELOG.md) |
+| 13 — Multi-replica `StateStore` + streaming verifier in Trinity | v0.14.0 | done (2026-04-30) | [plans/PLAN_PHASE13.md](plans/PLAN_PHASE13.md) | [`## [0.14.0]`](CHANGELOG.md) |
+| 14 — Streaming verifier in Conductor + tako-compat real auth providers | v0.15.0 | done (2026-04-30) | [plans/PLAN_PHASE14.md](plans/PLAN_PHASE14.md) | [`## [0.15.0]`](CHANGELOG.md) |
+| 15 — Streaming verifier in AbMcts + tako-compat auth hardening | v0.16.0 | done (2026-05-01) | [plans/PLAN_PHASE15.md](plans/PLAN_PHASE15.md) | [`## [0.16.0]`](CHANGELOG.md) |
+| 16 — Streaming-rollout backpressure + tako-compat auth hardening, continued | v0.17.0 | done (2026-05-01) | [plans/PLAN_PHASE16.md](plans/PLAN_PHASE16.md) | [`## [0.17.0]`](CHANGELOG.md) |
+| 17 — OIDC introspection completeness | v0.18.0 | done (2026-05-01) | [plans/PLAN_PHASE17.md](plans/PLAN_PHASE17.md) | [`## [0.18.0]`](CHANGELOG.md) |
+| 18 — OIDC introspection asymmetric JWT + end-session helper | v0.19.0 | done (2026-05-01) | [plans/PLAN_PHASE18.md](plans/PLAN_PHASE18.md) | [`## [0.19.0]`](CHANGELOG.md) |
+| 19 — Vision content support: Anthropic + OpenAI | v0.20.0 | done (2026-05-01) | [plans/PLAN_PHASE19.md](plans/PLAN_PHASE19.md) | [`## [0.20.0]`](CHANGELOG.md) |
+| 20 — Vision content support: Vertex + Mistral + Ollama | v0.21.0 | done (2026-05-01) | [plans/PLAN_PHASE20.md](plans/PLAN_PHASE20.md) | [`## [0.21.0]`](CHANGELOG.md) |
+| 21 — Composite AuthResolver | v0.22.0 | done (2026-05-01) | [plans/PLAN_PHASE21.md](plans/PLAN_PHASE21.md) | [`## [0.22.0]`](CHANGELOG.md) |
+| 22 — URL-source images: Anthropic + OpenAI + Mistral | v0.23.0 | done (2026-05-01) | [plans/PLAN_PHASE22.md](plans/PLAN_PHASE22.md) | [`## [0.23.0]`](CHANGELOG.md) |
+| 23 — URL-source images: Vertex (Gemini fileData) | v0.24.0 | done (2026-05-01) | [plans/PLAN_PHASE23.md](plans/PLAN_PHASE23.md) | [`## [0.24.0]`](CHANGELOG.md) |
+| 24 — OIDC introspection mTLS / `tls_client_auth` | v0.25.0 | done (2026-05-01) | [plans/PLAN_PHASE24.md](plans/PLAN_PHASE24.md) | [`## [0.25.0]`](CHANGELOG.md) |
+| 25 — OIDC `self_signed_tls_client_auth` | v0.26.0 | done (2026-05-01) | [plans/PLAN_PHASE25.md](plans/PLAN_PHASE25.md) | [`## [0.26.0]`](CHANGELOG.md) |
+| 26 — ChainedAuthResolver fail-fast on transport errors | v0.27.0 | done (2026-05-01) | [plans/PLAN_PHASE26.md](plans/PLAN_PHASE26.md) | [`## [0.27.0]`](CHANGELOG.md) |
+| 27 — ChainedAuthResolver broader infrastructure-error short-circuit | v0.28.0 | done (2026-05-01) | [plans/PLAN_PHASE27.md](plans/PLAN_PHASE27.md) | [`## [0.28.0]`](CHANGELOG.md) |
+| 28 — URL-source images: Bedrock + Ollama (opt-in tako-side pre-fetch) | v0.29.0 | done (2026-05-01) | [plans/PLAN_PHASE28.md](plans/PLAN_PHASE28.md) | [`## [0.29.0]`](CHANGELOG.md) |
+| 29 — URL pre-fetch SSRF hardening (private-IP blocklist + DNS-rebind) + Ollama Python facade | v0.30.0 | done (2026-05-01) | [plans/PLAN_PHASE29.md](plans/PLAN_PHASE29.md) | [`## [0.30.0]`](CHANGELOG.md) |
+| 30 — URL pre-fetch per-host allowlist | v0.31.0 | done (2026-05-01) | [plans/PLAN_PHASE30.md](plans/PLAN_PHASE30.md) | [`## [0.31.0]`](CHANGELOG.md) |
+| 31 — URL pre-fetch wildcard host patterns | v0.32.0 | done (2026-05-01) | [plans/PLAN_PHASE31.md](plans/PLAN_PHASE31.md) | [`## [0.32.0]`](CHANGELOG.md) |
+| 32 — URL pre-fetch CIDR allowlist | v0.33.0 | done (2026-05-02) | [plans/PLAN_PHASE32.md](plans/PLAN_PHASE32.md) | [`## [0.33.0]`](CHANGELOG.md) |
+| 33 — OIDC mTLS cert/key rotation | v0.34.0 | done (2026-05-02) | [plans/PLAN_PHASE33.md](plans/PLAN_PHASE33.md) | [`## [0.34.0]`](CHANGELOG.md) |
+| 34 — Public-release prep, tech-debt + docs sweep | v0.35.0 | done (2026-05-02) | [plans/PLAN_PHASE34.md](plans/PLAN_PHASE34.md) | [`## [0.35.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
@@ -62,7 +62,7 @@ additive — public APIs from earlier phases never break.
 ### Phase 35 candidates (indicative, not yet committed)
 
 The original Phase 34 candidate list is postponed to Phase 35+ to
-make room for the Phase 34 cleanup sweep ([PLAN_PHASE34.md](PLAN_PHASE34.md)).
+make room for the Phase 34 cleanup sweep ([plans/PLAN_PHASE34.md](plans/PLAN_PHASE34.md)).
 Carry-forward items, mostly from Phase 33:
 
 - **Trait-based `MtlsIdentityProvider`** — async trait that
@@ -273,8 +273,8 @@ where the fix would land.
 
 - [x] **Replace `TODO(<org>)` repository URLs.** Closed in Phase 34.A
   (v0.35.0). Substituted across all 11 non-self-referential files;
-  historical rationale at [PLAN_PHASE1.md:55](PLAN_PHASE1.md#L55) /
-  [PLAN_PHASE21.md:239](PLAN_PHASE21.md#L239) intentionally retained.
+  historical rationale at [plans/PLAN_PHASE1.md:55](plans/PLAN_PHASE1.md#L55) /
+  [plans/PLAN_PHASE21.md:239](plans/PLAN_PHASE21.md#L239) intentionally retained.
 - [x] **Resolve `TODO(community)` placeholders.** Closed in Phase 34.B
   (v0.35.0). README community section now points at
   Discussions; CODE_OF_CONDUCT.md and SECURITY.md route to GitHub
@@ -283,7 +283,9 @@ where the fix would land.
 ## How to work this index
 
 When opening a new phase: pick the next `Phase N` slot, create
-`PLAN_PHASE<N>.md` (mirror the structure of [PLAN_PHASE6.md](PLAN_PHASE6.md)
-or [PLAN_PHASE7.md](PLAN_PHASE7.md)), add a row to the table above, and
-move "in progress" to that row. When the phase ships, flip the status
-to "done (date)" and update the corresponding `CHANGELOG.md` anchor.
+`plans/PLAN_PHASE<N>.md` (mirror the structure of
+[plans/PLAN_PHASE6.md](plans/PLAN_PHASE6.md) or
+[plans/PLAN_PHASE7.md](plans/PLAN_PHASE7.md)), add a row to the table
+above, and move "in progress" to that row. When the phase ships, flip
+the status to "done (date)" and update the corresponding
+`CHANGELOG.md` anchor.

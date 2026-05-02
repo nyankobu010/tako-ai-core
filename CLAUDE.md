@@ -23,7 +23,7 @@ and the wheel target is `crates/tako-py` built with maturin + PyO3.
 - Public Rust APIs have rustdoc with at least one runnable example.
 
 ## Workflow rules
-- Make a `PLAN.md` before writing code for any new phase.
+- Make a `plans/PLAN_PHASE<N>.md` before writing code for any new phase, then add a row to `PLAN.md`.
 - Commit per logical unit (one crate, one feature, one fix); never bundle.
 - After modifying a Rust crate, run `cargo test -p <crate>` before moving on.
 - After modifying Python, run `pytest tests/python/<file>` before moving on.
