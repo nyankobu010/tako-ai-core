@@ -447,10 +447,47 @@ impl OidcAuthResolver {
     /// resolver to require `audience` (`aud` claim) on incoming
     /// tokens.
     pub async fn discover(issuer: &str, audience: &str) -> Result<Self, TakoError> {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|e| TakoError::Transport(format!("oidc: failed to build http client: {e}")))?;
+        Self::discover_inner(issuer, audience, None).await
+    }
+
+    /// Phase 44 — same as [`Self::discover`] but builds the
+    /// resolver-wide HTTP client with an operator-supplied
+    /// PEM-encoded root CA bundle added to its trust store.
+    ///
+    /// The `http` field handles BOTH the OIDC discovery doc
+    /// fetch (this constructor) AND the JWKS refresh path used
+    /// for live token validation, so the same trust anchor
+    /// covers both. Use this for enterprise self-hosted OIDC
+    /// issuers (Keycloak / Auth0 self-hosted / Authentik)
+    /// presenting a server cert signed by a private internal
+    /// CA — without this constructor, the discovery GET fails
+    /// TLS verification before the resolver is even returned.
+    ///
+    /// `extra_root_ca_pem` accepts a single root cert or a
+    /// concatenated multi-cert PEM bundle (the common
+    /// `cat root.pem intermediates.pem` form). At least one
+    /// cert must parse; an empty bundle errors at construction
+    /// time. PEM parse failures map to [`TakoError::Invalid`].
+    ///
+    /// Independent from
+    /// [`Self::with_introspection_mtls_extra_root`] — the
+    /// introspection mTLS client carries its own CA store.
+    /// Operators with one PKI for the whole stack pass the
+    /// same PEM bundle to both.
+    pub async fn discover_with_extra_root(
+        issuer: &str,
+        audience: &str,
+        extra_root_ca_pem: &[u8],
+    ) -> Result<Self, TakoError> {
+        Self::discover_inner(issuer, audience, Some(extra_root_ca_pem)).await
+    }
+
+    async fn discover_inner(
+        issuer: &str,
+        audience: &str,
+        extra_root_ca_pem: Option<&[u8]>,
+    ) -> Result<Self, TakoError> {
+        let http = build_resolver_http_client(extra_root_ca_pem)?;
         let url = format!(
             "{}/.well-known/openid-configuration",
             issuer.trim_end_matches('/')
@@ -1525,6 +1562,50 @@ fn build_mtls_identity(cert_pem: &[u8], key_pem: &[u8]) -> Result<reqwest::Ident
 /// cert is added to the `reqwest` root store via
 /// [`reqwest::ClientBuilder::add_root_certificate`]; the
 /// system + webpki-roots store is preserved (additive trust).
+/// Phase 44 — build the resolver-wide [`reqwest::Client`]
+/// used by [`OidcAuthResolver::discover`] for the OIDC
+/// discovery doc fetch AND by the JWKS refresh path. The
+/// same trust anchor covers both because the resolver holds
+/// a single `http` field used for non-introspection HTTP.
+///
+/// `extra_root_ca_pem` is `None` for the default (public-CA)
+/// case and `Some(pem_bundle)` when the operator runs against
+/// a private OIDC issuer behind an internal CA. The bundle
+/// is parsed via [`reqwest::Certificate::from_pem_bundle`]
+/// so a concatenated multi-cert PEM (root + intermediates)
+/// works without per-cert splitting at the call site. Each
+/// parsed cert is added via
+/// [`reqwest::ClientBuilder::add_root_certificate`]; the
+/// system + webpki-roots store is preserved (additive trust).
+///
+/// PEM parse failures map to [`TakoError::Invalid`] (operator
+/// boundary; fail-closed). Builder failures map to
+/// [`TakoError::Transport`] to match the prior contract of
+/// [`OidcAuthResolver::discover`] (network-layer concern).
+fn build_resolver_http_client(
+    extra_root_ca_pem: Option<&[u8]>,
+) -> Result<reqwest::Client, TakoError> {
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(10));
+    if let Some(ca_pem) = extra_root_ca_pem {
+        let extra_roots = reqwest::Certificate::from_pem_bundle(ca_pem).map_err(|e| {
+            TakoError::Invalid(format!(
+                "oidc: invalid resolver extra root CA PEM bundle: {e}"
+            ))
+        })?;
+        if extra_roots.is_empty() {
+            return Err(TakoError::Invalid(
+                "oidc: resolver extra root CA PEM bundle parsed zero certificates".into(),
+            ));
+        }
+        for cert in extra_roots {
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+    builder.build().map_err(|e| {
+        TakoError::Transport(format!("oidc: failed to build resolver http client: {e}"))
+    })
+}
+
 fn build_mtls_reqwest_client(
     cert_pem: &[u8],
     key_pem: &[u8],
@@ -2713,6 +2794,71 @@ h7ACptP3tF94pcBzOgJ3bhM=\n\
         );
         assert!(cfg.mtls_client.is_some());
         assert!(cfg.extra_root_ca_pem.is_some());
+    }
+
+    // -------------------------------------------------------------
+    // Phase 44 — `discover_with_extra_root` constructor.
+    // -------------------------------------------------------------
+
+    #[tokio::test]
+    async fn discover_with_extra_root_rejects_garbage_ca_pem() {
+        // Garbage CA bytes must fail at PEM parse time — before any
+        // network call. This proves the constructor is fail-closed
+        // at the operator boundary so an invalid bundle never
+        // builds an HTTP client with no trust anchors silently.
+        let err = OidcAuthResolver::discover_with_extra_root(
+            "https://issuer.example",
+            "test-audience",
+            b"not a pem",
+        )
+        .await
+        .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            matches!(err, TakoError::Invalid(_)),
+            "PEM parse must surface as Invalid, got: {msg}"
+        );
+        assert!(
+            msg.contains("resolver extra root CA PEM bundle")
+                || msg.contains("parsed zero certificates"),
+            "expected resolver-CA context, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_with_extra_root_rejects_empty_ca_bundle() {
+        // Empty bytes parse as zero certs — same fail-closed
+        // contract as Phase 42's mTLS introspection variant.
+        let err = OidcAuthResolver::discover_with_extra_root("https://issuer.example", "aud", b"")
+            .await
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(matches!(err, TakoError::Invalid(_)), "got: {msg}");
+        assert!(msg.contains("parsed zero certificates"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn discover_with_extra_root_passes_pem_validation_then_attempts_network() {
+        // A *valid* CA bundle must clear the constructor's
+        // PEM-validation phase and proceed to the actual
+        // discovery GET. Pointing at an unreachable issuer lets
+        // us prove this without a wire fixture: failure surfaces
+        // as `Transport`, not `Invalid`. (`Invalid` would mean the
+        // PEM step rejected our cert; `Transport` means we got
+        // past it.) Reuses `TEST_MTLS_CERT_PEM` as a syntactically
+        // valid PEM blob — the constructor doesn't care whether
+        // it's actually a CA, only that it parses.
+        let err = OidcAuthResolver::discover_with_extra_root(
+            "http://127.0.0.1:1", // RFC 6890 / port 1 — refused.
+            "aud",
+            TEST_MTLS_CERT_PEM,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, TakoError::Transport(_)),
+            "valid PEM should pass into the network call; got: {err:?}"
+        );
     }
 
     #[test]

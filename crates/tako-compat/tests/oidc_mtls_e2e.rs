@@ -471,6 +471,163 @@ async fn self_signed_mtls_extra_root_round_trip_succeeds() {
     assert_eq!(principal.user_id, "alice");
 }
 
+// ---------------------------------------------------------------------------
+// Phase 44 — discover() over HTTPS with private CA.
+//
+// Spawns an HTTPS axum-server (NO client-cert verification — just plain
+// TLS with the per-test CA) hosting the OIDC discovery doc + JWKS. The
+// new `discover_with_extra_root` constructor must accept the per-test
+// CA bundle and complete discovery without TLS verification failures.
+// ---------------------------------------------------------------------------
+
+async fn discovery_get_handler(
+    axum::extract::State(state): axum::extract::State<Arc<DiscoveryState>>,
+) -> impl IntoResponse {
+    (StatusCode::OK, axum::Json(state.discovery_doc.clone())).into_response()
+}
+
+async fn jwks_get_handler(
+    axum::extract::State(state): axum::extract::State<Arc<DiscoveryState>>,
+) -> impl IntoResponse {
+    (StatusCode::OK, axum::Json(state.jwks.clone())).into_response()
+}
+
+#[derive(Clone)]
+struct DiscoveryState {
+    discovery_doc: Value,
+    jwks: Value,
+}
+
+async fn spawn_https_oidc_issuer(certs: &CertSet, keys: &JwtKeys, kid: &str) -> String {
+    ensure_crypto_provider();
+
+    let server_certs: Vec<CertificateDer<'static>> =
+        CertificateDer::pem_slice_iter(certs.server_cert_pem.as_bytes())
+            .collect::<Result<_, _>>()
+            .expect("server certs parse");
+    let server_key =
+        PrivateKeyDer::from_pem_slice(certs.server_key_pem.as_bytes()).expect("server key parses");
+
+    // Plain TLS — no client cert verification (this server is just
+    // discovery + JWKS, not introspection).
+    let server_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(server_certs, server_key)
+        .expect("server config builds");
+    let rustls_config = RustlsConfig::from_config(Arc::new(server_config));
+
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    std_listener.set_nonblocking(true).unwrap();
+    let local_addr: SocketAddr = std_listener.local_addr().unwrap();
+    let issuer_url = format!("https://localhost:{}", local_addr.port());
+
+    let discovery = json!({
+        "issuer": &issuer_url,
+        "jwks_uri": format!("{issuer_url}/jwks"),
+        "introspection_endpoint_auth_methods_supported": ["client_secret_basic"],
+    });
+    let state = Arc::new(DiscoveryState {
+        discovery_doc: discovery,
+        jwks: build_jwks(keys, kid),
+    });
+
+    let app: Router = Router::new()
+        .route(
+            "/.well-known/openid-configuration",
+            axum::routing::get(discovery_get_handler),
+        )
+        .route("/jwks", axum::routing::get(jwks_get_handler))
+        .with_state(state);
+
+    let server =
+        axum_server::from_tcp_rustls(std_listener, rustls_config).expect("from_tcp_rustls");
+    tokio::spawn(async move {
+        server
+            .serve(app.into_make_service())
+            .await
+            .expect("axum-server runs");
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    issuer_url
+}
+
+#[tokio::test]
+async fn discover_over_https_with_private_ca_succeeds() {
+    // Phase 44 — the resolver-wide HTTP client must trust the
+    // per-test private CA so that BOTH the discovery GET (during
+    // construction) AND the JWKS GET (during `resolve`) succeed
+    // against the HTTPS issuer.
+    let certs = build_certs();
+    let jwt_keys = build_jwt_keys();
+    let kid = "test-key";
+
+    let issuer_url = spawn_https_oidc_issuer(&certs, &jwt_keys, kid).await;
+
+    let resolver = OidcAuthResolver::discover_with_extra_root(
+        &issuer_url,
+        "test-audience",
+        certs.ca_pem.as_bytes(),
+    )
+    .await
+    .expect("discover_with_extra_root over HTTPS-with-private-CA");
+
+    // Sign + resolve a token: this exercises the JWKS GET on the
+    // same private-CA server, proving the trust anchor flows
+    // through to the JWKS path too (single shared `http` client).
+    let token = sign_test_jwt(&jwt_keys, kid, &issuer_url, "test-audience", "alice");
+    let principal = resolver
+        .resolve(&token)
+        .await
+        .expect("resolve over JWKS-on-private-CA-issuer");
+    assert_eq!(principal.user_id, "alice");
+}
+
+#[tokio::test]
+async fn discover_over_https_without_extra_root_fails() {
+    // Same HTTPS-with-private-CA issuer, but using the default
+    // `discover()` constructor — the resolver-wide client trusts
+    // only the system + webpki-roots store, so the discovery GET
+    // must fail at TLS verification time.
+    let certs = build_certs();
+    let jwt_keys = build_jwt_keys();
+    let kid = "test-key";
+
+    let issuer_url = spawn_https_oidc_issuer(&certs, &jwt_keys, kid).await;
+
+    let err = OidcAuthResolver::discover(&issuer_url, "test-audience")
+        .await
+        .expect_err("discovery should fail: server cert is not trusted by default");
+    assert!(
+        matches!(err, TakoError::Transport(_)),
+        "expected Transport (TLS handshake), got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn discover_with_extra_root_unparseable_pem_errors_at_constructor_time() {
+    // Phase 44 fail-closed contract — garbage CA bytes must
+    // surface as `Invalid` at construction time, before any
+    // network call. (No issuer URL needed; we never reach the
+    // GET.) Mirrors the
+    // `extra_root_unparseable_pem_errors_at_builder_time` test
+    // for the introspection mTLS path.
+    let err = OidcAuthResolver::discover_with_extra_root(
+        "https://issuer.example",
+        "test-audience",
+        b"definitely not a pem certificate",
+    )
+    .await
+    .expect_err("garbage CA PEM should fail synchronously");
+    let msg = format!("{err:?}");
+    assert!(
+        matches!(err, TakoError::Invalid(_))
+            && (msg.contains("resolver extra root CA PEM bundle")
+                || msg.contains("parsed zero certificates")),
+        "unexpected error: {msg}"
+    );
+}
+
 #[tokio::test]
 async fn extra_root_unparseable_pem_errors_at_builder_time() {
     // No mTLS server needed — this asserts the builder fails-closed
