@@ -167,12 +167,21 @@ ChainedAuth = getattr(_native, "ChainedAuth", None)
 # Only present when the wheel was built with the
 # ``auth-mtls-fs-watch`` feature.
 MtlsFsWatcher = getattr(_native, "MtlsFsWatcher", None)
+# Phase 38 — Python facade for the Phase 37 trait-based mTLS
+# identity provider. Operator wraps an
+# ``async def fetch() -> tuple[bytes, bytes] | dict``. Only
+# present when the wheel was built with the
+# ``auth-mtls-identity-provider`` feature.
+MtlsIdentityProvider = getattr(_native, "MtlsIdentityProvider", None)
+MtlsProviderWatcher = getattr(_native, "MtlsProviderWatcher", None)
 
 
 __all__ = [
     "ChainedAuth",
     "JwtAuth",
     "MtlsFsWatcher",
+    "MtlsIdentityProvider",
+    "MtlsProviderWatcher",
     "OidcAuth",
     "VaultAuth",
     "serve_openai",
