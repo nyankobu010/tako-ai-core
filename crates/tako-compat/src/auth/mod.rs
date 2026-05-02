@@ -39,6 +39,11 @@ mod oidc_mtls_watcher;
 #[cfg(feature = "mtls-fs-watch")]
 pub use oidc_mtls_watcher::MtlsFsWatcher;
 
+#[cfg(feature = "mtls-identity-provider")]
+mod oidc_mtls_provider;
+#[cfg(feature = "mtls-identity-provider")]
+pub use oidc_mtls_provider::{MtlsIdentity, MtlsIdentityProvider, MtlsProviderWatcher};
+
 #[cfg(feature = "vault")]
 mod vault;
 #[cfg(feature = "vault")]

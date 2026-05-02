@@ -55,28 +55,29 @@ synopsis and quickstart.
 | 34 — Public-release prep, tech-debt + docs sweep | v0.35.0 | done (2026-05-02) | [plans/PLAN_PHASE34.md](plans/PLAN_PHASE34.md) | [`## [0.35.0]`](CHANGELOG.md) |
 | 35 — OIDC mTLS filesystem-watcher auto-reload | v0.36.0 | done (2026-05-02) | [plans/PLAN_PHASE35.md](plans/PLAN_PHASE35.md) | [`## [0.36.0]`](CHANGELOG.md) |
 | 36 — Per-child ChainedAuthResolver short-circuit policy | v0.37.0 | done (2026-05-02) | [plans/PLAN_PHASE36.md](plans/PLAN_PHASE36.md) | [`## [0.37.0]`](CHANGELOG.md) |
+| 37 — Trait-based MtlsIdentityProvider | v0.38.0 | done (2026-05-02) | [plans/PLAN_PHASE37.md](plans/PLAN_PHASE37.md) | [`## [0.38.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 37 candidates (indicative, not yet committed)
+### Phase 38 candidates (indicative, not yet committed)
 
-Carry-forward items. The two remaining Phase 33 mTLS-rotation
-strategies (1) and (2) still stand; (3) shipped in Phase 35.
+Carry-forward items. After Phase 37 the only Phase 33 mTLS
+carry-forward left is (2) auto-refresh-on-handshake-failure;
+all other backlog items are unchanged.
 
-- **Trait-based `MtlsIdentityProvider`** — async trait that
-  yields fresh cert+key bytes on demand; tako would call it
-  proactively at e.g. 90% of cert validity. Needs cert-parsing
-  on the tako side (`x509-parser` dep or hand-rolled DER walk).
-  Phase 33 carry-forward.
 - **Automatic refresh-on-handshake-failure** — catch TLS
   handshake errors at request time and trigger reload. Needs
-  retry logic + cycle-detection. Phase 33 carry-forward. Now
-  that Phase 35 ships filesystem-watcher integration, this
-  becomes a thin layer on top of either that or the trait
-  provider.
+  retry logic + cycle-detection. Phase 33 carry-forward. Sits
+  on top of either the Phase 35 filesystem watcher or the
+  Phase 37 trait-based provider.
+- **Python facade for `MtlsIdentityProvider`** — Phase 37
+  shipped Rust-only; the async-trait-from-Python ergonomics
+  need design (PyO3 subclass + GIL discipline). Operators
+  using the Python wheel currently fall back to the Phase 35
+  filesystem watcher.
 - **Wildcard at non-leftmost positions** — patterns like
   `registry.*.corp` (wildcard in middle). Phase 31 ships only
   the leftmost-`*.` convention. Probably never worth shipping

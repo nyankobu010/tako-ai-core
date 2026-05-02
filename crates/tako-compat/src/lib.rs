@@ -35,4 +35,6 @@ pub use auth::{
 pub use auth::{AuthResolver, ChainedAuthResolver, ChildShortCircuitPolicy, StaticTokens};
 #[cfg(feature = "oidc")]
 pub use auth::{IntrospectionAuthMethod, IntrospectionConfig, MtlsClient, OidcAuthResolver};
+#[cfg(feature = "mtls-identity-provider")]
+pub use auth::{MtlsIdentity, MtlsIdentityProvider, MtlsProviderWatcher};
 pub use server::{ServeConfig, serve_openai};
