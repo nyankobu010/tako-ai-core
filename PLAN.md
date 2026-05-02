@@ -52,18 +52,18 @@ synopsis and quickstart.
 | 31 — URL pre-fetch wildcard host patterns | v0.32.0 | done (2026-05-01) | [PLAN_PHASE31.md](PLAN_PHASE31.md) | [`## [0.32.0]`](CHANGELOG.md) |
 | 32 — URL pre-fetch CIDR allowlist | v0.33.0 | done (2026-05-02) | [PLAN_PHASE32.md](PLAN_PHASE32.md) | [`## [0.33.0]`](CHANGELOG.md) |
 | 33 — OIDC mTLS cert/key rotation | v0.34.0 | done (2026-05-02) | [PLAN_PHASE33.md](PLAN_PHASE33.md) | [`## [0.34.0]`](CHANGELOG.md) |
+| 34 — Public-release prep, tech-debt + docs sweep | v0.35.0 | done (2026-05-02) | [PLAN_PHASE34.md](PLAN_PHASE34.md) | [`## [0.35.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
 
 ## Roadmap
 
-### Phase 34 candidates (indicative, not yet committed)
+### Phase 35 candidates (indicative, not yet committed)
 
-Carry-forward from Phase 33's holding pen — OIDC mTLS cert/key
-rotation landed in Phase 33 via the explicit-reload primitive
-(`reload_mtls_identity`). Operators now refresh client certs
-without process restart. The remainder of the wider backlog:
+The original Phase 34 candidate list is postponed to Phase 35+ to
+make room for the Phase 34 cleanup sweep ([PLAN_PHASE34.md](PLAN_PHASE34.md)).
+Carry-forward items, mostly from Phase 33:
 
 - **Trait-based `MtlsIdentityProvider`** — async trait that
   yields fresh cert+key bytes on demand; tako would call it
@@ -271,16 +271,14 @@ where the fix would land.
 
 #### First-publish placeholders
 
-- [ ] **Replace `TODO(<org>)` repository URLs** at first public-org
-  publish (intentional single-point-of-edit per `PLAN_PHASE1.md` line 2).
-  [Cargo.toml:26](Cargo.toml#L26), [README.md](README.md),
-  [CONTRIBUTING.md](CONTRIBUTING.md),
-  [CHANGELOG.md:999-1008](CHANGELOG.md#L999-L1008),
-  [crates/tako-core/src/lib.rs:8-9](crates/tako-core/src/lib.rs#L8-L9).
-- [ ] **Resolve `TODO(community)` placeholders** — Discussions
-  categories, Discord/Matrix room ([README.md:135-136](README.md#L135-L136)),
-  conduct@ contact (CODE_OF_CONDUCT.md), security@ contact
-  (SECURITY.md).
+- [x] **Replace `TODO(<org>)` repository URLs.** Closed in Phase 34.A
+  (v0.35.0). Substituted across all 11 non-self-referential files;
+  historical rationale at [PLAN_PHASE1.md:55](PLAN_PHASE1.md#L55) /
+  [PLAN_PHASE21.md:239](PLAN_PHASE21.md#L239) intentionally retained.
+- [x] **Resolve `TODO(community)` placeholders.** Closed in Phase 34.B
+  (v0.35.0). README community section now points at
+  Discussions; CODE_OF_CONDUCT.md and SECURITY.md route to GitHub
+  Private Vulnerability Reporting.
 
 ## How to work this index
 

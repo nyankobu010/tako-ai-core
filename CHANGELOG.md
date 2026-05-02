@@ -9,6 +9,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.35.0] - 2026-05-02
+
+Phase 34 — Public-release prep, tech-debt + docs sweep. Closes the
+long-deferred [`PLAN_CLEANUP.md`](PLAN_CLEANUP.md) backlog (placeholder
+substitution, OSS hygiene files) and brings the mkdocs site current
+with every feature shipped through Phase 33. Original Phase 34
+candidates (trait-based `MtlsIdentityProvider`, automatic
+refresh-on-handshake-failure, filesystem-watcher integration) are
+postponed to Phase 35+ — see
+[PLAN.md → Phase 35 candidates](PLAN.md). No code changes other than
+the rustdoc URL fix in `tako-core/src/lib.rs` and the version bump.
+Plan: [PLAN_PHASE34.md](PLAN_PHASE34.md).
+
+### Changed
+
+- **Phase 34.A — `TODO(<org>)` substitution.** Substituted literal
+  `TODO(<org>)` → `nyankobu010` across 11 non-self-referential files
+  ([Cargo.toml](Cargo.toml#L26), [pyproject.toml](pyproject.toml),
+  [mkdocs.yml](mkdocs.yml), [README.md](README.md),
+  [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md)
+  compare-link footer, [crates/tako-core/src/lib.rs](crates/tako-core/src/lib.rs)
+  rustdoc, [docs/concepts/policy.md](docs/concepts/policy.md)).
+  Self-referential historical sites at
+  [PLAN_PHASE1.md:55](PLAN_PHASE1.md#L55) and
+  [PLAN_PHASE21.md:239](PLAN_PHASE21.md#L239) intentionally retained as
+  the source of the placeholder strategy.
+- **Phase 34.B — `TODO(community)` substitution.**
+  [README.md](README.md) community section now points at
+  [GitHub Discussions](https://github.com/nyankobu010/tako-ai-core/discussions)
+  and [`SECURITY.md`](SECURITY.md). [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+  routes to the maintainer's GitHub noreply address + Private
+  Vulnerability Reporting. [`SECURITY.md`](SECURITY.md) drops the
+  email line and routes to PVR.
+- **Phase 34.D — Documentation refresh.** Brought
+  [`docs/index.md`](docs/index.md) (was pinned to v0.3.0 / Phase 2.5),
+  [`docs/architecture.md`](docs/architecture.md) (was "describes Phase
+  1"), [`docs/quickstart.md`](docs/quickstart.md), and concept pages
+  (`providers`, `orchestrators`, `budgets`, `mcp`, `secrets`) to
+  v0.35.0 / Phase 34 parity. Removed forward-tense markers
+  ("Phase 4 will add…") for capabilities that have shipped.
+- **Phase 34.F — Mkdocs nav update.** [`mkdocs.yml`](mkdocs.yml) nav
+  now lists all the new concept and recipe pages.
+- **Phase 34.H — CHANGELOG anchors.** Compare-link footer extended
+  from v0.14.0 (stale) through v0.34.0, and the org swapped from
+  `TODO(<org>)` to `nyankobu010`.
+- **Phase 34.I — Version bump.** Workspace + Python facade both at
+  v0.35.0.
+
+### Added
+
+- **Phase 34.C — OSS hygiene files.**
+  [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md),
+  [`.github/CODEOWNERS`](.github/CODEOWNERS),
+  [`.github/workflows/dco.yml`](.github/workflows/dco.yml) (enforces the
+  DCO sign-off mandate at [CONTRIBUTING.md:41](CONTRIBUTING.md#L41) —
+  was previously honour-system only),
+  [`SUPPORT.md`](SUPPORT.md), [`CITATION.cff`](CITATION.cff).
+- **Phase 34.E — New documentation pages.** Five new concept pages
+  ([vision](docs/concepts/vision.md),
+  [url_prefetch](docs/concepts/url_prefetch.md),
+  [streaming](docs/concepts/streaming.md),
+  [compat](docs/concepts/compat.md),
+  [sigstore](docs/concepts/sigstore.md))
+  and eight new recipes ([mistral](docs/recipes/mistral.md),
+  [ollama](docs/recipes/ollama.md),
+  [vision](docs/recipes/vision.md),
+  [url_prefetch](docs/recipes/url_prefetch.md),
+  [oidc_introspection](docs/recipes/oidc_introspection.md),
+  [chained_auth](docs/recipes/chained_auth.md),
+  [mtls_rotation](docs/recipes/mtls_rotation.md),
+  [sigstore_keyless](docs/recipes/sigstore_keyless.md)).
+- **Phase 34.G — Sanity script.**
+  [`scripts/check_public_release.sh`](scripts/check_public_release.sh)
+  — eight-check public-release gate (placeholder sweep, secrets scan,
+  version consistency, mkdocs strict build, cargo fmt/clippy/test,
+  ruff/pytest).
+
 ## [0.34.0] - 2026-05-02
 
 Phase 33 — OIDC mTLS cert/key rotation. Closes the
@@ -4057,18 +4134,39 @@ Initial Phase 1 foundation release.
 
 - `cargo audit` and `pip-audit` integrated into CI.
 
-[Unreleased]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.14.0...HEAD
-[0.14.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.13.0...v0.14.0
-[0.13.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.12.0...v0.13.0
-[0.12.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.11.0...v0.12.0
-[0.11.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/TODO(<org>)/tako-ai-core/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/TODO(<org>)/tako-ai-core/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nyankobu010/tako-ai-core/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.34.0...v0.35.0
+[0.34.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.33.0...v0.34.0
+[0.33.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.32.0...v0.33.0
+[0.32.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.31.0...v0.32.0
+[0.31.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.28.0...v0.29.0
+[0.28.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/nyankobu010/tako-ai-core/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nyankobu010/tako-ai-core/releases/tag/v0.1.0

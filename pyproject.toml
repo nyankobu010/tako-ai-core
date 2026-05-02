@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "tako"
-version = "0.34.0"
+version = "0.35.0"
 description = "Rust-core, Python-facade framework for enterprise agentic systems."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -36,10 +36,10 @@ dev     = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.10", "hypo
 docs    = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.25"]
 
 [project.urls]
-Homepage      = "https://github.com/TODO(<org>)/tako-ai-core"
-Documentation = "https://TODO(<org>).github.io/tako-ai-core"
-Repository    = "https://github.com/TODO(<org>)/tako-ai-core"
-Issues        = "https://github.com/TODO(<org>)/tako-ai-core/issues"
+Homepage      = "https://github.com/nyankobu010/tako-ai-core"
+Documentation = "https://nyankobu010.github.io/tako-ai-core"
+Repository    = "https://github.com/nyankobu010/tako-ai-core"
+Issues        = "https://github.com/nyankobu010/tako-ai-core/issues"
 
 [tool.maturin]
 manifest-path  = "crates/tako-py/Cargo.toml"
