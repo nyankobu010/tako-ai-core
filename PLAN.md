@@ -64,7 +64,8 @@ synopsis and quickstart.
 | 43 — Python facade for `_extra_root` mTLS introspection builders | v0.44.0 | done (2026-05-02) | [plans/PLAN_PHASE43.md](plans/PLAN_PHASE43.md) | [`## [0.44.0]`](CHANGELOG.md) |
 | 44 — Operator-supplied root CA for OIDC discovery + JWKS | v0.45.0 | done (2026-05-02) | [plans/PLAN_PHASE44.md](plans/PLAN_PHASE44.md) | [`## [0.45.0]`](CHANGELOG.md) |
 | 45 — Python facade for `discover_with_extra_root` | v0.46.0 | done (2026-05-02) | [plans/PLAN_PHASE45.md](plans/PLAN_PHASE45.md) | [`## [0.46.0]`](CHANGELOG.md) |
-| 46 — Phase-1 placeholder sweep | v0.47.0 | in progress | [plans/PLAN_PHASE46.md](plans/PLAN_PHASE46.md) | [`## [0.47.0]`](CHANGELOG.md) |
+| 46 — Phase-1 placeholder sweep | v0.47.0 | done (2026-05-02) | [plans/PLAN_PHASE46.md](plans/PLAN_PHASE46.md) | [`## [0.47.0]`](CHANGELOG.md) |
+| 47 — OTel real-collector e2e test | v0.48.0 | in progress | [plans/PLAN_PHASE47.md](plans/PLAN_PHASE47.md) | [`## [0.48.0]`](CHANGELOG.md) |
 
 Trait surface in `tako-core` is designed so each phase is purely
 additive — public APIs from earlier phases never break.
@@ -268,9 +269,15 @@ where the fix would land.
   repo tests) deferred to "a later phase".
   [python/tako/eval/harness.py:9-10](python/tako/eval/harness.py#L9-L10),
   [python/tako/eval/datasets/external.py:8-11](python/tako/eval/datasets/external.py#L8-L11).
-- [ ] **OTel end-to-end test against a real gRPC collector.** Full e2e
-  test deferred from Phase 1.5 acceptance criteria.
-  [tests/python/test_otlp.py:13-16](tests/python/test_otlp.py#L13-L16).
+- [x] **OTel end-to-end test against a real gRPC collector.** Closed in
+  Phase 47 (v0.48.0). New `crates/tako-governance/tests/otlp_collector_e2e.rs`
+  spawns a `tonic` mock implementing `TraceService::Export`, calls
+  `init_otlp_tracing`, emits a marker span, and asserts the span name +
+  resource (`service.name=tako`) + custom span attribute (`marker`)
+  arrived on the wire. Self-contained (no `otelcol-contrib` binary, no
+  Docker). The Python `test_otlp.py` continues to exercise the
+  lifecycle / facade contract; span content is now asserted on the
+  Rust side where the wire path runs.
 - [x] **Vertex deterministic-per-call placeholder logic.** Closed in
   Phase 46.C (v0.47.0). Replaced position-derived `vertex_call_<n>`
   IDs with stable `SipHash13((name, args))` digests in
