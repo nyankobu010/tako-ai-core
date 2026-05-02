@@ -85,8 +85,14 @@ implement `fetch()` to return fresh PEM bytes from wherever
 the cert lives — HSM, in-memory secret store, SPIFFE Workload
 API, AWS IAM Roles Anywhere, etc.
 
-This is currently a **Rust-only** API; Python facade is
-deferred to Phase 38+.
+### Rust API
+
+Build the crate with the `mtls-identity-provider` feature:
+
+```toml
+[dependencies]
+tako-compat = { version = "0.39", features = ["mtls-identity-provider"] }
+```
 
 ```rust
 use std::sync::Arc;
@@ -115,12 +121,45 @@ let provider: Arc<dyn MtlsIdentityProvider> = Arc::new(SpiffeWorkloadProvider::n
 let _watcher = oidc.clone().watch_mtls_provider(provider)?;
 ```
 
-Build the crate with the `mtls-identity-provider` feature:
+### Python API (Phase 38)
 
-```toml
-[dependencies]
-tako-compat = { version = "0.38", features = ["mtls-identity-provider"] }
+Build the wheel with `auth-mtls-identity-provider`:
+
+```bash
+maturin develop --features auth-mtls-identity-provider
 ```
+
+```python
+import tako.compat
+
+async def fetch():
+    # Call out to your HSM / SPIFFE Workload API / Vault PKI / etc.
+    # Return (cert_pem_bytes, key_pem_bytes) — or
+    # {"cert_pem": ..., "key_pem": ...}.
+    cert, key = await my_hsm.issue_cert()
+    return cert, key
+
+oidc = (
+    await tako.compat.OidcAuth.discover(
+        issuer="https://issuer.example.com",
+        audience="my-api",
+    )
+).with_introspection(
+    client_id="my-api", client_secret=None,
+).with_introspection_self_signed_mtls(
+    initial_cert_pem, initial_key_pem,
+)
+
+provider = tako.compat.MtlsIdentityProvider(fetch)
+
+# Hold `_watcher` for the lifetime of the resolver. Drop /
+# shutdown stops the background refresh task cleanly. The
+# handle is a context manager:
+#     with oidc.watch_mtls_provider(provider) as w: ...
+_watcher = oidc.watch_mtls_provider(provider)
+```
+
+The Python callable runs on tako's shared tokio runtime (same as `PythonProvider`); blocking I/O inside the coroutine should be wrapped in `asyncio.to_thread(...)`.
 
 Behaviour:
 

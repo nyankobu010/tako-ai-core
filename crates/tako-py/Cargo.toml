@@ -66,3 +66,8 @@ auth-vault        = ["tako-compat/vault"]
 # `auth-oidc` (the watcher only makes sense if mTLS introspection
 # is wired up).
 auth-mtls-fs-watch = ["auth-oidc", "tako-compat/mtls-fs-watch"]
+# Phase 38 — wheel-side feature gate for the trait-based mTLS
+# identity provider (Phase 37 Rust API). Adds the
+# `x509-parser` dep for cert NotAfter parsing. Implies
+# `auth-oidc` (only useful with mTLS introspection wired up).
+auth-mtls-identity-provider = ["auth-oidc", "tako-compat/mtls-identity-provider"]

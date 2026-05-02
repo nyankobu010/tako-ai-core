@@ -577,6 +577,35 @@ impl PyOidcAuth {
         })
     }
 
+    /// Phase 38 — register a Python `MtlsIdentityProvider` that
+    /// fetches a fresh cert+key pair on demand. Tako parses the
+    /// cert's `NotAfter` and proactively re-calls the provider
+    /// at 80% of the validity window (clamped to `[60s, 24h]`).
+    ///
+    /// Returns a `MtlsProviderWatcher` whose `Drop` impl /
+    /// `shutdown()` / context-manager `__exit__` stops the
+    /// background task cleanly. Hold the handle for the lifetime
+    /// of the resolver (typically a module-scope variable).
+    ///
+    /// Raises `ValueError` when no prior `with_introspection_mtls`
+    /// or `with_introspection_self_signed_mtls` call has been
+    /// made.
+    #[cfg(feature = "auth-mtls-identity-provider")]
+    fn watch_mtls_provider(
+        &self,
+        provider: PyRef<'_, PyMtlsIdentityProvider>,
+    ) -> PyResult<PyMtlsProviderWatcher> {
+        let trait_obj: Arc<dyn tako_compat::MtlsIdentityProvider> = provider.inner.clone();
+        let watcher = self
+            .inner
+            .clone()
+            .watch_mtls_provider(trait_obj)
+            .map_err(map_err)?;
+        Ok(PyMtlsProviderWatcher {
+            inner: Some(watcher),
+        })
+    }
+
     /// Phase 18.B — return the OIDC Session Management 1.0
     /// `end_session_endpoint` URL the issuer advertised at discovery
     /// time. `None` when the issuer doesn't implement OIDC Session
@@ -907,6 +936,205 @@ impl PyMtlsFsWatcher {
     fn __repr__(&self) -> String {
         format!(
             "MtlsFsWatcher(running={})",
+            if self.inner.is_some() {
+                "True"
+            } else {
+                "False"
+            }
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 38 — Python facade for `MtlsIdentityProvider` (Phase 37).
+//
+// Operator passes an `async def fetch() -> tuple[bytes, bytes]` (or a dict
+// shape) to `MtlsIdentityProvider(...)`. The Rust impl bridges the call via
+// `pyo3_async_runtimes::tokio::into_future` — same pattern as the
+// `PyPythonProvider` for the LlmProvider trait. Returned `(cert, key)` PEM
+// bytes go through `OidcAuthResolver::reload_mtls_identity` exactly like
+// the Phase 35 filesystem watcher and Phase 37 Rust trait callers.
+//
+// Returned `MtlsProviderWatcher` mirrors the Phase 35 `MtlsFsWatcher`
+// shape — `shutdown()` + `__enter__` / `__exit__` context manager
+// semantics. Drop / shutdown stops the background tokio task cleanly.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "auth-mtls-identity-provider")]
+#[derive(Debug)]
+struct PyMtlsImpl {
+    fetch_callable: Py<PyAny>,
+}
+
+#[cfg(feature = "auth-mtls-identity-provider")]
+#[async_trait::async_trait]
+impl tako_compat::MtlsIdentityProvider for PyMtlsImpl {
+    async fn fetch(&self) -> Result<tako_compat::MtlsIdentity, tako_core::TakoError> {
+        // Step 1: under the GIL, call the Python coroutine and
+        // convert it to a Rust future. The future itself doesn't
+        // hold the GIL — `into_future` releases it before yielding
+        // control back to tokio.
+        let coro_future = Python::attach(|py| -> PyResult<_> {
+            let result = self.fetch_callable.call0(py)?;
+            let coro = result.into_bound(py);
+            pyo3_async_runtimes::tokio::into_future(coro)
+        })
+        .map_err(|e| {
+            tako_core::TakoError::Invalid(format!(
+                "MtlsIdentityProvider: Python fetch dispatch failed: {e}"
+            ))
+        })?;
+
+        // Step 2: await the Python coroutine outside `Python::attach`
+        // so the runtime can drive other tasks while we wait.
+        let py_result = coro_future.await.map_err(|e| {
+            tako_core::TakoError::Invalid(format!("MtlsIdentityProvider: Python fetch raised: {e}"))
+        })?;
+
+        // Step 3: extract `(cert_pem, key_pem)` from a tuple OR
+        // `{"cert_pem": ..., "key_pem": ...}` from a dict. Both
+        // shapes accepted; everything else errors out with a
+        // diagnostic.
+        Python::attach(|py| -> PyResult<tako_compat::MtlsIdentity> {
+            let bound = py_result.into_bound(py);
+
+            // Tuple form: (cert_bytes, key_bytes)
+            if let Ok(tuple) = bound.cast::<pyo3::types::PyTuple>() {
+                if tuple.len() == 2 {
+                    let cert_pem: Vec<u8> = tuple.get_item(0)?.extract()?;
+                    let key_pem: Vec<u8> = tuple.get_item(1)?.extract()?;
+                    return Ok(tako_compat::MtlsIdentity { cert_pem, key_pem });
+                }
+            }
+
+            // Dict form: {"cert_pem": bytes, "key_pem": bytes}
+            if let Ok(dict) = bound.cast::<pyo3::types::PyDict>() {
+                let cert_item = dict
+                    .get_item("cert_pem")?
+                    .ok_or_else(|| PyValueError::new_err("dict missing 'cert_pem'"))?;
+                let key_item = dict
+                    .get_item("key_pem")?
+                    .ok_or_else(|| PyValueError::new_err("dict missing 'key_pem'"))?;
+                let cert_pem: Vec<u8> = cert_item.extract()?;
+                let key_pem: Vec<u8> = key_item.extract()?;
+                return Ok(tako_compat::MtlsIdentity { cert_pem, key_pem });
+            }
+
+            Err(PyValueError::new_err(
+                "MtlsIdentityProvider fetch() must return a (cert_bytes, key_bytes) tuple \
+                 or {'cert_pem': bytes, 'key_pem': bytes} dict",
+            ))
+        })
+        .map_err(|e| {
+            tako_core::TakoError::Invalid(format!(
+                "MtlsIdentityProvider: bad Python return value: {e}"
+            ))
+        })
+    }
+}
+
+/// Phase 38 — Python facade for the Phase 37
+/// `MtlsIdentityProvider` Rust trait. Wraps an
+/// `async def fetch() -> tuple[bytes, bytes] | dict`.
+#[cfg(feature = "auth-mtls-identity-provider")]
+#[pyclass(
+    name = "MtlsIdentityProvider",
+    module = "tako._native",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyMtlsIdentityProvider {
+    inner: Arc<PyMtlsImpl>,
+}
+
+#[cfg(feature = "auth-mtls-identity-provider")]
+impl std::fmt::Debug for PyMtlsIdentityProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MtlsIdentityProvider")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "auth-mtls-identity-provider")]
+#[pymethods]
+impl PyMtlsIdentityProvider {
+    /// Build an mTLS identity provider from a Python async
+    /// callable. The callable is invoked with no arguments
+    /// (`fetch()`) and must return either:
+    ///
+    /// - a `(cert_pem, key_pem)` tuple of `bytes`, or
+    /// - a `{"cert_pem": bytes, "key_pem": bytes}` dict.
+    ///
+    /// Both forms are accepted to match operator preference. Any
+    /// other return shape (or a non-coroutine return) raises
+    /// `ValueError` at refresh time.
+    ///
+    /// The callable runs on tako's shared tokio runtime (same as
+    /// `PythonProvider`); blocking I/O inside the coroutine should
+    /// be wrapped in `asyncio.to_thread(...)`.
+    #[new]
+    fn new(fetch: Py<PyAny>) -> Self {
+        Self {
+            inner: Arc::new(PyMtlsImpl {
+                fetch_callable: fetch,
+            }),
+        }
+    }
+}
+
+/// Phase 38 — Python facade for the Phase 37
+/// `MtlsProviderWatcher` handle. Returned by
+/// `OidcAuth.watch_mtls_provider(provider)`. Drop / shutdown
+/// stops the background refresh task cleanly.
+#[cfg(feature = "auth-mtls-identity-provider")]
+#[pyclass(name = "MtlsProviderWatcher", module = "tako._native")]
+pub struct PyMtlsProviderWatcher {
+    inner: Option<tako_compat::MtlsProviderWatcher>,
+}
+
+#[cfg(feature = "auth-mtls-identity-provider")]
+impl std::fmt::Debug for PyMtlsProviderWatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MtlsProviderWatcher")
+            .field("running", &self.inner.is_some())
+            .finish()
+    }
+}
+
+#[cfg(feature = "auth-mtls-identity-provider")]
+#[pymethods]
+impl PyMtlsProviderWatcher {
+    /// Stop the watcher and await teardown of the background
+    /// task. Idempotent.
+    fn shutdown(&mut self, py: Python<'_>) -> PyResult<()> {
+        if let Some(w) = self.inner.take() {
+            py.detach(|| {
+                pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+                    w.shutdown().await;
+                });
+            });
+        }
+        Ok(())
+    }
+
+    fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        py: Python<'_>,
+        _exc_type: Py<PyAny>,
+        _exc: Py<PyAny>,
+        _tb: Py<PyAny>,
+    ) -> PyResult<bool> {
+        self.shutdown(py)?;
+        Ok(false)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MtlsProviderWatcher(running={})",
             if self.inner.is_some() {
                 "True"
             } else {
