@@ -113,6 +113,27 @@ fn extract_orchestrator(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<Arc<dyn Orc
     ))
 }
 
+/// Phase 36 — parse the per-child short-circuit policy alias
+/// passed from Python into the strongly-typed
+/// [`tako_compat::ChildShortCircuitPolicy`]. Case-insensitive;
+/// accepts both `snake_case` and `kebab-case` for symmetry with
+/// the Phase 24 / 25 mTLS auth-method aliases.
+fn parse_child_short_circuit_policy(s: &str) -> PyResult<tako_compat::ChildShortCircuitPolicy> {
+    use tako_compat::ChildShortCircuitPolicy as P;
+    let normalised = s.trim().to_ascii_lowercase().replace('-', "_");
+    match normalised.as_str() {
+        "inherit" => Ok(P::Inherit),
+        "always_fall_through" => Ok(P::AlwaysFallThrough),
+        "transport_only" => Ok(P::TransportOnly),
+        "all_infrastructure" => Ok(P::AllInfrastructure),
+        other => Err(PyValueError::new_err(format!(
+            "unknown ChainedAuth child policy {other:?}; expected one of \
+             \"inherit\" / \"always_fall_through\" / \"transport_only\" / \"all_infrastructure\" \
+             (kebab-case variants accepted)"
+        ))),
+    }
+}
+
 /// Phase 14.B / 21.B — downcast `auth` to one of the supported
 /// resolver pyclasses. JWT / OIDC / Vault are gated on their
 /// `auth-*` cargo features so default wheels still build without
@@ -712,6 +733,43 @@ impl PyChainedAuth {
         let child = extract_auth_resolver(py, &child)?;
         let cloned: tako_compat::ChainedAuthResolver = (*self.inner).clone();
         let next = cloned.then(child);
+        Ok(Self {
+            inner: Arc::new(next),
+        })
+    }
+
+    /// Phase 36 — append a child WITH a per-child
+    /// short-circuit-policy override. The chain-wide policy
+    /// (set by `with_short_circuit_on_transport_error` /
+    /// `with_short_circuit_on_infrastructure_errors`) still
+    /// applies to every child whose own override is `"inherit"`
+    /// (the [`Self::then`] default).
+    ///
+    /// `policy` accepts the case-insensitive aliases:
+    ///
+    /// - `"inherit"` (same as `then(child)`)
+    /// - `"always_fall_through"` / `"always-fall-through"` —
+    ///   override: every error from this child falls through.
+    ///   Useful for graceful-tail fallbacks (in-process static
+    ///   tokens that must keep serving).
+    /// - `"transport_only"` / `"transport-only"` — override:
+    ///   short-circuit only on `Transport` from this child.
+    ///   Narrower than chain-wide infra.
+    /// - `"all_infrastructure"` / `"all-infrastructure"` —
+    ///   override: short-circuit on the four infrastructure
+    ///   variants. Broader than chain-wide transport-only.
+    ///
+    /// Raises `ValueError` on an unrecognised policy string.
+    fn then_with_short_circuit(
+        &self,
+        py: Python<'_>,
+        child: Py<PyAny>,
+        policy: &str,
+    ) -> PyResult<Self> {
+        let child = extract_auth_resolver(py, &child)?;
+        let parsed = parse_child_short_circuit_policy(policy)?;
+        let cloned: tako_compat::ChainedAuthResolver = (*self.inner).clone();
+        let next = cloned.then_with_short_circuit(child, parsed);
         Ok(Self {
             inner: Arc::new(next),
         })
