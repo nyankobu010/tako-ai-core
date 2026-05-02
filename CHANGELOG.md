@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.35.0] - 2026-05-02
 
 Phase 34 — Public-release prep, tech-debt + docs sweep. Closes the
-long-deferred [`PLAN_CLEANUP.md`](PLAN_CLEANUP.md) backlog (placeholder
+long-deferred [`plans/PLAN_CLEANUP.md`](plans/PLAN_CLEANUP.md) backlog (placeholder
 substitution, OSS hygiene files) and brings the mkdocs site current
 with every feature shipped through Phase 33. Original Phase 34
 candidates (trait-based `MtlsIdentityProvider`, automatic
@@ -20,7 +20,7 @@ refresh-on-handshake-failure, filesystem-watcher integration) are
 postponed to Phase 35+ — see
 [PLAN.md → Phase 35 candidates](PLAN.md). No code changes other than
 the rustdoc URL fix in `tako-core/src/lib.rs` and the version bump.
-Plan: [PLAN_PHASE34.md](PLAN_PHASE34.md).
+Plan: [plans/PLAN_PHASE34.md](plans/PLAN_PHASE34.md).
 
 ### Changed
 
@@ -32,8 +32,8 @@ Plan: [PLAN_PHASE34.md](PLAN_PHASE34.md).
   compare-link footer, [crates/tako-core/src/lib.rs](crates/tako-core/src/lib.rs)
   rustdoc, [docs/concepts/policy.md](docs/concepts/policy.md)).
   Self-referential historical sites at
-  [PLAN_PHASE1.md:55](PLAN_PHASE1.md#L55) and
-  [PLAN_PHASE21.md:239](PLAN_PHASE21.md#L239) intentionally retained as
+  [plans/PLAN_PHASE1.md:55](plans/PLAN_PHASE1.md#L55) and
+  [plans/PLAN_PHASE21.md:239](plans/PLAN_PHASE21.md#L239) intentionally retained as
   the source of the placeholder strategy.
 - **Phase 34.B — `TODO(community)` substitution.**
   [README.md](README.md) community section now points at
@@ -102,7 +102,7 @@ either see the old Client or the new one, never a torn state.
 
 Two sub-items, mostly additive (one internal field type
 widening on a 6-week-old struct). Plan:
-[PLAN_PHASE33.md](PLAN_PHASE33.md).
+[plans/PLAN_PHASE33.md](plans/PLAN_PHASE33.md).
 
 ### Added
 
@@ -239,7 +239,7 @@ semantic forms:
   - CIDR subnet   ("10.0.5.0/24")       — Resolved IP (any)
 
 Three sub-items, all strictly additive — public APIs unchanged
-shape. Plan: [PLAN_PHASE32.md](PLAN_PHASE32.md).
+shape. Plan: [plans/PLAN_PHASE32.md](plans/PLAN_PHASE32.md).
 
 ### Added
 
@@ -366,7 +366,7 @@ one-level semantics is for TLS cert SANs, not operator-
 controlled allowlists.
 
 Three sub-items, all strictly additive — public APIs unchanged
-shape. Plan: [PLAN_PHASE31.md](PLAN_PHASE31.md).
+shape. Plan: [plans/PLAN_PHASE31.md](plans/PLAN_PHASE31.md).
 
 ### Added
 
@@ -483,7 +483,7 @@ Phase 30 adds a per-host BYPASS that lets operators allowlist
 specific hostnames while keeping the rest of the blocklist
 active. Allowlisted hosts skip ONLY the private-IP blocklist;
 scheme / timeout / size cap / MIME validation all still apply
-(defence-in-depth). Plan: [PLAN_PHASE30.md](PLAN_PHASE30.md).
+(defence-in-depth). Plan: [plans/PLAN_PHASE30.md](plans/PLAN_PHASE30.md).
 
 ### Added
 
@@ -599,7 +599,7 @@ that already filter network egress.
 After Phase 29 the tako-side URL pre-fetch surface ships with a
 complete SSRF-mitigation stack, and both URL-prefetching
 providers (Bedrock + Ollama) have full Python parity.
-Plan: [PLAN_PHASE29.md](PLAN_PHASE29.md).
+Plan: [plans/PLAN_PHASE29.md](plans/PLAN_PHASE29.md).
 
 ### Added
 
@@ -764,7 +764,7 @@ operators must enforce network egress at the deployment level
 (VPC egress rules, Pod-level egress NetworkPolicies, etc).
 After Phase 28 every shipped provider adapter (Anthropic +
 OpenAI + Mistral + Vertex + Bedrock + Ollama — six of six)
-handles outbound `ContentPart::ImageUrl`. Plan: [PLAN_PHASE28.md](PLAN_PHASE28.md).
+handles outbound `ContentPart::ImageUrl`. Plan: [plans/PLAN_PHASE28.md](plans/PLAN_PHASE28.md).
 
 ### Added
 
@@ -856,7 +856,7 @@ Phase 27 — closes the Phase-26 carry-forward by extending
 `ChainedAuthResolver`'s opt-in fail-fast to four "definitely
 infrastructure / operator-set guard" `TakoError` variants:
 `Transport`, `RateLimited`, `CircuitOpen`, `BudgetExhausted`.
-Plan: [PLAN_PHASE27.md](PLAN_PHASE27.md).
+Plan: [plans/PLAN_PHASE27.md](plans/PLAN_PHASE27.md).
 
 The case-by-case analysis on which variants to short-circuit:
 
@@ -971,7 +971,7 @@ the `ChainedAuthResolver` fall-through-on-any-Err default. The
 Phase 21 PLAN explicitly noted the deferral: "If patterns emerge
 for 'fail fast on transport errors' ... a future phase may add
 `with_short_circuit_on_transport_error`." Phase 26 ships that
-opt-in flag. Plan: [PLAN_PHASE26.md](PLAN_PHASE26.md).
+opt-in flag. Plan: [plans/PLAN_PHASE26.md](plans/PLAN_PHASE26.md).
 
 The pattern this addresses: chain
 `OidcAuth().then(StaticTokens)`. When the OIDC issuer is
@@ -1073,7 +1073,7 @@ ships. Phase 24 added CA-backed mTLS (`tls_client_auth`);
 Phase 25 adds the self-signed sibling (`self_signed_tls_client_auth`,
 RFC 8705 §2.2). Natural close-out of the ~10-phase OIDC
 hardening arc that started with Phase 14.B. Plan:
-[PLAN_PHASE25.md](PLAN_PHASE25.md).
+[plans/PLAN_PHASE25.md](plans/PLAN_PHASE25.md).
 
 The auth-method surface tako now covers:
 
@@ -1167,12 +1167,12 @@ The auth-method surface tako now covers:
   [`tests/python/test_phase25_self_signed_mtls.py`](tests/python/test_phase25_self_signed_mtls.py)
   covers facade attribute presence + the alias-parser entries.
 
-- **`PLAN_PHASE25.md` filename free.** A previous file by this
+- **`plans/PLAN_PHASE25.md` filename free.** A previous file by this
   name held Phase 2.5's plan because of the `2.5 → 25`
-  reading. Renamed to `PLAN_PHASE2_5.md` (underscore variant)
+  reading. Renamed to `plans/PLAN_PHASE2_5.md` (underscore variant)
   in this phase so the actual Phase 25 plan can claim the
   natural filename. PLAN.md table row + cross-references in
-  `PLAN_PHASE1.md` and `PLAN_PHASE3.md` updated.
+  `plans/PLAN_PHASE1.md` and `plans/PLAN_PHASE3.md` updated.
 
 ### Changed
 
@@ -1206,7 +1206,7 @@ the existing workspace reqwest features
 (`["rustls", "webpki-roots", ...]`) already expose
 `reqwest::Identity::from_pem` (verified via a probe compile).
 Phase 24 implements RFC 8705 mTLS introspection without any
-workspace-level dep change. Plan: [PLAN_PHASE24.md](PLAN_PHASE24.md).
+workspace-level dep change. Plan: [plans/PLAN_PHASE24.md](plans/PLAN_PHASE24.md).
 
 After Phase 24 the OIDC introspection auth-method surface
 covers all five RFC 7662 §2.1 / RFC 8414-listed methods tako
@@ -1334,7 +1334,7 @@ After Phase 23 four of the six provider adapters (Anthropic,
 OpenAI, Mistral, Vertex) handle outbound URL-source images;
 Bedrock + Ollama remain deferred (both need tako-side pre-fetch
 with an SSRF guard — different design problem from the
-vendor-fetched-URL case). Plan: [PLAN_PHASE23.md](PLAN_PHASE23.md).
+vendor-fetched-URL case). Plan: [plans/PLAN_PHASE23.md](plans/PLAN_PHASE23.md).
 
 ### Added
 
@@ -1428,7 +1428,7 @@ fetches the URL. The three vendors whose API servers fetch URLs
 themselves (Anthropic, OpenAI, Mistral) now accept URL-source
 content; the three that would need tako-side pre-fetch (Vertex
 file-data, Bedrock, Ollama) stay deferred. Plan:
-[PLAN_PHASE22.md](PLAN_PHASE22.md).
+[plans/PLAN_PHASE22.md](plans/PLAN_PHASE22.md).
 
 ### Added
 
@@ -1526,7 +1526,7 @@ Phase 21 — closes the long-standing operator gap on the
 OpenAI-compat HTTP server. `ChainedAuthResolver` lets operators
 compose existing `AuthResolver` impls for the common "accept
 either OIDC bearer OR API key" pattern. Plan:
-[PLAN_PHASE21.md](PLAN_PHASE21.md).
+[plans/PLAN_PHASE21.md](plans/PLAN_PHASE21.md).
 
 ### Added
 
@@ -1614,7 +1614,7 @@ either OIDC bearer OR API key" pattern. Plan:
 Phase 20 — finishes the vision-content sweep started in Phase 19.
 After Phase 20 every shipped provider adapter (Anthropic, OpenAI,
 Vertex, Bedrock, Mistral, Ollama — six of six) handles outbound
-`ContentPart::Image`. Plan: [PLAN_PHASE20.md](PLAN_PHASE20.md).
+`ContentPart::Image`. Plan: [plans/PLAN_PHASE20.md](plans/PLAN_PHASE20.md).
 
 ### Added
 
@@ -1723,7 +1723,7 @@ Phase 1" markers on the two flagship providers. Anthropic +
 OpenAI now emit outbound `ContentPart::Image` content;
 Bedrock has shipped this since Phase 2.5 (so the three-of-six
 adapters now have it). Vertex / Mistral / Ollama stay deferred
-to Phase 20+. Plan: [PLAN_PHASE19.md](PLAN_PHASE19.md).
+to Phase 20+. Plan: [plans/PLAN_PHASE19.md](plans/PLAN_PHASE19.md).
 
 ### Added
 
@@ -1834,7 +1834,7 @@ Phase 18 — clears two more OIDC carry-forward items from the Phase
 introspection auth method per RFC 7521 / 7523 (RS256 / ES256 /
 EdDSA), and an OIDC Session Management 1.0 end-session endpoint
 helper. Python facade mirrors both. Plan:
-[PLAN_PHASE18.md](PLAN_PHASE18.md).
+[plans/PLAN_PHASE18.md](plans/PLAN_PHASE18.md).
 
 ### Added
 
@@ -1992,7 +1992,7 @@ issuer's discovery doc and auto-selects the strongest method;
 `client_secret_jwt` introspection auth method per RFC 7521 / 7523
 builds an HS256-signed client-assertion JWT and sends it as
 `client_assertion` form fields. Python facade mirrors both.
-Plan: [PLAN_PHASE17.md](PLAN_PHASE17.md).
+Plan: [plans/PLAN_PHASE17.md](plans/PLAN_PHASE17.md).
 
 ### Added
 
@@ -2127,7 +2127,7 @@ when streaming verifiers landed); Vault Enterprise namespace
 support on `VaultAuthResolver`; OIDC RFC 7662 introspection
 `client_secret_post` auth method on `OidcAuthResolver`. Python
 facade mirrors the new auth surfaces.
-Plan: [PLAN_PHASE16.md](PLAN_PHASE16.md).
+Plan: [plans/PLAN_PHASE16.md](plans/PLAN_PHASE16.md).
 
 ### Added
 
@@ -2239,7 +2239,7 @@ Trinity in 13.B and Conductor in 14.A); Vault dynamic token rotation
 (AppRole / Kubernetes auth methods) for `VaultAuthResolver`; and
 RFC 7662 token introspection for `OidcAuthResolver`. Python facade
 mirrors the new auth surfaces.
-Plan: [PLAN_PHASE15.md](PLAN_PHASE15.md).
+Plan: [plans/PLAN_PHASE15.md](plans/PLAN_PHASE15.md).
 
 ### Added
 
@@ -2378,7 +2378,7 @@ workers and surfaces intra-worker progress via an mpsc); three new
 production-grade `tako-compat::AuthResolver` impls behind cargo
 features (`jwt` / `oidc` / `vault`), each mirrored as a Python
 pyclass under matching `auth-*` wheel-side features.
-Plan: [PLAN_PHASE14.md](PLAN_PHASE14.md).
+Plan: [plans/PLAN_PHASE14.md](plans/PLAN_PHASE14.md).
 
 ### Added
 
@@ -2495,7 +2495,7 @@ the inherent sync surface unchanged); a new optional
 method (existing impls inherit `Ok(None)` and behave exactly as
 before); per-delta `OrchEvent::VerifierScore` emission in
 `Trinity::stream` when a verifier opts in.
-Plan: [PLAN_PHASE13.md](PLAN_PHASE13.md).
+Plan: [plans/PLAN_PHASE13.md](plans/PLAN_PHASE13.md).
 
 ### Added
 
@@ -2602,7 +2602,7 @@ close-out. Strictly additive: `notifications()` previously returned
 an empty stream and now returns real notifications;
 `tako.providers.HttpGeneric` is a brand-new symbol. No existing
 public API changes shape.
-Plan: [PLAN_PHASE12.md](PLAN_PHASE12.md).
+Plan: [plans/PLAN_PHASE12.md](plans/PLAN_PHASE12.md).
 
 ### Added
 
@@ -2658,15 +2658,15 @@ Plan: [PLAN_PHASE12.md](PLAN_PHASE12.md).
 ## [0.12.0] - 2026-04-30
 
 Phase 11 — Sigstore security hardening (review-driven from
-[SECURITY_PHASE10.md](SECURITY_PHASE10.md)) plus the long-standing
+[plans/SECURITY_PHASE10.md](plans/SECURITY_PHASE10.md)) plus the long-standing
 `http-generic` provider streaming gap. Strictly additive — no public
 API change in the sigstore stack; the `http-generic` change is
 gated on a new opt-in `stream_config` field that defaults to `None`.
-Plan: [PLAN_PHASE11.md](PLAN_PHASE11.md).
+Plan: [plans/PLAN_PHASE11.md](plans/PLAN_PHASE11.md).
 
 ### Security
 
-H1 + H2 + M1–M4 from `SECURITY_PHASE10.md`, plus L2 / L3 / L5
+H1 + H2 + M1–M4 from `plans/SECURITY_PHASE10.md`, plus L2 / L3 / L5
 opportunistic. The full review motivates each item.
 
 - **H1 — Race-free Rekor checkpoint freshness-anchor advance.**
@@ -2812,7 +2812,7 @@ from `## [0.10.0]`'s release notes (Rekor freshness persistence;
 tool-call lifecycle named SSE events), brings `OrchEvent::VerifierScore`
 parity to the two non-AB-MCTS streaming orchestrators, and closes
 the long-standing Phase 2 stale marker on Python custom provider
-streaming. Plan: [PLAN_PHASE10.md](PLAN_PHASE10.md).
+streaming. Plan: [plans/PLAN_PHASE10.md](plans/PLAN_PHASE10.md).
 
 ### Added
 
@@ -2994,7 +2994,7 @@ streaming. Plan: [PLAN_PHASE10.md](PLAN_PHASE10.md).
 Phase 9 — cost-aware streaming guards + transparency-log freshness +
 protocol completeness + router-driven AB-MCTS. Closes the four
 "Phase 9 candidate" follow-ups flagged in `## [0.9.0]`'s release
-notes. Plan: [PLAN_PHASE9.md](PLAN_PHASE9.md).
+notes. Plan: [plans/PLAN_PHASE9.md](plans/PLAN_PHASE9.md).
 
 ### Added
 
@@ -3129,7 +3129,7 @@ notes. Plan: [PLAN_PHASE9.md](PLAN_PHASE9.md).
   `Cargo.toml`, `pyproject.toml`,
   `python/tako/__init__.py`,
   `tests/python/test_smoke.py`.
-- New per-phase plan doc: `PLAN_PHASE9.md`. PLAN.md index row for
+- New per-phase plan doc: `plans/PLAN_PHASE9.md`. PLAN.md index row for
   Phase 9 flipped to `done (2026-04-30)`; Phase 10 candidate stub
   added.
 
@@ -3151,7 +3151,7 @@ notes. Plan: [PLAN_PHASE9.md](PLAN_PHASE9.md).
 
 Phase 8 — search streaming + transparency-log completeness. Closes
 the four "out of scope" items flagged in `## [0.8.0]`'s release
-notes. Plan: [PLAN_PHASE8.md](PLAN_PHASE8.md).
+notes. Plan: [plans/PLAN_PHASE8.md](plans/PLAN_PHASE8.md).
 
 ### Added
 
@@ -3403,9 +3403,9 @@ ergonomics carry-over tracked since v0.6.0.
 - Workspace package version: `0.7.0` → `0.8.0` across
   `Cargo.toml`, `pyproject.toml`, `python/tako/__init__.py`,
   `tests/python/test_smoke.py`.
-- New per-phase plan docs: `PLAN_PHASE1.md` (extracted from PLAN.md
-  inline body), `PLAN_PHASE4.md` (retroactive — Phase 4 had no
-  per-phase doc), and `PLAN_PHASE7.md` (this phase). PLAN.md slimmed
+- New per-phase plan docs: `plans/PLAN_PHASE1.md` (extracted from PLAN.md
+  inline body), `plans/PLAN_PHASE4.md` (retroactive — Phase 4 had no
+  per-phase doc), and `plans/PLAN_PHASE7.md` (this phase). PLAN.md slimmed
   to a phase-index table + roadmap.
 
 ### Notes

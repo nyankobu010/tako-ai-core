@@ -42,6 +42,6 @@ please open one before this PR. -->
 - [ ] Commits are signed off (DCO).
 - [ ] One logical concern per commit.
 - [ ] Updated `CHANGELOG.md` under `## [Unreleased]` (omit for trivial doc/test-only PRs).
-- [ ] Updated `PLAN.md` and `PLAN_PHASE<N>.md` if this PR changes phase scope.
+- [ ] Updated `PLAN.md` and `plans/PLAN_PHASE<N>.md` if this PR changes phase scope.
 - [ ] Public Rust API additions have rustdoc with at least one runnable example.
 - [ ] No new top-level crates without an `ARCHITECTURE.md` update.

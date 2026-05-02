@@ -57,7 +57,7 @@ once in Phase 1 and haven't needed extension.
 
 - [`PLAN.md`](https://github.com/nyankobu010/tako-ai-core/blob/main/PLAN.md)
   — rolling project index with one row per phase pointing at its
-  individual `PLAN_PHASE<N>.md`.
+  individual [`plans/PLAN_PHASE<N>.md`](https://github.com/nyankobu010/tako-ai-core/tree/main/plans).
 - [`CHANGELOG.md`](https://github.com/nyankobu010/tako-ai-core/blob/main/CHANGELOG.md)
   — release notes per `v0.X.0`.
 - [Roadmap on the project home page](index.md#roadmap) — phase →

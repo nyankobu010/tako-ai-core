@@ -8,8 +8,8 @@
 # Usage:  bash scripts/check_public_release.sh
 #
 # What it checks:
-#   1. No `TODO(<org>)` outside the historical PLAN_PHASE1.md / PLAN_PHASE21.md.
-#   2. No `TODO(community)` outside the historical PLAN_CLEANUP.md.
+#   1. No `TODO(<org>)` outside the historical plans/PLAN_PHASE1.md / plans/PLAN_PHASE21.md.
+#   2. No `TODO(community)` outside the historical plans/PLAN_CLEANUP.md.
 #   3. No accidentally-committed env/credential files.
 #   4. Workspace and Python version strings agree.
 #   5. README has no broken obvious refs (light heuristic only).
@@ -26,14 +26,13 @@ err()   { printf '\033[31m[FAIL]\033[0m %s\n' "$*"; fail=1; }
 
 # 1. Placeholder sweep.
 #
-# Excluded files describe the substitution rather than carry an unresolved
+# Excluded paths describe the substitution rather than carry an unresolved
 # placeholder:
-#   - PLAN_PHASE1.md / PLAN_PHASE21.md      historical phase-design docs
-#   - PLAN_CLEANUP.md / PLAN_PHASE34.md     plans for the substitution itself
-#   - PLAN.md / CHANGELOG.md                ledger entries describing what landed
-#   - scripts/check_public_release.sh       this script
+#   - plans/                                 historical phase-design + cleanup docs
+#   - PLAN.md / CHANGELOG.md                 ledger entries describing what landed
+#   - scripts/check_public_release.sh        this script
 note "1. Placeholder sweep — TODO(<org>) / TODO(community)"
-exclude_re='^(PLAN_PHASE1\.md|PLAN_PHASE21\.md|PLAN_CLEANUP\.md|PLAN_PHASE34\.md|PLAN\.md|CHANGELOG\.md|scripts/check_public_release\.sh):'
+exclude_re='^(plans/|PLAN\.md|CHANGELOG\.md|scripts/check_public_release\.sh)'
 org_hits=$(git grep -nE 'TODO\(<org>\)' | grep -vE "$exclude_re" || true)
 if [[ -n "$org_hits" ]]; then
   err "TODO(<org>) outside historical files:"

@@ -96,6 +96,6 @@ The verifier hard-fails when:
 
 - [recipes/sigstore_keyless.md](../recipes/sigstore_keyless.md) — full
   walkthrough including a worked GitHub Actions signing config.
-- [SECURITY_PHASE10.md](https://github.com/nyankobu010/tako-ai-core/blob/main/SECURITY_PHASE10.md)
+- [SECURITY_PHASE10.md](https://github.com/nyankobu010/tako-ai-core/blob/main/plans/SECURITY_PHASE10.md)
   — the review-driven hardening notes for every Sigstore item shipped
   through Phase 11.
