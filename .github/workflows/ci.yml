@@ -50,6 +50,22 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+      # `maturin develop` requires a virtualenv (it refuses to install into
+      # a system Python). Create `.venv`, then export `VIRTUAL_ENV` and
+      # prepend the venv's bin/Scripts dir to `PATH` so every subsequent
+      # step (`pip`, `maturin`, `ruff`, `mypy`, `pytest`) runs against
+      # the venv's interpreter on Linux, macOS, and Windows alike.
+      - name: setup venv
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [ -d .venv/bin ]; then
+            VENV_BIN="$(pwd)/.venv/bin"
+          else
+            VENV_BIN="$(pwd)/.venv/Scripts"
+          fi
+          echo "$VENV_BIN" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$(pwd)/.venv" >> "$GITHUB_ENV"
       - name: install deps
         run: |
           python -m pip install --upgrade pip
