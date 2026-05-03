@@ -480,6 +480,7 @@ def serve_openai_py(
     host: str = ...,
     port: int = ...,
     tokens: dict[str, tuple[str, str]] | None = ...,
+    auth: Any | None = ...,
     models: list[str] | None = ...,
 ) -> str: ...
 def shutdown_compat_py() -> None: ...

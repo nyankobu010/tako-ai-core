@@ -143,7 +143,7 @@ class TrinityTrainer:
 
     def predict(self, prompt: str) -> int:
         try:
-            import numpy as np  # type: ignore[import-not-found]
+            import numpy as np
         except ImportError as e:
             raise RuntimeError("TrinityTrainer.predict requires numpy") from e
         if not self.weights:
@@ -170,7 +170,7 @@ class TrinityTrainer:
         if not self.weights:
             raise RuntimeError("call fit() before export_onnx()")
         try:
-            import numpy as np  # type: ignore[import-not-found]
+            import numpy as np
             import onnx  # type: ignore[import-not-found]
             from onnx import TensorProto, helper, numpy_helper
         except ImportError as e:

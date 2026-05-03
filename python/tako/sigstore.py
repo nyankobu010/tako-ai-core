@@ -345,7 +345,7 @@ class RedisStateStore:
     def __init__(self) -> None:
         # Construction goes through `connect`; this constructor exists
         # only so users who hold a ready instance can subclass.
-        self._native = None  # type: ignore[assignment]
+        self._native = None
 
     @classmethod
     async def connect(cls, url: str, key: str | None = None) -> RedisStateStore:
