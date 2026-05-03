@@ -10,7 +10,7 @@ build-backend = "maturin"
 # publish under `tako-ai-core` to match the GitHub repo and the PyPI
 # Trusted Publisher configuration.
 name = "tako-ai-core"
-version = "0.51.1"
+version = "0.51.2"
 description = "Rust-core, Python-facade framework for enterprise agentic systems."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -54,6 +54,18 @@ python-source  = "python"
 features       = ["pyo3/extension-module"]
 strip          = true
 include        = [
+    # LICENSE + NOTICE live at the workspace root. Maturin's PEP 639
+    # detection auto-bundles them into the wheel under
+    # `dist-info/licenses/` and emits `License-File:` headers in both
+    # the wheel's METADATA and the sdist's PKG-INFO. The wheel half
+    # works automatically; the sdist half needs an explicit `include`
+    # because the maturin manifest is at `crates/tako-py/Cargo.toml`,
+    # not at the workspace root, so the sdist packager doesn't pick
+    # them up on its own. Without this, the sdist fails PyPI
+    # validation with `400 License-File LICENSE does not exist in
+    # distribution file`.
+    { path = "LICENSE", format = "sdist" },
+    { path = "NOTICE", format = "sdist" },
     { path = "python/tako/eval/datasets/synthetic.jsonl", format = "wheel" },
 ]
 

@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [0.51.2] - 2026-05-03
+
+Hot-fix release. v0.51.1's `Build wheels` workflow successfully
+published all 7 wheels to PyPI but the sdist upload failed with
+`400 License-File LICENSE does not exist in distribution file
+tako_ai_core-0.51.1.tar.gz`. Maturin's PEP 639 detection emitted
+`License-File: LICENSE` and `License-File: NOTICE` in the sdist's
+PKG-INFO but didn't actually copy the files into the tarball
+because the maturin manifest is at `crates/tako-py/Cargo.toml` (so
+the sdist packager's auto-include scope didn't reach the
+workspace-root `LICENSE`/`NOTICE`). Wheels were unaffected because
+maturin's wheel builder bundles license files via a separate code
+path that does pick up `LICENSE`/`NOTICE` correctly.
+
+`tako-ai-core 0.51.1` remains installable from PyPI (wheels-only)
+on every supported platform. v0.51.2 adds the missing sdist for
+source installs and strict-mirror tooling.
+
+### Fixed
+
+- **`pyproject.toml`** explicitly lists `LICENSE` and `NOTICE`
+  under `[tool.maturin] include` with `format = "sdist"` so both
+  files are bundled into the source distribution alongside the
+  PKG-INFO that already references them. No change to wheel
+  contents — wheels already had the files under
+  `dist-info/licenses/`.
+
 ## [0.51.1] - 2026-05-03
 
 Hot-fix release. The `v0.51.0` workflow run built all seven wheels +
