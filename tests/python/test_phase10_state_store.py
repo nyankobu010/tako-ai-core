@@ -14,7 +14,17 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("tako.sigstore")  # skipped when wheel built without sigstore
+from tako import _native
+
+# `tako.sigstore` is a regular Python module that always imports — the
+# `sigstore` feature only gates the native pyclasses it wraps. Skip the
+# module unless `_native.JsonStateStore` (and `KeylessVerifier`) actually
+# got compiled in.
+if not hasattr(_native, "JsonStateStore") or not hasattr(_native, "KeylessVerifier"):
+    pytest.skip(
+        "wheel built without --features sigstore; skipping JsonStateStore tests",
+        allow_module_level=True,
+    )
 
 from tako.sigstore import JsonStateStore, KeylessVerifier
 
