@@ -177,6 +177,24 @@ async fn gcp_404_maps_to_not_found() {
     assert!(matches!(err, TakoError::NotFound(_)));
 }
 
+#[test]
+fn gcp_rejects_non_https_non_loopback_endpoint() {
+    // A misconfigured `http://` endpoint pointed at a non-loopback host
+    // would expose the OAuth2 Bearer token in cleartext on the wire.
+    // The constructor must reject it eagerly. Validation is pure, so no
+    // tokio runtime is needed.
+    let err = GcpSecretManagerResolver::with_endpoint(
+        "p",
+        "tok",
+        "http://secretmanager-impostor.example.com",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, TakoError::Invalid(ref m) if m.contains("https://")),
+        "expected TakoError::Invalid mentioning https://, got {err:?}"
+    );
+}
+
 #[tokio::test]
 async fn aws_resolver_constructs_without_credentials() {
     use tako_governance::AwsSecretsManagerResolver;
