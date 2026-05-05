@@ -35,7 +35,7 @@ class _Result:
 
     @property
     def text(self) -> str:
-        return self._inner.text
+        return str(self._inner.text)
 
     @property
     def usage(self) -> Usage:
@@ -46,7 +46,7 @@ class _Result:
 
     @property
     def steps(self) -> int:
-        return self._inner.steps
+        return int(self._inner.steps)
 
     def __repr__(self) -> str:
         return repr(self._inner)

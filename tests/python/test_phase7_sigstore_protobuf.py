@@ -15,9 +15,13 @@ from __future__ import annotations
 
 import pytest
 import tako
+from tako import _native
 
-if not hasattr(tako, "sigstore"):
-    pytest.skip("wheel built without `sigstore` feature", allow_module_level=True)
+# `tako.sigstore` is a regular Python module that always imports — the
+# `sigstore` feature only gates the native pyclasses. Skip the module
+# unless `_native.KeylessVerifier` actually got compiled in.
+if not hasattr(_native, "KeylessVerifier"):
+    pytest.skip("wheel built without --features sigstore", allow_module_level=True)
 
 
 def _make_verifier() -> tako.sigstore.KeylessVerifier:

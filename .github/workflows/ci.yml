@@ -50,10 +50,35 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+      # `maturin develop` requires a virtualenv (it refuses to install into
+      # a system Python). Create `.venv`, then export `VIRTUAL_ENV` and
+      # prepend the venv's bin/Scripts dir to `PATH` so every subsequent
+      # step (`pip`, `maturin`, `ruff`, `mypy`, `pytest`) runs against
+      # the venv's interpreter on Linux, macOS, and Windows alike.
+      #
+      # On Windows we must convert paths to native form via `cygpath -w`
+      # before writing them to `$GITHUB_PATH` / `$GITHUB_ENV`. Bash's
+      # `$(pwd)` returns `/d/a/...` style which Windows tools (including
+      # maturin) cannot resolve — without conversion maturin tries to
+      # find Python at `/d/a/.../.venv\python.exe` (note the Unix→Win
+      # mash-up) and fails with "Couldn't find any python interpreters".
+      - name: setup venv
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [ -d .venv/bin ]; then
+            VENV="$(pwd)/.venv"
+            VENV_BIN="$VENV/bin"
+          else
+            VENV="$(cygpath -w "$(pwd)/.venv")"
+            VENV_BIN="$(cygpath -w "$(pwd)/.venv/Scripts")"
+          fi
+          echo "$VENV_BIN" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$VENV" >> "$GITHUB_ENV"
       - name: install deps
         run: |
           python -m pip install --upgrade pip
-          pip install maturin pytest pytest-asyncio ruff mypy hypothesis
+          pip install maturin pytest pytest-asyncio ruff mypy hypothesis requests
       - name: maturin develop
         run: maturin develop --release
       - name: ruff

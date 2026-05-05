@@ -86,8 +86,27 @@ async def grade_patch(spec: PatchSpec, model_output: str) -> tuple[bool, str]:
     with tempfile.TemporaryDirectory(prefix="tako-grade-") as tmp:
         work = Path(tmp) / "checkout"
         # 1. clone
+        #
+        # `-c core.autocrlf=false` is critical on Windows. The default
+        # global autocrlf=true (set by Git for Windows) checks files
+        # out with CRLF line endings even though the blob is LF. Patch
+        # context lines are LF (git's standard diff format), so a CRLF
+        # working tree wouldn't match — `git apply --check` would
+        # report `patch failed: ...:1, patch does not apply`. Forcing
+        # autocrlf=false on the clone keeps the working tree byte-for-
+        # byte identical to the blob, so the patch's context lines
+        # match exactly. No-op on Linux/macOS where autocrlf defaults
+        # to false anyway.
         clone_rc, clone_log = await _run(
-            ["git", "clone", "--quiet", spec.repo, str(work)],
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "clone",
+                "--quiet",
+                spec.repo,
+                str(work),
+            ],
             cwd=tmp,
             timeout=spec.apply_timeout_secs,
         )
@@ -96,7 +115,7 @@ async def grade_patch(spec: PatchSpec, model_output: str) -> tuple[bool, str]:
 
         # 2. checkout base commit
         co_rc, co_log = await _run(
-            ["git", "checkout", "--quiet", spec.base_commit],
+            ["git", "-c", "core.autocrlf=false", "checkout", "--quiet", spec.base_commit],
             cwd=str(work),
             timeout=spec.apply_timeout_secs,
         )
@@ -104,9 +123,17 @@ async def grade_patch(spec: PatchSpec, model_output: str) -> tuple[bool, str]:
             return False, f"git checkout {spec.base_commit} failed: {co_log[-512:]}"
 
         # 3. write patch + apply
+        #
+        # `newline=""` is critical on Windows: the default newline=None
+        # translates `\n` in the in-memory patch string to `\r\n` on
+        # disk. Git's patch parser treats the `\r` as line content, so
+        # the context line "buggy module.\"\"\"" (LF in the working
+        # tree) no longer matches "buggy module.\"\"\"\r" (the
+        # CRLF-corrupted patch line) and `git apply --check` reports
+        # `patch failed: module.py:1, patch does not apply`.
         patch_path = work / ".tako_patch.diff"
         try:
-            patch_path.write_text(model_output, encoding="utf-8")
+            patch_path.write_text(model_output, encoding="utf-8", newline="")
         except OSError as e:
             return False, f"failed to write patch: {e}"
 
