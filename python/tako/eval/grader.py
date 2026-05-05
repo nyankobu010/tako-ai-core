@@ -104,9 +104,17 @@ async def grade_patch(spec: PatchSpec, model_output: str) -> tuple[bool, str]:
             return False, f"git checkout {spec.base_commit} failed: {co_log[-512:]}"
 
         # 3. write patch + apply
+        #
+        # `newline=""` is critical on Windows: the default newline=None
+        # translates `\n` in the in-memory patch string to `\r\n` on
+        # disk. Git's patch parser treats the `\r` as line content, so
+        # the context line "buggy module.\"\"\"" (LF in the working
+        # tree) no longer matches "buggy module.\"\"\"\r" (the
+        # CRLF-corrupted patch line) and `git apply --check` reports
+        # `patch failed: module.py:1, patch does not apply`.
         patch_path = work / ".tako_patch.diff"
         try:
-            patch_path.write_text(model_output, encoding="utf-8")
+            patch_path.write_text(model_output, encoding="utf-8", newline="")
         except OSError as e:
             return False, f"failed to write patch: {e}"
 
