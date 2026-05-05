@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(none)
+### Changed
+
+- **`tako-governance`** — `GcpSecretManagerResolver::resolve` renames the
+  internal `secret` binding to `secret_name` to make it explicit that the
+  value formatted into the URL path is the GCP Secret Manager identifier,
+  not the secret value (which only ever appears in the response body).
+  Brings naming in line with `AzureKeyVaultResolver` (`name`) and
+  `AwsSecretsManagerResolver` (`secret_id`), and silences a CodeQL
+  `rust/cleartext-transmission` false positive triggered by the variable
+  name. No public-API change.
 
 ## [0.51.2] - 2026-05-03
 

@@ -88,8 +88,10 @@ struct GcpSecretPayload {
 impl SecretResolver for GcpSecretManagerResolver {
     async fn resolve(&self, key: &str) -> Result<SecretString, TakoError> {
         // Key may be `<secret-name>` (default version `latest`) or
-        // `<secret-name>#<version>`.
-        let (secret, version) = match key.split_once('#') {
+        // `<secret-name>#<version>`. `secret_name` is the GCP Secret
+        // Manager identifier (URL path segment), not the secret value —
+        // the value comes back in the response body.
+        let (secret_name, version) = match key.split_once('#') {
             Some((s, v)) => (s, v),
             None => (key, "latest"),
         };
@@ -97,7 +99,7 @@ impl SecretResolver for GcpSecretManagerResolver {
             "{}/v1/projects/{}/secrets/{}/versions/{}:access",
             self.endpoint.trim_end_matches('/'),
             self.project_id,
-            secret,
+            secret_name,
             version,
         );
         let resp = self
