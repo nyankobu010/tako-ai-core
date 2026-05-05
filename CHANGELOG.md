@@ -7,16 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`tako-governance`** — `GcpSecretManagerResolver::with_endpoint` now
+  rejects non-HTTPS endpoints (`http://...`) at construction time, with
+  an exception for loopback hosts (`127.0.0.1`, `[::1]`, `localhost`)
+  used by tests against `wiremock`. Prevents the
+  `rust/cleartext-transmission` (CWE-319) failure mode where a
+  misconfigured endpoint would expose the OAuth2 Bearer token in
+  cleartext on the wire. The same check is re-run inside `resolve()` as
+  defence-in-depth and to put the sanitiser in the same function as the
+  HTTP `get` sink so static analysers can see the dataflow. Existing
+  test code that points the resolver at a `wiremock::MockServer` (HTTP
+  on `127.0.0.1`) continues to work.
+
 ### Changed
 
-- **`tako-governance`** — `GcpSecretManagerResolver::resolve` renames the
-  internal `secret` binding to `secret_name` to make it explicit that the
-  value formatted into the URL path is the GCP Secret Manager identifier,
-  not the secret value (which only ever appears in the response body).
-  Brings naming in line with `AzureKeyVaultResolver` (`name`) and
-  `AwsSecretsManagerResolver` (`secret_id`), and silences a CodeQL
-  `rust/cleartext-transmission` false positive triggered by the variable
-  name. No public-API change.
+- **`tako-governance`** — `GcpSecretManagerResolver::resolve` renames
+  the internal `secret` binding to `secret_name` to make it explicit
+  that the value formatted into the URL path is the GCP Secret Manager
+  identifier, not the secret value (which only ever appears in the
+  response body). Brings naming in line with `AzureKeyVaultResolver`
+  (`name`) and `AwsSecretsManagerResolver` (`secret_id`).
 
 ## [0.51.2] - 2026-05-03
 
