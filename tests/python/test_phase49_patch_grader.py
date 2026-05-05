@@ -73,12 +73,22 @@ def _git(args: list[str], *, cwd: Path) -> None:
 
 
 def _git_out(args: list[str], *, cwd: Path) -> str:
+    # `encoding="utf-8"` is critical on Windows: without it
+    # `text=True` decodes git's stdout using the platform default
+    # (cp1252 on GHA Windows runners), which mojibakes any
+    # non-ASCII bytes — e.g. the em dash (`—`, UTF-8
+    # `\xe2\x80\x94`) in `_BUGGY_MODULE`'s docstring becomes `â€"`.
+    # The corrupted patch's context lines then don't match the
+    # (correctly UTF-8) working tree and `git apply --check`
+    # reports `patch does not apply` at the line containing the
+    # em dash.
     return subprocess.run(
         ["git", *args],
         cwd=str(cwd),
         capture_output=True,
         check=True,
         text=True,
+        encoding="utf-8",
     ).stdout
 
 
