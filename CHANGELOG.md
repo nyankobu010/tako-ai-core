@@ -7,55 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(none)
+
+## [0.51.2] - 2026-05-05
+
+Cumulative patch release rolling up everything queued since v0.51.1:
+the LICENSE/NOTICE sdist hot-fix (drafted 2026-05-03 but never tagged
+or published), a CI matrix fix for the Python toolchain ([#53](https://github.com/nyankobu010/tako-ai-core/pull/53)),
+and a security fix for the GCP Secret Manager resolver ([#54](https://github.com/nyankobu010/tako-ai-core/pull/54)).
+0.51.2 was bumped in source on 2026-05-03 but the `v0.51.2` tag was
+never pushed, so 0.51.1 remained the last version on PyPI; this
+release fills that gap.
+
 ### Security
 
-- **`tako-governance`** — `GcpSecretManagerResolver::with_endpoint` now
-  rejects non-HTTPS endpoints (`http://...`) at construction time, with
-  an exception for loopback hosts (`127.0.0.1`, `[::1]`, `localhost`)
-  used by tests against `wiremock`. Prevents the
-  `rust/cleartext-transmission` (CWE-319) failure mode where a
+- **`tako-governance`** — `GcpSecretManagerResolver::with_endpoint`
+  now rejects non-HTTPS endpoints (`http://...`) at construction
+  time, with an exception for loopback hosts (`127.0.0.1`, `[::1]`,
+  `localhost`) used by tests against `wiremock`. Closes
+  [code scanning alert #1](https://github.com/nyankobu010/tako-ai-core/security/code-scanning/1)
+  (CodeQL `rust/cleartext-transmission`, CWE-319) where a
   misconfigured endpoint would expose the OAuth2 Bearer token in
-  cleartext on the wire. The same check is re-run inside `resolve()` as
-  defence-in-depth and to put the sanitiser in the same function as the
-  HTTP `get` sink so static analysers can see the dataflow. Existing
-  test code that points the resolver at a `wiremock::MockServer` (HTTP
-  on `127.0.0.1`) continues to work.
+  cleartext. The same check is re-run inside `resolve()` as
+  defence-in-depth so the sanitiser sits in the same function as the
+  HTTP `get` sink for static analysers. Existing tests pointing at
+  `wiremock::MockServer` (HTTP on `127.0.0.1`) continue to work. ([#54](https://github.com/nyankobu010/tako-ai-core/pull/54))
 
 ### Changed
 
-- **`tako-governance`** — `GcpSecretManagerResolver::resolve` renames
-  the internal `secret` binding to `secret_name` to make it explicit
-  that the value formatted into the URL path is the GCP Secret Manager
-  identifier, not the secret value (which only ever appears in the
-  response body). Brings naming in line with `AzureKeyVaultResolver`
-  (`name`) and `AwsSecretsManagerResolver` (`secret_id`).
-
-## [0.51.2] - 2026-05-03
-
-Hot-fix release. v0.51.1's `Build wheels` workflow successfully
-published all 7 wheels to PyPI but the sdist upload failed with
-`400 License-File LICENSE does not exist in distribution file
-tako_ai_core-0.51.1.tar.gz`. Maturin's PEP 639 detection emitted
-`License-File: LICENSE` and `License-File: NOTICE` in the sdist's
-PKG-INFO but didn't actually copy the files into the tarball
-because the maturin manifest is at `crates/tako-py/Cargo.toml` (so
-the sdist packager's auto-include scope didn't reach the
-workspace-root `LICENSE`/`NOTICE`). Wheels were unaffected because
-maturin's wheel builder bundles license files via a separate code
-path that does pick up `LICENSE`/`NOTICE` correctly.
-
-`tako-ai-core 0.51.1` remains installable from PyPI (wheels-only)
-on every supported platform. v0.51.2 adds the missing sdist for
-source installs and strict-mirror tooling.
+- **`tako-governance`** — internal `secret` → `secret_name` rename in
+  `GcpSecretManagerResolver::resolve` to match the convention used by
+  `AzureKeyVaultResolver` (`name`) and `AwsSecretsManagerResolver`
+  (`secret_id`). The bound value is the GCP Secret Manager identifier
+  (URL path segment), not the secret value (which only ever appears in
+  the response body). ([#54](https://github.com/nyankobu010/tako-ai-core/pull/54))
 
 ### Fixed
 
-- **`pyproject.toml`** explicitly lists `LICENSE` and `NOTICE`
-  under `[tool.maturin] include` with `format = "sdist"` so both
-  files are bundled into the source distribution alongside the
-  PKG-INFO that already references them. No change to wheel
-  contents — wheels already had the files under
-  `dist-info/licenses/`.
+- **`pyproject.toml`** explicitly lists `LICENSE` and `NOTICE` under
+  `[tool.maturin] include` with `format = "sdist"` so both files are
+  bundled into the source distribution alongside the PKG-INFO that
+  already references them. No change to wheel contents — wheels
+  already had the files under `dist-info/licenses/`. Resolves the
+  v0.51.1 sdist upload failure (`400 License-File LICENSE does not
+  exist in distribution file tako_ai_core-0.51.1.tar.gz`); maturin's
+  PEP 639 detection emitted `License-File: LICENSE`/`NOTICE` in the
+  sdist's PKG-INFO but didn't copy the files into the tarball because
+  the maturin manifest is at `crates/tako-py/Cargo.toml` (so the
+  sdist packager's auto-include scope didn't reach the workspace-root
+  `LICENSE`/`NOTICE`). Wheels were unaffected because maturin's wheel
+  builder bundles license files via a separate code path. ([#52](https://github.com/nyankobu010/tako-ai-core/pull/52))
+- **CI Python matrix** — venv setup (`maturin develop` requires a
+  virtualenv; `actions/setup-python@v6` does not create one), Windows
+  path conversion via `cygpath -w` (so `bash`'s Unix-style `$(pwd)`
+  doesn't trip up Windows tooling), and a sweep of mypy strict
+  cleanups across `python/tako/` to land green on all 12 (3 OS × 4
+  Python) matrix cells. ([#53](https://github.com/nyankobu010/tako-ai-core/pull/53))
 
 ## [0.51.1] - 2026-05-03
 
