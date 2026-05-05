@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from tako import _native
 
 # `tako.sigstore` is a regular Python module that always imports — the
