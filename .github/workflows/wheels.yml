@@ -56,7 +56,7 @@ jobs:
           args: >-
             --release --locked --compatibility pypi
             --features auth-jwt,auth-oidc,auth-vault,auth-mtls-fs-watch,auth-mtls-identity-provider,sigstore,sigstore-protobuf,ws,grpc,redis
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.target }}
           path: target/wheels/*.whl
@@ -70,7 +70,7 @@ jobs:
         with:
           command: sdist
           args: --out target/wheels
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: target/wheels/*.tar.gz
