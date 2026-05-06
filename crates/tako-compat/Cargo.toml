@@ -36,7 +36,7 @@ hyper              = { workspace = true }
 # features pinned, call sites remain identical to the 9.x API.
 jsonwebtoken       = { version = "10.3", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
 reqwest            = { workspace = true, optional = true }
-vaultrs            = { version = "0.7", optional = true }
+vaultrs            = { version = "0.8", optional = true }
 # Phase 15.B.2 — `url::form_urlencoded` for manual RFC 7662 body
 # construction (workspace `reqwest` is built without `urlencoded`).
 url                = { workspace = true, optional = true }
