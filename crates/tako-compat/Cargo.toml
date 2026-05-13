@@ -34,7 +34,7 @@ hyper              = { workspace = true }
 # selection of a `CryptoProvider` (`rust_crypto` keeps the pure-Rust
 # crypto stack — no OpenSSL / aws-lc-rs system dep). With both
 # features pinned, call sites remain identical to the 9.x API.
-jsonwebtoken       = { version = "10.3", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
+jsonwebtoken       = { version = "10.4", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
 reqwest            = { workspace = true, optional = true }
 vaultrs            = { version = "0.7", optional = true }
 # Phase 15.B.2 — `url::form_urlencoded` for manual RFC 7662 body
@@ -89,7 +89,7 @@ rustls             = { version = "0.23", default-features = false, features = ["
 # Sign per-test JWTs with a fresh RS256 keypair; matches the
 # Phase 41 jsonwebtoken 10.3 main-dep pin so the dev-dep does
 # not pull a second copy.
-jsonwebtoken       = { version = "10.3", default-features = false, features = ["rust_crypto", "use_pem"] }
+jsonwebtoken       = { version = "10.4", default-features = false, features = ["rust_crypto", "use_pem"] }
 # Sign the JWKS-published RSA key. `rsa` 0.9 emits PKCS#8 PEM
 # that `jsonwebtoken::EncodingKey::from_rsa_pem` accepts; the
 # JWK side reuses the same `n`/`e` modulus.
